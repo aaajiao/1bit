@@ -1,0 +1,14 @@
+{
+    "name": "1bit-chimera-void",
+    "version": "1.0.0",
+    "description": "Procedural 3D world with 1-bit dithering",
+    "scripts": {
+        "serve": "npx serve . -l 3000"
+    },
+    "keywords": [
+        "threejs",
+        "webgl",
+        "procedural"
+    ],
+    "license": "MIT"
+}
