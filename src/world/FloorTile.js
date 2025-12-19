@@ -7,22 +7,24 @@ import * as THREE from 'three';
  * @returns {THREE.MeshLambertMaterial}
  */
 export function createFloorMaterial(size = 64) {
-    const data = new Uint8Array(size * size * 3);
+    // Use RGBA format since RGBFormat was removed in Three.js r152+
+    const data = new Uint8Array(size * size * 4);
 
     for (let i = 0; i < size * size; i++) {
         const x = i % size;
         const y = Math.floor(i / size);
         const c = x % 4 === 0 || y % 4 === 0 ? 100 : 40;
-        data[i * 3] = c;
-        data[i * 3 + 1] = c;
-        data[i * 3 + 2] = c;
+        data[i * 4] = c;
+        data[i * 4 + 1] = c;
+        data[i * 4 + 2] = c;
+        data[i * 4 + 3] = 255; // Alpha channel
     }
 
     const tex = new THREE.DataTexture(
         data,
         size,
         size,
-        THREE.RGBFormat
+        THREE.RGBAFormat
     );
     tex.magFilter = THREE.NearestFilter;
     tex.wrapS = THREE.RepeatWrapping;

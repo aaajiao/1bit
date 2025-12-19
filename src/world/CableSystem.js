@@ -112,13 +112,19 @@ export function updateCableGeometry(cable) {
     if (options.heavySag) currentDroop += 20;
     mid.y -= currentDroop;
 
-    // Update positions array
+    // Update positions and lineDistance arrays
     const positions = cable.line.geometry.attributes.position.array;
+    const distances = cable.line.geometry.attributes.lineDistance.array;
     let idx = 0;
+    let totalDist = 0;
 
+    // First point
     positions[idx++] = pStart.x;
     positions[idx++] = pStart.y;
     positions[idx++] = pStart.z;
+    distances[0] = 0;
+
+    let prevX = pStart.x, prevY = pStart.y, prevZ = pStart.z;
 
     // Bezier curve interpolation
     for (let j = 1; j <= segments; j++) {
@@ -128,10 +134,20 @@ export function updateCableGeometry(cable) {
         const z = (1 - t) * (1 - t) * pStart.z + 2 * (1 - t) * t * mid.z + t * t * pEnd.z;
         const clampedY = Math.max(0.1, y);
 
+        // Calculate segment distance for lineDistance attribute
+        const dx = x - prevX, dy = clampedY - prevY, dz = z - prevZ;
+        totalDist += Math.sqrt(dx * dx + dy * dy + dz * dz);
+        distances[j] = totalDist;
+
         positions[idx++] = x;
         positions[idx++] = clampedY;
         positions[idx++] = z;
+
+        prevX = x;
+        prevY = clampedY;
+        prevZ = z;
     }
 
     cable.line.geometry.attributes.position.needsUpdate = true;
+    cable.line.geometry.attributes.lineDistance.needsUpdate = true;
 }

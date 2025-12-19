@@ -35,7 +35,7 @@ export const DitherShader = {
         void main() {
             vec4 color = texture2D(tDiffuse, vUv);
             float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-            gray = pow(gray, 1.0) * 1.4;
+            gray = pow(gray, 0.8) * 2.0;
             vec2 pixelCoord = gl_FragCoord.xy;
             float threshold = bayer4x4(pixelCoord);
             vec3 finalColor = (gray < threshold) ? vec3(0.0) : vec3(1.0);

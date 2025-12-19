@@ -61,6 +61,10 @@ class ChimeraVoid {
         this.renderer.shadowMap.type = THREE.BasicShadowMap;
         container.appendChild(this.renderer.domElement);
 
+        // Disable new color management to match r128 behavior
+        THREE.ColorManagement.enabled = false;
+        this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+
         // Render target for post-processing
         const scale = this.config.renderScale;
         this.renderTarget = new THREE.WebGLRenderTarget(
@@ -93,15 +97,15 @@ class ChimeraVoid {
         );
         this.composerScene.add(quad);
 
-        // Lighting
-        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x111111, 0.6);
+        // Lighting (intensity increased to compensate for r155+ decay changes)
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x111111, 1.2);
         this.scene.add(hemiLight);
 
-        this.scannerLight = new THREE.SpotLight(0xffffff, 2.0);
+        this.scannerLight = new THREE.SpotLight(0xffffff, 4.0);
         this.scannerLight.position.set(0, 80, 0);
         this.scannerLight.angle = Math.PI / 4;
         this.scannerLight.penumbra = 0.5;
-        this.scannerLight.decay = 2;
+        this.scannerLight.decay = 1; // Reduced from 2 to compensate
         this.scannerLight.distance = 250;
         this.scannerLight.castShadow = true;
         this.camera.add(this.scannerLight);
