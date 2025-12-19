@@ -46,6 +46,7 @@ export const DitherShader = {
 
 /**
  * Cable pulse shader for animated cables
+ * Enhanced with smooth pulses and per-cable random timing
  */
 export const CableShader = {
     uniforms: {
@@ -56,9 +57,12 @@ export const CableShader = {
     vertexShader: `
         uniform float time;
         attribute float lineDistance;
+        attribute float randomSeed;  // Per-vertex random seed for variety
         varying float vLineDistance;
+        varying float vRandomSeed;
         void main() {
             vLineDistance = lineDistance;
+            vRandomSeed = randomSeed;
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
     `,
@@ -67,8 +71,25 @@ export const CableShader = {
         uniform vec3 color;
         uniform vec3 pulseColor;
         varying float vLineDistance;
+        varying float vRandomSeed;
+        
         void main() {
-            float pulse = step(0.9, fract(vLineDistance * 0.1 - time * 2.0));
+            // Random parameters derived from seed (reduced ranges for subtler effect)
+            float speedMult = 0.4 + vRandomSeed * 0.6;        // Speed: 0.4x to 1.0x
+            float freqMult = 0.03 + vRandomSeed * 0.04;       // Frequency variation
+            float phaseOffset = vRandomSeed * 6.28318;         // Random phase 0 to 2π
+            
+            // Multi-layered pulse for organic feel
+            float wave1 = fract(vLineDistance * freqMult - time * speedMult + phaseOffset);
+            float wave2 = fract(vLineDistance * freqMult * 0.5 - time * speedMult * 0.7 + phaseOffset * 0.5);
+            
+            // Smooth pulse with gradual fade (instead of harsh step)
+            float pulse1 = smoothstep(0.7, 0.85, wave1) * smoothstep(1.0, 0.9, wave1);
+            float pulse2 = smoothstep(0.75, 0.88, wave2) * smoothstep(1.0, 0.92, wave2) * 0.6;
+            
+            // Combine pulses
+            float pulse = clamp(pulse1 + pulse2, 0.0, 1.0);
+            
             vec3 finalColor = mix(color, pulseColor, pulse);
             gl_FragColor = vec4(finalColor, 1.0);
         }

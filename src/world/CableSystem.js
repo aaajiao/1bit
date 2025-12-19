@@ -48,6 +48,13 @@ export function createDynamicCable(startNode, endNode, options) {
     const positions = new Float32Array((segments + 1) * 3);
     const distances = new Float32Array(segments + 1);
 
+    // Random seed per cable - same value for all vertices in this cable
+    const randomSeeds = new Float32Array(segments + 1);
+    const cableSeed = Math.random();
+    for (let i = 0; i <= segments; i++) {
+        randomSeeds[i] = cableSeed;
+    }
+
     geometry.setAttribute(
         'position',
         new THREE.BufferAttribute(positions, 3)
@@ -55,6 +62,10 @@ export function createDynamicCable(startNode, endNode, options) {
     geometry.setAttribute(
         'lineDistance',
         new THREE.BufferAttribute(distances, 1)
+    );
+    geometry.setAttribute(
+        'randomSeed',
+        new THREE.BufferAttribute(randomSeeds, 1)
     );
 
     const line = new THREE.Line(geometry, getCableMaterial());
