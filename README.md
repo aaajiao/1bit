@@ -15,6 +15,16 @@
 
 ---
 
+## 📖 Documentation | 📖 文档
+
+Detailed design philosophy, technical interaction loops, and project roadmap are available in:
+详细的设计哲学、技术交互闭环和项目路线图请参阅：
+
+- [English Version (EN)](DESIGN_PHILOSOPHY_AND_ROADMAP_EN.md)
+- [中文版本 (ZH)](DESIGN_PHILOSOPHY_AND_ROADMAP_ZH.md)
+
+---
+
 ## 🚀 运行方式
 
 ### 开发模式（推荐，支持热更新）
