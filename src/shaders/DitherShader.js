@@ -2,13 +2,20 @@
 import * as THREE from 'three';
 
 /**
- * 1-BIT BAYER DITHER POST-PROCESSING SHADER
- * Converts scene to black/white using 4x4 Bayer matrix threshold
+ * 1-BIT BAYER DITHER POST-PROCESSING SHADER (Enhanced)
+ * Features:
+ * - Edge detection (Sobel) for comic/woodcut outlines
+ * - Multi-scale dithering (8x8 near, 2x2 far)
+ * - Depth-aware dither transitions
  */
 export const DitherShader = {
     uniforms: {
         tDiffuse: { value: null },
         resolution: { value: new THREE.Vector2() },
+        enableOutline: { value: true },
+        outlineStrength: { value: 0.3 },
+        enableDepthDither: { value: false }, // Disabled by default (requires depth buffer)
+        ditherTransition: { value: 0.7 },
     },
     vertexShader: `
         varying vec2 vUv;
@@ -20,8 +27,15 @@ export const DitherShader = {
     fragmentShader: `
         uniform sampler2D tDiffuse;
         uniform vec2 resolution;
+        uniform bool enableOutline;
+        uniform float outlineStrength;
+        uniform bool enableDepthDither;
+        uniform float ditherTransition;
         varying vec2 vUv;
 
+        // ===== BAYER MATRICES =====
+        
+        // Original 4x4 Bayer matrix
         float bayer4x4(vec2 uv) {
             int x = int(mod(uv.x, 4.0));
             int y = int(mod(uv.y, 4.0));
@@ -32,13 +46,104 @@ export const DitherShader = {
             return 0.5;
         }
 
+        // Fine-grained 8x8 Bayer matrix (for nearby objects)
+        float bayer8x8(vec2 uv) {
+            int x = int(mod(uv.x, 8.0));
+            int y = int(mod(uv.y, 8.0));
+            
+            // 8x8 Bayer matrix (normalized to 0-1)
+            if (x==0){ if(y==0)return 0.015625; if(y==1)return 0.515625; if(y==2)return 0.140625; if(y==3)return 0.640625; if(y==4)return 0.046875; if(y==5)return 0.546875; if(y==6)return 0.171875; if(y==7)return 0.671875; }
+            if (x==1){ if(y==0)return 0.765625; if(y==1)return 0.265625; if(y==2)return 0.890625; if(y==3)return 0.390625; if(y==4)return 0.796875; if(y==5)return 0.296875; if(y==6)return 0.921875; if(y==7)return 0.421875; }
+            if (x==2){ if(y==0)return 0.203125; if(y==1)return 0.703125; if(y==2)return 0.078125; if(y==3)return 0.578125; if(y==4)return 0.234375; if(y==5)return 0.734375; if(y==6)return 0.109375; if(y==7)return 0.609375; }
+            if (x==3){ if(y==0)return 0.953125; if(y==1)return 0.453125; if(y==2)return 0.828125; if(y==3)return 0.328125; if(y==4)return 0.984375; if(y==5)return 0.484375; if(y==6)return 0.859375; if(y==7)return 0.359375; }
+            if (x==4){ if(y==0)return 0.062500; if(y==1)return 0.562500; if(y==2)return 0.187500; if(y==3)return 0.687500; if(y==4)return 0.031250; if(y==5)return 0.531250; if(y==6)return 0.156250; if(y==7)return 0.656250; }
+            if (x==5){ if(y==0)return 0.812500; if(y==1)return 0.312500; if(y==2)return 0.937500; if(y==3)return 0.437500; if(y==4)return 0.781250; if(y==5)return 0.281250; if(y==6)return 0.906250; if(y==7)return 0.406250; }
+            if (x==6){ if(y==0)return 0.250000; if(y==1)return 0.750000; if(y==2)return 0.125000; if(y==3)return 0.625000; if(y==4)return 0.218750; if(y==5)return 0.718750; if(y==6)return 0.093750; if(y==7)return 0.593750; }
+            if (x==7){ if(y==0)return 1.000000; if(y==1)return 0.500000; if(y==2)return 0.875000; if(y==3)return 0.375000; if(y==4)return 0.968750; if(y==5)return 0.468750; if(y==6)return 0.843750; if(y==7)return 0.343750; }
+            return 0.5;
+        }
+
+        // Coarse 2x2 Bayer matrix (for distant objects - blocky effect)
+        float bayer2x2(vec2 uv) {
+            int x = int(mod(uv.x, 2.0));
+            int y = int(mod(uv.y, 2.0));
+            if (x==0){ if(y==0)return 0.0; if(y==1)return 0.5; }
+            if (x==1){ if(y==0)return 0.75; if(y==1)return 0.25; }
+            return 0.5;
+        }
+
+        // ===== EDGE DETECTION =====
+        
+        // Luminance helper
+        float getLuminance(vec3 color) {
+            return dot(color, vec3(0.299, 0.587, 0.114));
+        }
+
+        // Sobel edge detection
+        float sobelEdge(sampler2D tex, vec2 uv, vec2 res) {
+            vec2 texel = 1.0 / res;
+            
+            // Sample 3x3 neighborhood
+            float tl = getLuminance(texture2D(tex, uv + vec2(-texel.x, -texel.y)).rgb);
+            float tm = getLuminance(texture2D(tex, uv + vec2(0.0, -texel.y)).rgb);
+            float tr = getLuminance(texture2D(tex, uv + vec2(texel.x, -texel.y)).rgb);
+            
+            float ml = getLuminance(texture2D(tex, uv + vec2(-texel.x, 0.0)).rgb);
+            float mr = getLuminance(texture2D(tex, uv + vec2(texel.x, 0.0)).rgb);
+            
+            float bl = getLuminance(texture2D(tex, uv + vec2(-texel.x, texel.y)).rgb);
+            float bm = getLuminance(texture2D(tex, uv + vec2(0.0, texel.y)).rgb);
+            float br = getLuminance(texture2D(tex, uv + vec2(texel.x, texel.y)).rgb);
+            
+            // Sobel kernels
+            float gx = -tl + tr - 2.0*ml + 2.0*mr - bl + br;
+            float gy = -tl - 2.0*tm - tr + bl + 2.0*bm + br;
+            
+            return length(vec2(gx, gy));
+        }
+
+        // ===== MAIN SHADER =====
+        
         void main() {
             vec4 color = texture2D(tDiffuse, vUv);
-            float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+            float gray = getLuminance(color.rgb);
+            
+            // Gamma correction and brightness boost
             gray = pow(gray, 0.8) * 2.0;
+            
+            // Edge detection
+            float edge = 0.0;
+            if (enableOutline) {
+                edge = sobelEdge(tDiffuse, vUv, resolution);
+            }
+            
+            // Dithering threshold
             vec2 pixelCoord = gl_FragCoord.xy;
-            float threshold = bayer4x4(pixelCoord);
+            float threshold;
+            
+            if (enableDepthDither) {
+                // Depth-aware dithering (requires depth buffer - currently disabled)
+                // For now, use distance from center as pseudo-depth
+                float pseudoDepth = length(vUv - 0.5) * 2.0;
+                pseudoDepth = smoothstep(0.0, 1.0, pseudoDepth);
+                
+                // Mix fine (8x8) and coarse (2x2) dithering based on depth
+                float fineThreshold = bayer8x8(pixelCoord);
+                float coarseThreshold = bayer2x2(pixelCoord);
+                threshold = mix(fineThreshold, coarseThreshold, smoothstep(ditherTransition - 0.2, ditherTransition + 0.2, pseudoDepth));
+            } else {
+                // Standard 4x4 Bayer
+                threshold = bayer4x4(pixelCoord);
+            }
+            
+            // Dither to black/white
             vec3 finalColor = (gray < threshold) ? vec3(0.0) : vec3(1.0);
+            
+            // Apply edge as black outline
+            if (enableOutline && edge > outlineStrength) {
+                finalColor = vec3(0.0);
+            }
+            
             gl_FragColor = vec4(finalColor, 1.0);
         }
     `,

@@ -90,6 +90,10 @@ class ChimeraVoid {
                             window.innerHeight * scale
                         ),
                     },
+                    enableOutline: { value: true },
+                    outlineStrength: { value: 0.3 },
+                    enableDepthDither: { value: false },
+                    ditherTransition: { value: 0.7 },
                 },
                 vertexShader: DitherShader.vertexShader,
                 fragmentShader: DitherShader.fragmentShader,
@@ -155,7 +159,12 @@ class ChimeraVoid {
             new THREE.CircleGeometry(2, 32),
             mat
         );
+        pupil.userData = { isPupil: true };
         this.skyEyeGroup.add(pupil);
+
+        // Store pupil reference for animation
+        this.skyEyeGroup.userData.pupil = pupil;
+        this.skyEyeGroup.userData.isBlinking = false;
 
         this.skyEyeGroup.position.set(0, 80, -200);
         this.skyEyeGroup.lookAt(0, 0, 0);
@@ -209,6 +218,26 @@ class ChimeraVoid {
 
         // Update sky eye
         if (this.skyEyeGroup) {
+            // Pupil tracking: follow player
+            const pupil = this.skyEyeGroup.userData.pupil;
+            if (pupil) {
+                const eyePos = new THREE.Vector3();
+                this.skyEyeGroup.getWorldPosition(eyePos);
+                const playerPos = this.camera.position.clone();
+
+                const direction = playerPos.sub(eyePos).normalize();
+                const targetOffset = direction.multiplyScalar(1.5);
+
+                // Smooth interpolation
+                pupil.position.lerp(targetOffset, 0.05);
+            }
+
+            // Random blinking
+            if (!this.skyEyeGroup.userData.isBlinking && Math.random() > 0.999) {
+                this.triggerEyeBlink();
+            }
+
+            // Ring rotation
             this.skyEyeGroup.children.forEach(ring => {
                 if (ring.userData.speed) {
                     ring.rotation.z += ring.userData.speed * delta;
@@ -238,6 +267,27 @@ class ChimeraVoid {
         this.renderer.render(this.scene, this.camera);
         this.renderer.setRenderTarget(null);
         this.renderer.render(this.composerScene, this.composerCamera);
+    }
+
+    /**
+     * Trigger sky eye blink animation
+     */
+    triggerEyeBlink() {
+        if (!this.skyEyeGroup || this.skyEyeGroup.userData.isBlinking) return;
+
+        this.skyEyeGroup.userData.isBlinking = true;
+        const originalScale = this.skyEyeGroup.scale.clone();
+
+        // Close eye
+        setTimeout(() => {
+            this.skyEyeGroup.scale.y = 0.05;
+        }, 0);
+
+        // Open eye
+        setTimeout(() => {
+            this.skyEyeGroup.scale.y = originalScale.y;
+            this.skyEyeGroup.userData.isBlinking = false;
+        }, 150);
     }
 }
 

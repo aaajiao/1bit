@@ -25,6 +25,7 @@ Desktop.ini
 # VS Code
 .vscode/
 *.code-workspace
+.cursorrules
 
 # JetBrains (WebStorm, IntelliJ, etc.)
 .idea/
