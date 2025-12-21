@@ -17,7 +17,14 @@
 
 ## 🚀 运行方式
 
-### 模块化版本（推荐）
+### 开发模式（推荐，支持热更新）
+```bash
+npm install      # 首次运行需要安装依赖
+npm run dev      # 启动 Vite 开发服务器
+# 访问 http://localhost:5173
+```
+
+### 静态服务器
 ```bash
 npm run serve
 # 访问 http://localhost:3000
@@ -136,6 +143,75 @@ vec3 finalColor = mix(color, pulseColor, pulse);
 - 花茎使用 CatmullRom 样条曲线
 - 7 片花瓣 + 5 片萼片 + 中心点光源
 - 16 个轨道花粉粒子
+
+### 动态手部位置调整
+
+当玩家向上看时，手部会自动下降以避免遮挡视野（特别是天空之眼）：
+
+```javascript
+// HandsModel.js - animate() 方法
+const pitch = this.camera.rotation.x;
+
+// 关键发现：向上看时 pitch > 0（不是负值！）
+// 只在向上看时处理，向下看保持正常位置
+const pitchOffset = pitch > 0 ? pitch * 1.5 : 0;
+
+// 减去 pitchOffset 使手部下降
+this.handsGroup.position.y = Math.sin(this.time * 2) * 0.02 - pitchOffset;
+```
+
+> ⚠️ **重要提示**: `camera.rotation.x` 在向上看时是**正值**，这与直觉相反。多次调试后确认。
+
+---
+
+## 👁️ 天空之眼 (Sky Eye)
+
+巨大的眼球悬浮在天空中，瞳孔会跟踪玩家位置，周期性眨眼。
+
+### 渲染配置
+
+天空之眼必须始终可见，不受任何遮挡：
+
+```javascript
+// main.js - createSkyEye() 方法
+const mat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    side: THREE.DoubleSide,
+    depthTest: false,   // 不检查深度，总是渲染
+    depthWrite: false,  // 不写入深度缓冲
+    fog: false,         // ⭐ 关键：不受雾效影响！
+});
+
+// 设置高渲染顺序，确保最后渲染
+this.skyEyeGroup.renderOrder = 999;
+```
+
+> ⚠️ **重要提示**: 如果不设置 `fog: false`，天空之眼会被场景雾效遮挡！
+
+### 位置与朝向
+
+```javascript
+// 世界坐标中的固定位置（不是相机本地坐标！）
+this.scene.add(this.skyEyeGroup);  // 添加到场景，不是相机
+this.skyEyeGroup.position.set(0, 120, 0);
+this.skyEyeGroup.rotation.x = -Math.PI / 2;  // 面朝下方
+```
+
+### 瞳孔跟踪
+
+```javascript
+// 计算玩家相对于眼睛的 XZ 偏移
+const dx = playerPos.x - eyePos.x;
+const dz = playerPos.z - eyePos.z;
+
+// 限制瞳孔移动范围
+const maxOffset = 3;
+const targetX = Math.max(-maxOffset, Math.min(maxOffset, dx * 0.02));
+const targetY = Math.max(-maxOffset, Math.min(maxOffset, dz * 0.02));
+
+// 平滑插值
+pupil.position.lerp(new THREE.Vector3(targetX, targetY, 0.1), 0.05);
+```
 
 ---
 

@@ -283,7 +283,16 @@ export class HandsModel {
 
         this.leftHand.rotation.z = -0.1 + sway;
         this.rightHand.rotation.z = 0.1 - sway;
-        this.handsGroup.position.y = Math.sin(this.time * 2) * 0.02;
+
+        // Get camera pitch (rotation.x) - positive when looking up
+        const pitch = this.camera.rotation.x;
+
+        // Only lower hands when looking UP (pitch > 0)
+        // When looking down or straight, keep hands at normal position
+        const pitchOffset = pitch > 0 ? pitch * 1.5 : 0;
+
+        // Apply breathing + pitch-based offset (subtract to move down)
+        this.handsGroup.position.y = Math.sin(this.time * 2) * 0.02 - pitchOffset;
 
         // Animate flower on right hand
         this.rightHand.children.forEach(child => {

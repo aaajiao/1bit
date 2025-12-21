@@ -139,24 +139,30 @@ class ChimeraVoid {
      */
     createSkyEye() {
         this.skyEyeGroup = new THREE.Group();
-        this.camera.add(this.skyEyeGroup);
+        // Add to scene (world space), not camera
+        this.scene.add(this.skyEyeGroup);
 
         const mat = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             side: THREE.DoubleSide,
+            depthTest: false,  // Always render on top
+            depthWrite: false,
+            fog: false,  // Not affected by scene fog
         });
 
-        for (let i = 1; i <= 4; i++) {
+        // Larger eye rings for visibility in the sky
+        for (let i = 1; i <= 5; i++) {
             const ring = new THREE.Mesh(
-                new THREE.RingGeometry(i * 4, i * 4 + 0.5, 64),
+                new THREE.RingGeometry(i * 8, i * 8 + 1, 64),
                 mat
             );
-            ring.userData = { speed: (Math.random() - 0.5) * 0.2 };
+            ring.userData = { speed: (Math.random() - 0.5) * 0.3 };
             this.skyEyeGroup.add(ring);
         }
 
+        // Larger pupil
         const pupil = new THREE.Mesh(
-            new THREE.CircleGeometry(2, 32),
+            new THREE.CircleGeometry(5, 32),
             mat
         );
         pupil.userData = { isPupil: true };
@@ -166,8 +172,10 @@ class ChimeraVoid {
         this.skyEyeGroup.userData.pupil = pupil;
         this.skyEyeGroup.userData.isBlinking = false;
 
-        this.skyEyeGroup.position.set(0, 80, -200);
-        this.skyEyeGroup.lookAt(0, 0, 0);
+        // Position high in the sky, facing down
+        this.skyEyeGroup.position.set(0, 120, 0);
+        this.skyEyeGroup.rotation.x = -Math.PI / 2; // Face downward
+        this.skyEyeGroup.renderOrder = 999; // Render last
     }
 
     /**
@@ -218,18 +226,23 @@ class ChimeraVoid {
 
         // Update sky eye
         if (this.skyEyeGroup) {
-            // Pupil tracking: follow player
+            // Pupil tracking: follow player position
             const pupil = this.skyEyeGroup.userData.pupil;
             if (pupil) {
-                const eyePos = new THREE.Vector3();
-                this.skyEyeGroup.getWorldPosition(eyePos);
+                const eyePos = this.skyEyeGroup.position.clone();
                 const playerPos = this.camera.position.clone();
 
-                const direction = playerPos.sub(eyePos).normalize();
-                const targetOffset = direction.multiplyScalar(1.5);
+                // Calculate offset in XZ plane (eye looks down from above)
+                const dx = playerPos.x - eyePos.x;
+                const dz = playerPos.z - eyePos.z;
 
-                // Smooth interpolation
-                pupil.position.lerp(targetOffset, 0.05);
+                // Clamp pupil movement within the eye
+                const maxOffset = 3;
+                const targetX = Math.max(-maxOffset, Math.min(maxOffset, dx * 0.02));
+                const targetY = Math.max(-maxOffset, Math.min(maxOffset, dz * 0.02));
+
+                // Smooth interpolation (local coords, eye faces down so Z maps to Y)
+                pupil.position.lerp(new THREE.Vector3(targetX, targetY, 0.1), 0.05);
             }
 
             // Random blinking

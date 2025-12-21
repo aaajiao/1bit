@@ -3,12 +3,21 @@
     "version": "1.0.0",
     "description": "Procedural 3D world with 1-bit dithering",
     "scripts": {
-        "serve": "npx serve . -l 3000"
+        "dev": "vite",
+        "serve": "npx serve . -l 3000",
+        "build": "vite build",
+        "preview": "vite preview"
     },
     "keywords": [
         "threejs",
         "webgl",
         "procedural"
     ],
-    "license": "MIT"
+    "license": "MIT",
+    "devDependencies": {
+        "vite": "^5.0.0"
+    },
+    "dependencies": {
+        "three": "^0.160.0"
+    }
 }
