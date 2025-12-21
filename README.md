@@ -234,16 +234,19 @@ pupil.position.lerp(new THREE.Vector3(targetX, targetY, 0.1), 0.05);
 
 ## 🌓 昼夜循环系统
 
-每 **5 分钟** 完成一个昼夜周期：
+动态昼夜循环，带随机元素：
 
-| 时段 | 背景色 | 效果 |
-|------|--------|------|
-| 日间 | `0x888888` | 正常渲染 |
-| 夜间 | `0x222222` | 黑白反转 |
+| 特性 | 描述 |
+|------|------|
+| 周期时长 | 4-6 分钟（随机） |
+| 夜间强度 | 背景深浅随机变化 |
+| 过渡天气 | 日落30%/日出20%概率触发 |
+| 日食事件 | 极小概率白天反转 |
 
 ```javascript
-// 调整周期时长（秒）
-app.dayNight.cycleDuration = 300;  // 默认 5 分钟
+// 调整/测试
+app.dayNight.cycleDuration = 10;  // 快速周期
+app._triggerSolarEclipse(performance.now()/1000);  // 手动日食
 ```
 
 ---
@@ -287,6 +290,34 @@ app.weather.forceWeather('glitch', 1);   // 信号干扰 1 秒
 | `LIQUID_WOBBLE` | 液态摇晃 |
 | `BRANCH_SWAY` | 树枝摇摆 |
 | `LEAF_FLUTTER` | 叶片颤动 |
+
+---
+
+## 🔧 调试命令
+
+在浏览器控制台 (F12) 中输入以下命令进行测试：
+
+### 天气系统
+```javascript
+app.weather.forceWeather('static', 10);  // 静态雪花 10秒
+app.weather.forceWeather('rain', 15);    // 数字雨 15秒
+app.weather.forceWeather('glitch', 1);   // 信号干扰 1秒
+```
+
+### 昼夜循环
+```javascript
+app.dayNight.cycleDuration = 10;  // 快速测试（10秒周期）
+app.dayNight.triggerSolarEclipse(performance.now()/1000, {
+    shaderQuad: app.composerScene.children[0],
+    weather: app.weather,
+    audio: app.audio
+});  // 手动触发日食
+```
+
+### 天空之眼
+```javascript
+app.skyEye.triggerBlink(app.audio);  // 手动眨眼
+```
 
 ---
 

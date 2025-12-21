@@ -7,6 +7,8 @@ import { Controls } from './player/Controls.js';
 import { HandsModel } from './player/HandsModel.js';
 import { AudioSystem } from './audio/AudioSystem.js';
 import { WeatherSystem } from './world/WeatherSystem.js';
+import { DayNightCycle } from './world/DayNightCycle.js';
+import { SkyEye } from './world/SkyEye.js';
 
 /**
  * Main application class
@@ -23,16 +25,11 @@ class ChimeraVoid {
         this.controls = null;
         this.handsModel = null;
         this.scannerLight = null;
-        this.skyEyeGroup = null;
+        this.skyEye = null;
         this.audio = null;
         this.weather = null;
+        this.dayNight = null;
         this.prevTime = performance.now();
-
-        // Day/night cycle state
-        this.dayNight = {
-            cycleDuration: 300,  // 5 minutes per full cycle
-            isDay: true,
-        };
 
         this.config = {
             renderScale: 0.5,
@@ -130,7 +127,7 @@ class ChimeraVoid {
         this.camera.add(this.scannerLight);
 
         // Sky Eye
-        this.createSkyEye();
+        this.skyEye = new SkyEye(this.scene);
 
         // Controls and Hands
         this.controls = new Controls(this.camera, document.body);
@@ -150,58 +147,15 @@ class ChimeraVoid {
             }
         }, { once: true });
 
-        // Weather system
+        // Weather and Day/Night systems
         this.weather = new WeatherSystem();
+        this.dayNight = new DayNightCycle();
 
         // Events
         this.setupWindowEvents();
 
         // Start loop
         this.animate();
-    }
-
-    /**
-     * Create the sky eye effect
-     */
-    createSkyEye() {
-        this.skyEyeGroup = new THREE.Group();
-        // Add to scene (world space), not camera
-        this.scene.add(this.skyEyeGroup);
-
-        const mat = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
-            side: THREE.DoubleSide,
-            depthTest: false,  // Always render on top
-            depthWrite: false,
-            fog: false,  // Not affected by scene fog
-        });
-
-        // Larger eye rings for visibility in the sky
-        for (let i = 1; i <= 5; i++) {
-            const ring = new THREE.Mesh(
-                new THREE.RingGeometry(i * 8, i * 8 + 1, 64),
-                mat
-            );
-            ring.userData = { speed: (Math.random() - 0.5) * 0.3 };
-            this.skyEyeGroup.add(ring);
-        }
-
-        // Larger pupil
-        const pupil = new THREE.Mesh(
-            new THREE.CircleGeometry(5, 32),
-            mat
-        );
-        pupil.userData = { isPupil: true };
-        this.skyEyeGroup.add(pupil);
-
-        // Store pupil reference for animation
-        this.skyEyeGroup.userData.pupil = pupil;
-        this.skyEyeGroup.userData.isBlinking = false;
-
-        // Position high in the sky, facing down
-        this.skyEyeGroup.position.set(0, 120, 0);
-        this.skyEyeGroup.rotation.x = -Math.PI / 2; // Face downward
-        this.skyEyeGroup.renderOrder = 999; // Render last
     }
 
     /**
@@ -253,51 +207,26 @@ class ChimeraVoid {
         }
 
         // Day/night cycle
-        this.updateDayNightCycle(t);
+        const shaderQuad = this.composerScene.children[0];
+        this.dayNight.update(t, {
+            scene: this.scene,
+            shaderQuad: shaderQuad,
+            audio: this.audio,
+            weather: this.weather,
+        });
 
         // Weather system
         const weatherState = this.weather.update(delta, t);
-        const quad = this.composerScene.children[0];
-        quad.material.uniforms.weatherType.value = weatherState.weatherType;
-        quad.material.uniforms.weatherIntensity.value = weatherState.weatherIntensity;
-        quad.material.uniforms.weatherTime.value = weatherState.weatherTime;
+        shaderQuad.material.uniforms.weatherType.value = weatherState.weatherType;
+        shaderQuad.material.uniforms.weatherIntensity.value = weatherState.weatherIntensity;
+        shaderQuad.material.uniforms.weatherTime.value = weatherState.weatherTime;
 
         // Update hands
         this.handsModel.animate(delta, isMoving, time);
 
         // Update sky eye
-        if (this.skyEyeGroup) {
-            // Pupil tracking: follow player position
-            const pupil = this.skyEyeGroup.userData.pupil;
-            if (pupil) {
-                const eyePos = this.skyEyeGroup.position.clone();
-                const playerPos = this.camera.position.clone();
-
-                // Calculate offset in XZ plane (eye looks down from above)
-                const dx = playerPos.x - eyePos.x;
-                const dz = playerPos.z - eyePos.z;
-
-                // Clamp pupil movement within the eye
-                const maxOffset = 3;
-                const targetX = Math.max(-maxOffset, Math.min(maxOffset, dx * 0.02));
-                const targetY = Math.max(-maxOffset, Math.min(maxOffset, dz * 0.02));
-
-                // Smooth interpolation (local coords, eye faces down so Z maps to Y)
-                pupil.position.lerp(new THREE.Vector3(targetX, targetY, 0.1), 0.05);
-            }
-
-            // Random blinking
-            if (!this.skyEyeGroup.userData.isBlinking && Math.random() > 0.999) {
-                this.triggerEyeBlink();
-            }
-
-            // Ring rotation
-            this.skyEyeGroup.children.forEach(ring => {
-                if (ring.userData.speed) {
-                    ring.rotation.z += ring.userData.speed * delta;
-                    ring.rotation.x += ring.userData.speed * 0.5 * delta;
-                }
-            });
+        if (this.skyEye) {
+            this.skyEye.update(delta, this.camera.position, this.audio);
         }
 
         // Update scanner light
@@ -322,66 +251,8 @@ class ChimeraVoid {
         this.renderer.setRenderTarget(null);
         this.renderer.render(this.composerScene, this.composerCamera);
     }
-
-    /**
-     * Trigger sky eye blink animation
-     */
-    triggerEyeBlink() {
-        if (!this.skyEyeGroup || this.skyEyeGroup.userData.isBlinking) return;
-
-        this.skyEyeGroup.userData.isBlinking = true;
-        const originalScale = this.skyEyeGroup.scale.clone();
-
-        // Play blink sound
-        this.audio.playEyeBlink();
-
-        // Close eye
-        setTimeout(() => {
-            this.skyEyeGroup.scale.y = 0.05;
-        }, 0);
-
-        // Open eye
-        setTimeout(() => {
-            this.skyEyeGroup.scale.y = originalScale.y;
-            this.skyEyeGroup.userData.isBlinking = false;
-        }, 150);
-    }
-
-    /**
-     * Update day/night cycle
-     * @param {number} t - Time in seconds
-     */
-    updateDayNightCycle(t) {
-        const { cycleDuration } = this.dayNight;
-        const halfCycle = cycleDuration / 2;
-
-        // Determine if it's day or night based on time
-        const cycleTime = t % cycleDuration;
-        const newIsDay = cycleTime < halfCycle;
-
-        // Transition when state changes
-        if (newIsDay !== this.dayNight.isDay) {
-            this.dayNight.isDay = newIsDay;
-
-            // Play transition sound
-            this.audio.playDayNightTransition(!newIsDay);
-
-            // Update colors
-            const dayColor = 0x888888;
-            const nightColor = 0x222222;
-            const bgColor = newIsDay ? dayColor : nightColor;
-
-            this.scene.background.setHex(bgColor);
-            this.scene.fog.color.setHex(bgColor);
-
-            // Toggle shader inversion
-            const quad = this.composerScene.children[0];
-            quad.material.uniforms.invertColors.value = !newIsDay;
-
-            console.log(`Day/Night: ${newIsDay ? 'DAY ☀️' : 'NIGHT 🌙'}`);
-        }
-    }
 }
 
 // Start application
 window.app = new ChimeraVoid();
+
