@@ -47,6 +47,8 @@ npm run serve
 │   └── main.css            # 样式表（扫描线效果等）
 └── src/
     ├── main.js             # 主程序入口
+    ├── audio/
+    │   └── AudioSystem.js  # 程序化音效系统
     ├── shaders/
     │   └── DitherShader.js # 1-bit 抖动着色器 + 线缆脉冲着色器
     ├── player/
@@ -211,6 +213,56 @@ const targetY = Math.max(-maxOffset, Math.min(maxOffset, dz * 0.02));
 
 // 平滑插值
 pupil.position.lerp(new THREE.Vector3(targetX, targetY, 0.1), 0.05);
+```
+
+---
+
+## 🔊 程序化音效系统
+
+使用 **Web Audio API** 生成 8-bit 风格声音，符合 1-bit 极简美学：
+
+| 音效 | 类型 | 描述 |
+|------|------|------|
+| 脚步声 | 方波脉冲 | 低频 (80-120Hz)，短促 |
+| 环境音 | 锯齿波振荡 | 持续低频嗡嗡声 (35Hz) |
+| 眨眼声 | 正弦波下滑 | 天空之眼眨眼时触发 |
+| 昼夜过渡 | 三角波 | 日夜切换时的上升/下降音 |
+
+> 音效在首次点击后初始化（浏览器自动播放限制）
+
+---
+
+## 🌓 昼夜循环系统
+
+每 **5 分钟** 完成一个昼夜周期：
+
+| 时段 | 背景色 | 效果 |
+|------|--------|------|
+| 日间 | `0x888888` | 正常渲染 |
+| 夜间 | `0x222222` | 黑白反转 |
+
+```javascript
+// 调整周期时长（秒）
+app.dayNight.cycleDuration = 300;  // 默认 5 分钟
+```
+
+---
+
+## 🌧️ 天气系统
+
+三种 1-bit 风格天气效果，随机触发：
+
+| 效果 | 描述 | 触发间隔 |
+|------|------|---------|
+| 静态雪花 | 电视无信号噪点 | 1-3 分钟 |
+| 数字雨 | 垂直下落白色短线 | 1-3 分钟 |
+| 信号干扰 | 水平条纹闪烁 | 随机短暂 |
+
+```javascript
+// 手动触发天气（控制台）
+app.weather.forceWeather('static', 10);  // 静态雪花 10 秒
+app.weather.forceWeather('rain', 15);    // 数字雨 15 秒
+app.weather.forceWeather('glitch', 1);   // 信号干扰 1 秒
 ```
 
 ---

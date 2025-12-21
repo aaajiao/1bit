@@ -16,6 +16,11 @@ export const DitherShader = {
         outlineStrength: { value: 0.3 },
         enableDepthDither: { value: false }, // Disabled by default (requires depth buffer)
         ditherTransition: { value: 0.7 },
+        invertColors: { value: false },  // Day/night color inversion
+        // Weather
+        weatherType: { value: 0 },       // 0=clear, 1=static, 2=rain, 3=glitch
+        weatherIntensity: { value: 0.0 },
+        weatherTime: { value: 0.0 },
     },
     vertexShader: `
         varying vec2 vUv;
@@ -31,6 +36,11 @@ export const DitherShader = {
         uniform float outlineStrength;
         uniform bool enableDepthDither;
         uniform float ditherTransition;
+        uniform bool invertColors;
+        // Weather uniforms
+        uniform int weatherType;
+        uniform float weatherIntensity;
+        uniform float weatherTime;
         varying vec2 vUv;
 
         // ===== BAYER MATRICES =====
@@ -102,6 +112,32 @@ export const DitherShader = {
             return length(vec2(gx, gy));
         }
 
+        // ===== WEATHER EFFECTS =====
+        
+        // Static noise (TV snow)
+        float staticNoise(vec2 coord, float t) {
+            return fract(sin(dot(coord + t, vec2(12.9898, 78.233))) * 43758.5453);
+        }
+        
+        // Digital rain effect
+        float digitalRain(vec2 uv, float t) {
+            float column = floor(uv.x * 50.0);
+            float speed = fract(sin(column * 123.456) * 789.0) * 2.0 + 0.5;
+            float phase = fract(sin(column * 456.789) * 123.0);
+            float y = fract(uv.y * 2.0 + t * speed + phase);
+            float dropLength = 0.05 + fract(sin(column * 789.0) * 12.0) * 0.1;
+            float drop = step(1.0 - dropLength, y);
+            float columnMask = step(0.85, fract(sin(column * 234.0) * 567.0));
+            return drop * columnMask;
+        }
+        
+        // Glitch effect (horizontal bars + offset)
+        float glitchEffect(vec2 uv, float t) {
+            float bar = step(0.92, fract(uv.y * 30.0 + t * 100.0));
+            float flicker = step(0.97, fract(sin(t * 500.0) * 12345.0));
+            return bar * flicker;
+        }
+
         // ===== MAIN SHADER =====
         
         void main() {
@@ -142,6 +178,36 @@ export const DitherShader = {
             // Apply edge as black outline
             if (enableOutline && edge > outlineStrength) {
                 finalColor = vec3(0.0);
+            }
+            
+            // Day/night inversion
+            if (invertColors) {
+                finalColor = vec3(1.0) - finalColor;
+            }
+            
+            // Weather effects
+            if (weatherType > 0 && weatherIntensity > 0.0) {
+                vec2 pixelUV = gl_FragCoord.xy / resolution;
+                
+                if (weatherType == 1) {
+                    // Static snow
+                    float noise = staticNoise(gl_FragCoord.xy * 0.15, weatherTime * 15.0);
+                    if (noise > 1.0 - weatherIntensity * 0.3) {
+                        finalColor = vec3(1.0) - finalColor;
+                    }
+                } else if (weatherType == 2) {
+                    // Digital rain
+                    float rain = digitalRain(pixelUV, weatherTime);
+                    if (rain > 0.5) {
+                        finalColor = vec3(1.0);  // White rain drops
+                    }
+                } else if (weatherType == 3) {
+                    // Signal glitch
+                    float glitch = glitchEffect(pixelUV, weatherTime);
+                    if (glitch > 0.5) {
+                        finalColor = vec3(1.0) - finalColor;
+                    }
+                }
             }
             
             gl_FragColor = vec4(finalColor, 1.0);

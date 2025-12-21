@@ -5,6 +5,8 @@ import { ChunkManager, CHUNK_SIZE } from './world/ChunkManager.js';
 import { updateCableTime } from './world/CableSystem.js';
 import { Controls } from './player/Controls.js';
 import { HandsModel } from './player/HandsModel.js';
+import { AudioSystem } from './audio/AudioSystem.js';
+import { WeatherSystem } from './world/WeatherSystem.js';
 
 /**
  * Main application class
@@ -22,7 +24,15 @@ class ChimeraVoid {
         this.handsModel = null;
         this.scannerLight = null;
         this.skyEyeGroup = null;
+        this.audio = null;
+        this.weather = null;
         this.prevTime = performance.now();
+
+        // Day/night cycle state
+        this.dayNight = {
+            cycleDuration: 300,  // 5 minutes per full cycle
+            isDay: true,
+        };
 
         this.config = {
             renderScale: 0.5,
@@ -94,6 +104,11 @@ class ChimeraVoid {
                     outlineStrength: { value: 0.3 },
                     enableDepthDither: { value: false },
                     ditherTransition: { value: 0.7 },
+                    invertColors: { value: false },
+                    // Weather
+                    weatherType: { value: 0 },
+                    weatherIntensity: { value: 0.0 },
+                    weatherTime: { value: 0.0 },
                 },
                 vertexShader: DitherShader.vertexShader,
                 fragmentShader: DitherShader.fragmentShader,
@@ -126,6 +141,17 @@ class ChimeraVoid {
 
         // Add camera to scene
         this.scene.add(this.camera);
+
+        // Audio system (initialized on first click)
+        this.audio = new AudioSystem();
+        document.addEventListener('click', () => {
+            if (!this.audio.enabled) {
+                this.audio.init();
+            }
+        }, { once: true });
+
+        // Weather system
+        this.weather = new WeatherSystem();
 
         // Events
         this.setupWindowEvents();
@@ -221,6 +247,21 @@ class ChimeraVoid {
         // Update controls
         const isMoving = this.controls.update(time);
 
+        // Footstep audio
+        if (isMoving && this.controls.canJump) {
+            this.audio.playFootstep();
+        }
+
+        // Day/night cycle
+        this.updateDayNightCycle(t);
+
+        // Weather system
+        const weatherState = this.weather.update(delta, t);
+        const quad = this.composerScene.children[0];
+        quad.material.uniforms.weatherType.value = weatherState.weatherType;
+        quad.material.uniforms.weatherIntensity.value = weatherState.weatherIntensity;
+        quad.material.uniforms.weatherTime.value = weatherState.weatherTime;
+
         // Update hands
         this.handsModel.animate(delta, isMoving, time);
 
@@ -291,6 +332,9 @@ class ChimeraVoid {
         this.skyEyeGroup.userData.isBlinking = true;
         const originalScale = this.skyEyeGroup.scale.clone();
 
+        // Play blink sound
+        this.audio.playEyeBlink();
+
         // Close eye
         setTimeout(() => {
             this.skyEyeGroup.scale.y = 0.05;
@@ -302,7 +346,42 @@ class ChimeraVoid {
             this.skyEyeGroup.userData.isBlinking = false;
         }, 150);
     }
+
+    /**
+     * Update day/night cycle
+     * @param {number} t - Time in seconds
+     */
+    updateDayNightCycle(t) {
+        const { cycleDuration } = this.dayNight;
+        const halfCycle = cycleDuration / 2;
+
+        // Determine if it's day or night based on time
+        const cycleTime = t % cycleDuration;
+        const newIsDay = cycleTime < halfCycle;
+
+        // Transition when state changes
+        if (newIsDay !== this.dayNight.isDay) {
+            this.dayNight.isDay = newIsDay;
+
+            // Play transition sound
+            this.audio.playDayNightTransition(!newIsDay);
+
+            // Update colors
+            const dayColor = 0x888888;
+            const nightColor = 0x222222;
+            const bgColor = newIsDay ? dayColor : nightColor;
+
+            this.scene.background.setHex(bgColor);
+            this.scene.fog.color.setHex(bgColor);
+
+            // Toggle shader inversion
+            const quad = this.composerScene.children[0];
+            quad.material.uniforms.invertColors.value = !newIsDay;
+
+            console.log(`Day/Night: ${newIsDay ? 'DAY ☀️' : 'NIGHT 🌙'}`);
+        }
+    }
 }
 
 // Start application
-new ChimeraVoid();
+window.app = new ChimeraVoid();
