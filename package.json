@@ -18,14 +18,14 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@types/three": "^0.182.0",
+    "@antfu/eslint-config": "^6.7.3",
+    "@types/three": "^0.173.0",
+    "eslint": "^9.39.2",
     "typescript": "^5.9.3",
     "vite": "^5.0.0",
-    "vitest": "^4.0.16",
-    "@antfu/eslint-config": "^6.7.3",
-    "eslint": "^9.39.2"
+    "vitest": "^4.0.16"
   },
   "dependencies": {
-    "three": "^0.160.0"
+    "three": "^0.173.0"
   }
 }

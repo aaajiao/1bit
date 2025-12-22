@@ -440,8 +440,8 @@ npm run serve
 | 组件 | 版本 | 说明 |
 |------|------|------|
 | **TypeScript** | ^5.9.3 | 类型安全的 JavaScript 超集 |
-| **Three.js** | ^0.160.0 | 3D 渲染引擎（ES6 模块版本） |
-| **@types/three** | ^0.182.0 | Three.js 类型定义 |
+| **Three.js** | ^0.173.0 | 3D 渲染引擎（ES6 模块版本） |
+| **@types/three** | ^0.173.0 | Three.js 类型定义 |
 | **Vite** | ^5.0.0 | 现代前端构建工具 |
 | **Vitest** | ^4.0.16 | 单元测试框架 |
 | **ESLint** | ^9.39.2 | 代码检查工具（@antfu/eslint-config） |
