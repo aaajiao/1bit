@@ -30,8 +30,8 @@ export function createScene(container: HTMLElement, config: AppConfig): SceneCom
     );
     camera.rotation.order = 'YXZ';
 
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    // Renderer (preserveDrawingBuffer needed for screenshots)
+    const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(1);
     renderer.shadowMap.enabled = true;
