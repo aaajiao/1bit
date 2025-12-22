@@ -1,5 +1,7 @@
 # Wired Brutalism: Chimera Void
 
+![Wired Brutalism Preview](https://github.com/user-attachments/assets/fa430efe-91ff-4c16-bcf8-f275057777a2)
+
 一个基于 Three.js 的 **1-bit 抖动渲染** 交互式 3D 体验作品。玩家穿行于程序化生成的嵌合体废墟中，手持一朵发光的花。
 
 > **这不仅是一个游戏，而是一个心理压力系统。** 通过视觉、音频和交互机制的紧密耦合，传达关于权威、欲望和反抗的叙事。
