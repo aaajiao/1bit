@@ -5,8 +5,9 @@
     "scripts": {
         "dev": "vite",
         "serve": "npx serve . -l 3000",
-        "build": "vite build",
-        "preview": "vite preview"
+        "build": "tsc --noEmit && vite build",
+        "preview": "vite preview",
+        "typecheck": "tsc --noEmit"
     },
     "keywords": [
         "threejs",
@@ -15,6 +16,8 @@
     ],
     "license": "MIT",
     "devDependencies": {
+        "@types/three": "^0.182.0",
+        "typescript": "^5.9.3",
         "vite": "^5.0.0"
     },
     "dependencies": {

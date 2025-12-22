@@ -1,15 +1,15 @@
 // 1-bit Chimera Void - Building Factory
 import * as THREE from 'three';
-import { hash } from '../utils/hash.js';
-import { SharedAssets } from './SharedAssets.js';
+import { hash } from '../utils/hash';
+import type { BuildingParams, SharedAssets, AnimatedObject } from '../types';
 
 /**
  * Creates BLOCKS style building
- * @param {THREE.Group} buildGroup - Parent group
- * @param {Object} params - Generation parameters
- * @returns {number} Maximum height of building
+ * @param buildGroup - Parent group
+ * @param params - Generation parameters
+ * @returns Maximum height of building
  */
-export function createBlocksBuilding(buildGroup, params) {
+export function createBlocksBuilding(buildGroup: THREE.Group, params: BuildingParams): number {
     const { i, cx, cz, assets } = params;
     let maxHeight = 0;
     const fragments = 4 + Math.floor(hash(i, cz) * 8);
@@ -45,11 +45,11 @@ export function createBlocksBuilding(buildGroup, params) {
 
 /**
  * Creates SPIKES style building
- * @param {THREE.Group} buildGroup - Parent group
- * @param {Object} params - Generation parameters
- * @returns {number} Maximum height of building
+ * @param buildGroup - Parent group
+ * @param params - Generation parameters
+ * @returns Maximum height of building
  */
-export function createSpikesBuilding(buildGroup, params) {
+export function createSpikesBuilding(buildGroup: THREE.Group, params: BuildingParams): number {
     const { i, cx, cz, assets } = params;
     let maxHeight = 0;
     const fragments = 4 + Math.floor(hash(i, cz) * 8);
@@ -79,15 +79,20 @@ export function createSpikesBuilding(buildGroup, params) {
     return maxHeight;
 }
 
+interface AssetSelection {
+    geometry: THREE.BufferGeometry;
+    material: THREE.Material;
+}
+
 /**
  * Selects geometry and material for a solid building asset
- * @param {number} assetType - Random value for asset selection
- * @param {number} materialOverride - Random value for material override
- * @param {Object} assets - Shared assets object
- * @returns {{geometry: THREE.BufferGeometry, material: THREE.Material}}
+ * @param assetType - Random value for asset selection
+ * @param materialOverride - Random value for material override
+ * @param assets - Shared assets object
  */
-function selectSolidAsset(assetType, materialOverride, assets) {
-    let geometry, material;
+function selectSolidAsset(assetType: number, materialOverride: number, assets: SharedAssets): AssetSelection {
+    let geometry: THREE.BufferGeometry;
+    let material: THREE.Material;
 
     if (assetType > 0.8) {
         geometry = assets.knotGeo;
@@ -116,12 +121,11 @@ function selectSolidAsset(assetType, materialOverride, assets) {
 
 /**
  * Calculates scale for an asset based on its geometry type
- * @param {THREE.BufferGeometry} geometry - The geometry to scale
- * @param {number} baseScale - Base scale modifier
- * @param {Object} assets - Shared assets object
- * @returns {THREE.Vector3}
+ * @param geometry - The geometry to scale
+ * @param baseScale - Base scale modifier
+ * @param assets - Shared assets object
  */
-function calculateAssetScale(geometry, baseScale, assets) {
+function calculateAssetScale(geometry: THREE.BufferGeometry, baseScale: number, assets: SharedAssets): THREE.Vector3 {
     const scaleMod = 1.0 + baseScale * 1.5;
 
     if (geometry === assets.coneGeo) {
@@ -133,13 +137,21 @@ function calculateAssetScale(geometry, baseScale, assets) {
     }
 }
 
+interface SolidMeshParams {
+    assets: SharedAssets;
+    assetType: number;
+    materialOverride: number;
+    r1: number;
+    r2: number;
+    r3: number;
+}
+
 /**
  * Creates a solid building mesh
- * @param {Object} params - Creation parameters
- * @param {Array} animatedObjects - Array to collect animated objects
- * @returns {THREE.Mesh}
+ * @param params - Creation parameters
+ * @param animatedObjects - Array to collect animated objects
  */
-function createSolidMesh(params, animatedObjects) {
+function createSolidMesh(params: SolidMeshParams, animatedObjects: AnimatedObject[]): THREE.Mesh {
     const { assets, assetType, materialOverride, r1, r2, r3 } = params;
 
     const { geometry, material } = selectSolidAsset(assetType, materialOverride, assets);
@@ -153,19 +165,26 @@ function createSolidMesh(params, animatedObjects) {
     if (assetType > 0.7) {
         mesh.userData.animType = 'ROTATE_FLOAT';
         mesh.userData.speed = 0.2;
-        animatedObjects.push(mesh);
+        animatedObjects.push(mesh as AnimatedObject);
     }
 
     return mesh;
 }
 
+interface LiquidMeshParams {
+    assets: SharedAssets;
+    f: number;
+    r1: number;
+    r2: number;
+    r3: number;
+}
+
 /**
  * Creates a liquid building mesh
- * @param {Object} params - Creation parameters
- * @param {Array} animatedObjects - Array to collect animated objects
- * @returns {THREE.Mesh}
+ * @param params - Creation parameters
+ * @param animatedObjects - Array to collect animated objects
  */
-function createLiquidMesh(params, animatedObjects) {
+function createLiquidMesh(params: LiquidMeshParams, animatedObjects: AnimatedObject[]): THREE.Mesh {
     const { assets, f, r1, r2, r3 } = params;
 
     const mesh = new THREE.Mesh(assets.sphereGeo, assets.matLiquid);
@@ -178,23 +197,28 @@ function createLiquidMesh(params, animatedObjects) {
         phase: f + r1 * 5,
         baseScale: mesh.scale.clone(),
     };
-    animatedObjects.push(mesh);
+    animatedObjects.push(mesh as AnimatedObject);
 
     mesh.rotation.z = (r1 - 0.5) * 0.5;
 
     return mesh;
 }
 
+interface FragmentPosition {
+    yPos: number;
+    xOffset: number;
+    zOffset: number;
+}
+
 /**
  * Calculates position based on fragment type
- * @param {boolean} isLiquid - Whether the fragment is liquid
- * @param {number} f - Fragment index
- * @param {number} r1 - Random value 1
- * @param {number} r2 - Random value 2
- * @param {number} r3 - Random value 3
- * @returns {{yPos: number, xOffset: number, zOffset: number}}
+ * @param isLiquid - Whether the fragment is liquid
+ * @param f - Fragment index
+ * @param r1 - Random value 1
+ * @param r2 - Random value 2
+ * @param r3 - Random value 3
  */
-function calculateFragmentPosition(isLiquid, f, r1, r2, r3) {
+function calculateFragmentPosition(isLiquid: boolean, f: number, r1: number, r2: number, r3: number): FragmentPosition {
     const yPos = isLiquid ? f * 2.5 + (r1 - 0.5) * 2 : f * 2.5;
     const xOffset = isLiquid ? (r2 - 0.5) * 6 : (r2 - 0.5) * 5;
     const zOffset = isLiquid ? (r3 - 0.5) * 6 : (r3 - 0.5) * 5;
@@ -204,12 +228,16 @@ function calculateFragmentPosition(isLiquid, f, r1, r2, r3) {
 
 /**
  * Creates FLUID style building with mixed assets
- * @param {THREE.Group} buildGroup - Parent group
- * @param {Object} params - Generation parameters
- * @param {Array} animatedObjects - Array to collect animated objects
- * @returns {number} Maximum height of building
+ * @param buildGroup - Parent group
+ * @param params - Generation parameters
+ * @param animatedObjects - Array to collect animated objects
+ * @returns Maximum height of building
  */
-export function createFluidBuilding(buildGroup, params, animatedObjects) {
+export function createFluidBuilding(
+    buildGroup: THREE.Group,
+    params: BuildingParams,
+    animatedObjects: AnimatedObject[]
+): number {
     const { i, cx, cz, assets } = params;
     let maxHeight = 0;
     const fragments = 4 + Math.floor(hash(i, cz) * 8);

@@ -1,44 +1,56 @@
 // 1-bit Chimera Void - Hands Model
 import * as THREE from 'three';
-import { createFlowerProp, animateFlower } from './FlowerProp.js';
+import { createFlowerProp, animateFlower } from './FlowerProp';
+import type { FingerStructure, ThumbStructure } from '../types';
+
+interface FlowerGroup extends THREE.Group {
+    userData: {
+        bloom?: THREE.Group;
+    };
+}
 
 /**
  * Creates anatomically detailed hand models
  */
 export class HandsModel {
-    constructor(camera) {
-        this.camera = camera;
-        this.handsGroup = new THREE.Group();
-        this.time = 0;
+    private camera: THREE.PerspectiveCamera;
+    private handsGroup: THREE.Group = new THREE.Group();
+    private time: number = 0;
+    private leftHand!: THREE.Group;
+    private rightHand!: THREE.Group;
 
-        // Materials
+    // Materials
+    private handMat: THREE.MeshLambertMaterial;
+    private jointMat: THREE.MeshLambertMaterial;
+
+    constructor(camera: THREE.PerspectiveCamera) {
+        this.camera = camera;
         this.handMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
         this.jointMat = new THREE.MeshLambertMaterial({ color: 0x444444 });
 
         // Build hands
-        this._init();
+        this.init();
 
         camera.add(this.handsGroup);
     }
 
     /**
      * Initialize hands
-     * @private
      */
-    _init() {
+    private init(): void {
         // Hand light
         const handLight = new THREE.DirectionalLight(0xffffff, 0.5);
         handLight.position.set(0, 2, 0);
         this.handsGroup.add(handLight);
 
         // Left hand
-        this.leftHand = this._createHandModel(true);
+        this.leftHand = this.createHandModel(true);
         this.leftHand.position.set(-0.55, -0.6, -0.85);
         this.leftHand.rotation.set(-0.3, -0.2, -0.15);
         this.handsGroup.add(this.leftHand);
 
         // Right hand (with flower)
-        this.rightHand = this._createHandModel(false);
+        this.rightHand = this.createHandModel(false);
         this.rightHand.position.set(0.6, -0.7, -0.9);
         this.rightHand.rotation.set(-0.2, 0.4, 0.3);
         this.handsGroup.add(this.rightHand);
@@ -46,9 +58,8 @@ export class HandsModel {
 
     /**
      * Create a finger with 3 phalanges
-     * @private
      */
-    _createFinger(length, width) {
+    private createFinger(length: number, width: number): FingerStructure {
         const root = new THREE.Group();
         const l1 = length * 0.45;
         const l2 = length * 0.3;
@@ -108,9 +119,8 @@ export class HandsModel {
 
     /**
      * Create thumb
-     * @private
      */
-    _createThumb(width) {
+    private createThumb(width: number): ThumbStructure {
         const root = new THREE.Group();
         const l2 = 0.12;
         const l3 = 0.1;
@@ -148,9 +158,8 @@ export class HandsModel {
 
     /**
      * Create complete hand model
-     * @private
      */
-    _createHandModel(isLeft) {
+    private createHandModel(isLeft: boolean): THREE.Group {
         const g = new THREE.Group();
         const handMeshGroup = new THREE.Group();
         g.add(handMeshGroup);
@@ -202,27 +211,27 @@ export class HandsModel {
         palmGroup.add(hypo);
 
         // Fingers
-        const fIndex = this._createFinger(0.38, 0.065);
+        const fIndex = this.createFinger(0.38, 0.065);
         fIndex.root.position.set(isLeft ? 0.1 : -0.1, 0, -0.21);
         fIndex.root.rotation.y = isLeft ? -0.05 : 0.05;
         handMeshGroup.add(fIndex.root);
 
-        const fMid = this._createFinger(0.42, 0.068);
+        const fMid = this.createFinger(0.42, 0.068);
         fMid.root.position.set(0, 0, -0.22);
         handMeshGroup.add(fMid.root);
 
-        const fRing = this._createFinger(0.39, 0.065);
+        const fRing = this.createFinger(0.39, 0.065);
         fRing.root.position.set(isLeft ? -0.1 : 0.1, 0, -0.21);
         fRing.root.rotation.y = isLeft ? 0.03 : -0.03;
         handMeshGroup.add(fRing.root);
 
-        const fPinky = this._createFinger(0.3, 0.055);
+        const fPinky = this.createFinger(0.3, 0.055);
         fPinky.root.position.set(isLeft ? -0.19 : 0.19, -0.01, -0.19);
         fPinky.root.rotation.y = isLeft ? 0.15 : -0.15;
         handMeshGroup.add(fPinky.root);
 
         // Thumb
-        const fThumb = this._createThumb(0.075);
+        const fThumb = this.createThumb(0.075);
         fThumb.root.position.set(isLeft ? 0.16 : -0.16, -0.02, -0.02);
         fThumb.root.rotation.y = isLeft ? -0.8 : 0.8;
         fThumb.root.rotation.x = 0.2;
@@ -271,11 +280,11 @@ export class HandsModel {
 
     /**
      * Animate hands
-     * @param {number} delta - Delta time in seconds
-     * @param {boolean} isMoving - Whether player is moving
-     * @param {number} timeMs - Current time in ms
+     * @param delta - Delta time in seconds
+     * @param isMoving - Whether player is moving
+     * @param timeMs - Current time in ms
      */
-    animate(delta, isMoving, timeMs) {
+    animate(delta: number, isMoving: boolean, timeMs: number): void {
         this.time += delta;
         const sway = isMoving
             ? Math.sin(this.time * 10) * 0.05
@@ -296,8 +305,9 @@ export class HandsModel {
 
         // Animate flower on right hand
         this.rightHand.children.forEach(child => {
-            if (child.userData.bloom) {
-                animateFlower(child, timeMs * 0.001, delta);
+            const flowerChild = child as FlowerGroup;
+            if (flowerChild.userData?.bloom) {
+                animateFlower(flowerChild, timeMs * 0.001, delta);
             }
         });
     }

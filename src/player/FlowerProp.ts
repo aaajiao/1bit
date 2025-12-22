@@ -1,14 +1,27 @@
 // 1-bit Chimera Void - Flower Prop (Hand-held flower)
 import * as THREE from 'three';
-import { getSharedAssets } from '../world/SharedAssets.js';
+import { getSharedAssets } from '../world/SharedAssets';
+
+interface FlowerPartUserData {
+    animType?: 'PETAL_BREATHE' | 'SEPAL_FLOAT' | 'DUST_ORBIT';
+    baseRotX?: number;
+    phase?: number;
+    speed?: number;
+    axis?: THREE.Vector3;
+}
+
+interface FlowerGroup extends THREE.Group {
+    userData: {
+        bloom?: THREE.Group;
+    };
+}
 
 /**
  * Creates an animated flower prop held by the right hand
- * @returns {THREE.Group} Flower group with bloom animations
  */
-export function createFlowerProp() {
+export function createFlowerProp(): FlowerGroup {
     const assets = getSharedAssets();
-    const flowerGroup = new THREE.Group();
+    const flowerGroup = new THREE.Group() as FlowerGroup;
 
     // Flower position relative to hand
     flowerGroup.position.set(-0.05, 0.05, -0.25);
@@ -57,7 +70,7 @@ export function createFlowerProp() {
         );
         petal.lookAt(0, 0, 0);
         petal.rotation.x -= 2.2;
-        petal.userData = {
+        (petal.userData as FlowerPartUserData) = {
             animType: 'PETAL_BREATHE',
             baseRotX: petal.rotation.x,
             phase: p,
@@ -82,7 +95,7 @@ export function createFlowerProp() {
             Math.random(),
             Math.random()
         );
-        sepal.userData = {
+        (sepal.userData as FlowerPartUserData) = {
             animType: 'SEPAL_FLOAT',
             phase: s * 2,
             speed: 0.6,
@@ -102,7 +115,7 @@ export function createFlowerProp() {
             r * Math.cos(phi),
             r * Math.sin(phi) * Math.sin(theta)
         );
-        dust.userData = {
+        (dust.userData as FlowerPartUserData) = {
             animType: 'DUST_ORBIT',
             axis: new THREE.Vector3(
                 Math.random() - 0.5,
@@ -122,30 +135,30 @@ export function createFlowerProp() {
 
 /**
  * Animate flower components
- * @param {THREE.Group} flowerGroup - The flower group to animate
- * @param {number} time - Current time in seconds
- * @param {number} delta - Delta time in seconds
+ * @param flowerGroup - The flower group to animate
+ * @param time - Current time in seconds
+ * @param delta - Delta time in seconds
  */
-export function animateFlower(flowerGroup, time, delta) {
+export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: number): void {
     if (!flowerGroup.userData.bloom) return;
 
     const bloom = flowerGroup.userData.bloom;
     bloom.rotation.y += delta * 0.2;
 
     bloom.children.forEach(part => {
-        const ud = part.userData;
+        const ud = part.userData as FlowerPartUserData;
         if (!ud || !ud.animType) return;
 
-        if (ud.animType === 'PETAL_BREATHE') {
+        if (ud.animType === 'PETAL_BREATHE' && ud.baseRotX !== undefined && ud.phase !== undefined) {
             const openAmount = Math.sin(time * 2.0 + ud.phase) * 0.2;
             part.rotation.x = ud.baseRotX + openAmount;
         }
-        if (ud.animType === 'SEPAL_FLOAT') {
+        if (ud.animType === 'SEPAL_FLOAT' && ud.phase !== undefined) {
             part.rotation.x += delta * 0.5;
             part.rotation.z += delta * 0.3;
             part.position.y = 0.1 + Math.sin(time * 1.5 + ud.phase) * 0.05;
         }
-        if (ud.animType === 'DUST_ORBIT') {
+        if (ud.animType === 'DUST_ORBIT' && ud.axis && ud.speed !== undefined) {
             part.position.applyAxisAngle(ud.axis, ud.speed * delta);
         }
     });

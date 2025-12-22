@@ -1,15 +1,20 @@
 // 1-bit Chimera Void - Flora Factory (Trees)
 import * as THREE from 'three';
-import { hash } from '../utils/hash.js';
+import { hash } from '../utils/hash';
+import type { BuildingParams, AnimatedObject } from '../types';
 
 /**
  * Creates a procedural tree with trunk, branches, and canopy
- * @param {THREE.Group} buildGroup - Parent group
- * @param {Object} params - Generation parameters
- * @param {Array} animatedObjects - Array to collect animated objects
- * @returns {number} Maximum height of tree
+ * @param buildGroup - Parent group
+ * @param params - Generation parameters
+ * @param animatedObjects - Array to collect animated objects
+ * @returns Maximum height of tree
  */
-export function createTree(buildGroup, params, animatedObjects) {
+export function createTree(
+    buildGroup: THREE.Group,
+    params: BuildingParams,
+    animatedObjects: AnimatedObject[]
+): number {
     const { i, cx, cz, assets } = params;
 
     const sizeGene = hash(i, cz * cx);
@@ -104,7 +109,7 @@ export function createTree(buildGroup, params, animatedObjects) {
                 rigidity: (1.0 - lRatio * 0.5) * (globalScale > 2 ? 2.0 : 1.0),
             };
             bGroup.rotation.z = angleUp;
-            animatedObjects.push(bGroup);
+            animatedObjects.push(bGroup as AnimatedObject);
 
             // Branch cone
             const branch = new THREE.Mesh(assets.coneGeo, assets.matTreeBark);
@@ -137,7 +142,7 @@ export function createTree(buildGroup, params, animatedObjects) {
                     phase: hash(leaf, i) * Math.PI,
                     baseScale: leafMesh.scale.clone(),
                 };
-                animatedObjects.push(leafMesh);
+                animatedObjects.push(leafMesh as AnimatedObject);
 
                 // Rare fruit
                 if (hash(leaf, i) > 0.95) {
@@ -152,7 +157,7 @@ export function createTree(buildGroup, params, animatedObjects) {
                         speed: 1.0,
                         phase: 0,
                     };
-                    animatedObjects.push(fruit);
+                    animatedObjects.push(fruit as AnimatedObject);
                     bGroup.add(fruit);
                 }
 

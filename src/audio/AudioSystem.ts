@@ -1,27 +1,35 @@
 // 1-bit Chimera Void - Procedural Audio System
 // Minimalist 8-bit style audio to match 1-bit aesthetics
 
+import type { AmbientNode, AudioSystemInterface } from '../types';
+
+// Extend Window interface for webkit prefix
+declare global {
+    interface Window {
+        webkitAudioContext?: typeof AudioContext;
+    }
+}
+
 /**
  * Generates procedural audio using Web Audio API
  * Sound design philosophy: harsh, digital, binary - matching the 1-bit visual style
  */
-export class AudioSystem {
-    constructor() {
-        this.audioContext = null;
-        this.masterGain = null;
-        this.enabled = false;
-        this.ambientNode = null;
-        this.lastFootstepTime = 0;
-    }
+export class AudioSystem implements AudioSystemInterface {
+    private audioContext: AudioContext | null = null;
+    private masterGain: GainNode | null = null;
+    public enabled: boolean = false;
+    private ambientNode: AmbientNode | null = null;
+    private lastFootstepTime: number = 0;
 
     /**
      * Initialize audio context (must be called after user interaction)
      */
-    init() {
+    init(): void {
         if (this.enabled) return;
 
         try {
-            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            this.audioContext = new AudioContextClass();
             this.masterGain = this.audioContext.createGain();
             this.masterGain.gain.value = 0.3; // Master volume
             this.masterGain.connect(this.audioContext.destination);
@@ -37,8 +45,8 @@ export class AudioSystem {
     /**
      * 1-bit style footstep - harsh square wave click
      */
-    playFootstep() {
-        if (!this.enabled) return;
+    playFootstep(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
 
         // Throttle footsteps
         const now = this.audioContext.currentTime;
@@ -55,7 +63,6 @@ export class AudioSystem {
 
         // Very short envelope - click sound
         gain.gain.setValueAtTime(0.15, now);
-        gain.gain.exponentialDecayTo = 0.001;
         gain.gain.setTargetAtTime(0.001, now, 0.02);
 
         osc.connect(gain);
@@ -69,8 +76,8 @@ export class AudioSystem {
      * Persistent ambient drone - low frequency oscillation
      * Creates an unsettling, digital atmosphere
      */
-    startAmbientDrone() {
-        if (!this.enabled || this.ambientNode) return;
+    private startAmbientDrone(): void {
+        if (!this.enabled || this.ambientNode || !this.audioContext || !this.masterGain) return;
 
         // Low frequency oscillator
         const osc1 = this.audioContext.createOscillator();
@@ -107,8 +114,8 @@ export class AudioSystem {
     /**
      * Cable pulse sound - high frequency blip
      */
-    playCablePulse() {
-        if (!this.enabled) return;
+    playCablePulse(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
 
         const now = this.audioContext.currentTime;
         const osc = this.audioContext.createOscillator();
@@ -132,8 +139,8 @@ export class AudioSystem {
     /**
      * Eye blink sound - descending tone
      */
-    playEyeBlink() {
-        if (!this.enabled) return;
+    playEyeBlink(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
 
         const now = this.audioContext.currentTime;
         const osc = this.audioContext.createOscillator();
@@ -155,10 +162,10 @@ export class AudioSystem {
 
     /**
      * Day/night transition sound - rising/falling sweep
-     * @param {boolean} toNight - true if transitioning to night
+     * @param toNight - true if transitioning to night
      */
-    playDayNightTransition(toNight) {
-        if (!this.enabled) return;
+    playDayNightTransition(toNight: boolean): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
 
         const now = this.audioContext.currentTime;
         const osc = this.audioContext.createOscillator();
@@ -188,9 +195,9 @@ export class AudioSystem {
 
     /**
      * Set master volume
-     * @param {number} value - 0.0 to 1.0
+     * @param value - 0.0 to 1.0
      */
-    setVolume(value) {
+    setVolume(value: number): void {
         if (this.masterGain) {
             this.masterGain.gain.value = Math.max(0, Math.min(1, value));
         }
@@ -199,7 +206,7 @@ export class AudioSystem {
     /**
      * Mute/unmute
      */
-    toggleMute() {
+    toggleMute(): void {
         if (this.masterGain) {
             this.masterGain.gain.value = this.masterGain.gain.value > 0 ? 0 : 0.3;
         }
