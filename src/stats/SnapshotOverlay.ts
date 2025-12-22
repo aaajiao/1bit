@@ -7,11 +7,11 @@ import type { StateSnapshot } from './StateSnapshotGenerator';
  * Overlay display configuration
  */
 export interface OverlayConfig {
-    displayDuration: number;    // Total display time (ms)
-    fadeInDuration: number;     // Fade in time (ms)
-    fadeOutDuration: number;    // Fade out time (ms)
-    textDelay: number;          // Delay before text appears (ms)
-    textDuration: number;       // How long text stays visible (ms)
+    displayDuration: number; // Total display time (ms)
+    fadeInDuration: number; // Fade in time (ms)
+    fadeOutDuration: number; // Fade out time (ms)
+    textDelay: number; // Delay before text appears (ms)
+    textDuration: number; // How long text stays visible (ms)
 }
 
 const DEFAULT_CONFIG: OverlayConfig = {
@@ -181,7 +181,8 @@ export class SnapshotOverlay {
         const pattern = snapshot.pattern;
 
         const animate = () => {
-            if (!this.isVisible) return;
+            if (!this.isVisible)
+                return;
 
             this.patternTime += 0.016; // ~60fps
             this.renderPattern(pattern);
@@ -199,7 +200,7 @@ export class SnapshotOverlay {
         uPatternMode: number;
         uDensity: number;
         uFrequency: number;
-        uPhase: number
+        uPhase: number;
     }): void {
         const { width, height } = this.canvas;
         const imageData = this.ctx.createImageData(width, height);

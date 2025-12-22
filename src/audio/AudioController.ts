@@ -4,9 +4,10 @@
  * 实现 AudioSystemInterface 以保持向后兼容
  */
 
-import { AudioEngine } from './AudioEngine';
 import type { AmbientNode, AudioSystemInterface } from '../types';
-import { RoomType, RoomAudioConfig } from '../world/RoomConfig';
+import type { RoomAudioConfig } from '../world/RoomConfig';
+import { RoomType } from '../world/RoomConfig';
+import { AudioEngine } from './AudioEngine';
 
 export class AudioController implements AudioSystemInterface {
     private engine: AudioEngine;
@@ -37,13 +38,13 @@ export class AudioController implements AudioSystemInterface {
     private flowerSilenceTimer: number = 0;
 
     // Rift state
-    private riftFogNode: { noise: AudioBufferSourceNode, gain: GainNode, filter: BiquadFilterNode, lfo: OscillatorNode } | null = null;
+    private riftFogNode: { noise: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode; lfo: OscillatorNode } | null = null;
     private riftFallOsc: OscillatorNode | null = null;
     private riftFallNoise: AudioBufferSourceNode | null = null;
     private riftFallGain: GainNode | null = null;
 
     // Cable hum state
-    private cableHumNode: { osc: OscillatorNode, gain: GainNode, lfo: OscillatorNode } | null = null;
+    private cableHumNode: { osc: OscillatorNode; gain: GainNode; lfo: OscillatorNode } | null = null;
 
     constructor() {
         this.engine = new AudioEngine();
@@ -83,7 +84,8 @@ export class AudioController implements AudioSystemInterface {
     private startAmbientDrone(): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master || this.ambientNode) return;
+        if (!ctx || !master || this.ambientNode)
+            return;
 
         const osc1 = ctx.createOscillator();
         const osc2 = ctx.createOscillator();
@@ -115,9 +117,11 @@ export class AudioController implements AudioSystemInterface {
 
     playFootstep(): void {
         const ctx = this.engine.getContext();
-        if (!ctx) return;
+        if (!ctx)
+            return;
         const now = ctx.currentTime;
-        if (now - this.lastFootstepTime < 0.25) return;
+        if (now - this.lastFootstepTime < 0.25)
+            return;
         this.lastFootstepTime = now;
 
         this.engine.playTone({
@@ -176,7 +180,8 @@ export class AudioController implements AudioSystemInterface {
     playDoubleJump(): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master) return;
+        if (!ctx || !master)
+            return;
 
         const now = ctx.currentTime;
 
@@ -260,7 +265,8 @@ export class AudioController implements AudioSystemInterface {
     playGlitchBurst(): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master) return;
+        if (!ctx || !master)
+            return;
 
         const now = ctx.currentTime;
         const totalDuration = 0.6 + Math.random() * 0.4;
@@ -269,7 +275,8 @@ export class AudioController implements AudioSystemInterface {
         for (let i = 0; i < burstCount; i++) {
             const burstStart = now + i * (totalDuration / burstCount);
             const burstDuration = 0.02 + Math.random() * 0.04;
-            if (Math.random() < 0.3) continue;
+            if (Math.random() < 0.3)
+                continue;
 
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
@@ -289,15 +296,19 @@ export class AudioController implements AudioSystemInterface {
     updateWeatherAudio(weatherType: number, intensity: number): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master) return;
+        if (!ctx || !master)
+            return;
 
         if (weatherType !== this.currentWeatherType) {
             this.stopStaticAmbient();
             this.stopRainAmbient();
 
-            if (weatherType === 1) this.startStaticAmbient();
-            else if (weatherType === 2) this.startRainAmbient();
-            else if (weatherType === 3) this.playGlitchBurst();
+            if (weatherType === 1)
+                this.startStaticAmbient();
+            else if (weatherType === 2)
+                this.startRainAmbient();
+            else if (weatherType === 3)
+                this.playGlitchBurst();
 
             this.currentWeatherType = weatherType;
         }
@@ -310,7 +321,8 @@ export class AudioController implements AudioSystemInterface {
     private startStaticAmbient(): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master || this.weatherNoiseSource) return;
+        if (!ctx || !master || this.weatherNoiseSource)
+            return;
 
         this.weatherNoiseGain = ctx.createGain();
         this.weatherNoiseGain.gain.value = 0;
@@ -351,11 +363,15 @@ export class AudioController implements AudioSystemInterface {
 
     private stopStaticAmbient(): void {
         if (this.weatherNoiseSource) {
-            try { (this.weatherNoiseSource as unknown as OscillatorNode).stop(); } catch { }
+            try { (this.weatherNoiseSource as unknown as OscillatorNode).stop(); }
+            catch { }
             this.weatherNoiseSource = null;
         }
         if (this._staticExtra) {
-            this._staticExtra.forEach(osc => { try { osc.stop(); } catch { } });
+            this._staticExtra.forEach((osc) => {
+                try { osc.stop(); }
+                catch { }
+            });
             this._staticExtra = null;
         }
         this.weatherNoiseGain = null;
@@ -364,7 +380,8 @@ export class AudioController implements AudioSystemInterface {
     private startRainAmbient(): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master || this.weatherRainInterval) return;
+        if (!ctx || !master || this.weatherRainInterval)
+            return;
 
         this.weatherNoiseGain = ctx.createGain();
         this.weatherNoiseGain.gain.value = 0;
@@ -374,7 +391,8 @@ export class AudioController implements AudioSystemInterface {
         let noteIndex = 0;
 
         const playTone = () => {
-            if (!ctx || !this.weatherNoiseGain) return;
+            if (!ctx || !this.weatherNoiseGain)
+                return;
             const now = ctx.currentTime;
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
@@ -392,7 +410,8 @@ export class AudioController implements AudioSystemInterface {
         };
 
         const schedule = () => {
-            if (this.weatherRainInterval === null) return;
+            if (this.weatherRainInterval === null)
+                return;
             playTone();
             this.weatherRainInterval = window.setTimeout(schedule, 500);
         };
@@ -412,11 +431,14 @@ export class AudioController implements AudioSystemInterface {
     updateFlowerAudio(intensity: number): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master) return;
+        if (!ctx || !master)
+            return;
 
         let currentState = 0;
-        if (intensity >= 0.7) currentState = 2;
-        else if (intensity >= 0.3) currentState = 1;
+        if (intensity >= 0.7)
+            currentState = 2;
+        else if (intensity >= 0.3)
+            currentState = 1;
 
         if (this.lastFlowerState !== -1 && currentState !== this.lastFlowerState) {
             this.playFlowerStateChange(currentState > this.lastFlowerState);
@@ -429,14 +451,16 @@ export class AudioController implements AudioSystemInterface {
         if (this.lastFlowerIntensity >= 0 && intensityChange > changeThreshold) {
             this.playFlowerChangeTone(intensity, intensityChange);
             this.flowerSilenceTimer = 0;
-        } else {
+        }
+        else {
             this.flowerSilenceTimer++;
         }
         this.lastFlowerIntensity = intensity;
     }
 
     private playFlowerChangeTone(intensity: number, changeSpeed: number): void {
-        if (this.flowerSilenceTimer < 2) return;
+        if (this.flowerSilenceTimer < 2)
+            return;
         const freq = 150 + intensity * 350;
         const volume = Math.min(changeSpeed * 2 + 0.02, 0.06);
         const duration = 0.2 + changeSpeed * 0.2;
@@ -471,7 +495,8 @@ export class AudioController implements AudioSystemInterface {
     startBinauralBeat(baseFreq: number = 55, beatFreq: number = 20): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master || this.binauralActive) return;
+        if (!ctx || !master || this.binauralActive)
+            return;
 
         this.binauralMerger = ctx.createChannelMerger(2);
         this.binauralLeft = ctx.createOscillator();
@@ -505,7 +530,8 @@ export class AudioController implements AudioSystemInterface {
 
     stopBinauralBeat(): void {
         const ctx = this.engine.getContext();
-        if (!this.binauralActive || !ctx) return;
+        if (!this.binauralActive || !ctx)
+            return;
 
         if (this.binauralGain) {
             this.binauralGain.gain.setTargetAtTime(0, ctx.currentTime, 0.3);
@@ -524,7 +550,8 @@ export class AudioController implements AudioSystemInterface {
 
     updateBinauralPosition(xPosition: number, crackWidth: number): void {
         const ctx = this.engine.getContext();
-        if (!this.binauralGain || !ctx) return;
+        if (!this.binauralGain || !ctx)
+            return;
 
         const distanceFromCrack = Math.abs(xPosition);
         const intensity = Math.max(0, 1 - distanceFromCrack / crackWidth);
@@ -536,7 +563,8 @@ export class AudioController implements AudioSystemInterface {
     startCableHum(): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master || this.cableHumNode) return;
+        if (!ctx || !master || this.cableHumNode)
+            return;
 
         const now = ctx.currentTime;
         const osc = ctx.createOscillator();
@@ -564,21 +592,26 @@ export class AudioController implements AudioSystemInterface {
 
     updateCableHum(intensity: number): void {
         const ctx = this.engine.getContext();
-        if (!this.cableHumNode || !ctx) return;
+        if (!this.cableHumNode || !ctx)
+            return;
         const vol = Math.max(0, Math.min(1, intensity)) * 0.15;
         this.cableHumNode.gain.gain.setTargetAtTime(vol, ctx.currentTime, 0.1);
     }
 
     stopCableHum(): void {
-        if (!this.cableHumNode) return;
+        if (!this.cableHumNode)
+            return;
         const ctx = this.engine.getContext();
         const { osc, gain, lfo } = this.cableHumNode;
 
-        if (ctx) gain.gain.setTargetAtTime(0, ctx.currentTime, 0.2);
+        if (ctx)
+            gain.gain.setTargetAtTime(0, ctx.currentTime, 0.2);
 
         setTimeout(() => {
-            try { osc.stop(); } catch { }
-            try { lfo.stop(); } catch { }
+            try { osc.stop(); }
+            catch { }
+            try { lfo.stop(); }
+            catch { }
         }, 250);
 
         this.cableHumNode = null;
@@ -589,7 +622,8 @@ export class AudioController implements AudioSystemInterface {
     startRiftFog(): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master || this.riftFogNode) return;
+        if (!ctx || !master || this.riftFogNode)
+            return;
 
         const now = ctx.currentTime;
         const bufferSize = ctx.sampleRate * 2;
@@ -630,16 +664,19 @@ export class AudioController implements AudioSystemInterface {
 
     updateRiftFog(intensity: number): void {
         const ctx = this.engine.getContext();
-        if (!this.riftFogNode || !ctx) return;
+        if (!this.riftFogNode || !ctx)
+            return;
         const targetVol = Math.max(0, Math.min(1, intensity)) * 0.8;
         this.riftFogNode.gain.gain.setTargetAtTime(targetVol, ctx.currentTime, 0.2);
     }
 
     stopRiftFog(): void {
-        if (!this.riftFogNode) return;
+        if (!this.riftFogNode)
+            return;
         const ctx = this.engine.getContext();
         const { noise, gain, lfo } = this.riftFogNode;
-        if (ctx) gain.gain.setTargetAtTime(0, ctx.currentTime, 0.5);
+        if (ctx)
+            gain.gain.setTargetAtTime(0, ctx.currentTime, 0.5);
         setTimeout(() => { noise.stop(); lfo.stop(); }, 600);
         this.riftFogNode = null;
     }
@@ -647,7 +684,8 @@ export class AudioController implements AudioSystemInterface {
     playRiftFall(): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
-        if (!ctx || !master || this.riftFallGain) return;
+        if (!ctx || !master || this.riftFallGain)
+            return;
 
         const now = ctx.currentTime;
         this.riftFallGain = ctx.createGain();
@@ -686,7 +724,8 @@ export class AudioController implements AudioSystemInterface {
 
     stopRiftFall(): void {
         const ctx = this.engine.getContext();
-        if (!this.riftFallGain || !ctx) return;
+        if (!this.riftFallGain || !ctx)
+            return;
 
         const now = ctx.currentTime;
         this.riftFallGain.gain.cancelScheduledValues(now);
@@ -723,7 +762,8 @@ export class AudioController implements AudioSystemInterface {
     // ==================== Room Change ====================
 
     onRoomChange(prevType: RoomType | null, newType: RoomType, audioConfig: RoomAudioConfig): void {
-        if (!this.enabled) return;
+        if (!this.enabled)
+            return;
 
         if (prevType !== null) {
             this.playRoomTransition();

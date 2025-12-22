@@ -24,7 +24,8 @@ export class AudioEngine {
      * Initialize audio context (must be called after user interaction)
      */
     init(): void {
-        if (this.enabled) return;
+        if (this.enabled)
+            return;
 
         try {
             const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -45,7 +46,8 @@ export class AudioEngine {
             this.gazeLowPassFilter.connect(this.audioContext.destination);
 
             this.enabled = true;
-        } catch (e) {
+        }
+        catch (e) {
             console.warn('AudioEngine: Failed to initialize', e);
         }
     }
@@ -97,15 +99,16 @@ export class AudioEngine {
      * Tick gaze filter interpolation (call every frame)
      */
     tick(deltaTime: number): void {
-        if (!this.gazeLowPassFilter || !this.audioContext) return;
+        if (!this.gazeLowPassFilter || !this.audioContext)
+            return;
 
         const lerpSpeed = 3.0;
-        this.gazeFilterCurrentFreq +=
-            (this.gazeFilterTargetFreq - this.gazeFilterCurrentFreq) * lerpSpeed * deltaTime;
+        this.gazeFilterCurrentFreq
+            += (this.gazeFilterTargetFreq - this.gazeFilterCurrentFreq) * lerpSpeed * deltaTime;
 
         this.gazeLowPassFilter.frequency.setValueAtTime(
             this.gazeFilterCurrentFreq,
-            this.audioContext.currentTime
+            this.audioContext.currentTime,
         );
     }
 
@@ -115,7 +118,8 @@ export class AudioEngine {
      * Create a white noise buffer
      */
     createNoiseBuffer(duration: number): AudioBuffer | null {
-        if (!this.audioContext) return null;
+        if (!this.audioContext)
+            return null;
         const bufferSize = Math.floor(this.audioContext.sampleRate * duration);
         const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
         const data = buffer.getChannelData(0);
@@ -137,7 +141,8 @@ export class AudioEngine {
         attack?: number;
         decay?: number;
     }): void {
-        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+        if (!this.enabled || !this.audioContext || !this.masterGain)
+            return;
 
         const now = this.audioContext.currentTime;
         const osc = this.audioContext.createOscillator();
@@ -173,11 +178,13 @@ export class AudioEngine {
         filterFreq?: number;
         filterQ?: number;
     }): void {
-        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+        if (!this.enabled || !this.audioContext || !this.masterGain)
+            return;
 
         const now = this.audioContext.currentTime;
         const buffer = this.createNoiseBuffer(options.duration);
-        if (!buffer) return;
+        if (!buffer)
+            return;
 
         const noise = this.audioContext.createBufferSource();
         noise.buffer = buffer;
@@ -193,7 +200,8 @@ export class AudioEngine {
             filter.Q.value = options.filterQ ?? 1;
             noise.connect(filter);
             filter.connect(gain);
-        } else {
+        }
+        else {
             noise.connect(gain);
         }
 

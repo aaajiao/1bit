@@ -1,4 +1,3 @@
-
 export interface HUDState {
     posX: number;
     posZ: number;
@@ -30,7 +29,8 @@ export class HUD {
      * @param state Current state of the application for display
      */
     update(state: HUDState): void {
-        if (!this.element) return;
+        if (!this.element)
+            return;
 
         const pitchDeg = Math.round(state.pitch * 180 / Math.PI);
         const shiftKey = state.isShiftHeld ? '⬆️SHIFT' : '';
@@ -38,6 +38,6 @@ export class HUD {
         const progress = state.overrideActive ? `[${Math.round(state.overrideProgress * 100)}%]` : '';
         const tagStr = state.tags.join(', ');
 
-        this.element.innerText = `POS: ${state.posX}, ${state.posZ} | ${state.roomType} | ↑${pitchDeg}° ${shiftKey} ${gazing} ${progress}\n${tagStr}`;
+        this.element.innerText = `POS: ${state.posX.toFixed(1)}, ${state.posZ.toFixed(1)} | ${state.roomType} | ↑${pitchDeg}° ${shiftKey} ${gazing} ${progress}\n${tagStr}`;
     }
 }

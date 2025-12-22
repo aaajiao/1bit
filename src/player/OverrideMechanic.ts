@@ -7,33 +7,33 @@ import { RoomType } from '../world/RoomConfig';
  * Override state information
  */
 export interface OverrideState {
-    isActive: boolean;          // Currently overriding
-    holdDuration: number;       // How long held (seconds)
-    triggerThreshold: number;   // Required hold time to trigger
-    isTriggered: boolean;       // Has triggered the override effect
-    cooldownRemaining: number;  // Cooldown before can trigger again
+    isActive: boolean; // Currently overriding
+    holdDuration: number; // How long held (seconds)
+    triggerThreshold: number; // Required hold time to trigger
+    isTriggered: boolean; // Has triggered the override effect
+    cooldownRemaining: number; // Cooldown before can trigger again
 }
 
 /**
  * Override mechanic configuration
  */
 export interface OverrideConfig {
-    holdThreshold: number;      // Seconds to hold before triggering
-    effectDuration: number;     // How long the override effect lasts
-    cooldown: number;           // Seconds before can trigger again
-    requiresGaze: boolean;      // Must be gazing to trigger
-    allowedRooms: RoomType[];   // Rooms where override works
+    holdThreshold: number; // Seconds to hold before triggering
+    effectDuration: number; // How long the override effect lasts
+    cooldown: number; // Seconds before can trigger again
+    requiresGaze: boolean; // Must be gazing to trigger
+    allowedRooms: RoomType[]; // Rooms where override works
 }
 
 /**
  * Override hint state
  */
 export interface OverrideHint {
-    shouldShow: boolean;        // Whether to show the hint
-    hasBeenShown: boolean;      // Whether hint has been shown this session
+    shouldShow: boolean; // Whether to show the hint
+    hasBeenShown: boolean; // Whether hint has been shown this session
     conditions: {
-        gazeTimeMet: boolean;   // Player has gazed > 5 seconds
-        forcedTwice: boolean;   // Flower forced down >= 2 times
+        gazeTimeMet: boolean; // Player has gazed > 5 seconds
+        forcedTwice: boolean; // Flower forced down >= 2 times
     };
 }
 
@@ -57,10 +57,10 @@ export class OverrideMechanic {
 
     constructor() {
         this.config = {
-            holdThreshold: 1.0,     // 1 second hold
-            effectDuration: 0.5,    // 0.5 second effect
-            cooldown: 3.0,          // 3 second cooldown
-            requiresGaze: true,     // Must be gazing
+            holdThreshold: 1.0, // 1 second hold
+            effectDuration: 0.5, // 0.5 second effect
+            cooldown: 3.0, // 3 second cooldown
+            requiresGaze: true, // Must be gazing
             allowedRooms: [RoomType.POLARIZED], // Only in POLARIZED room
         };
 
@@ -116,7 +116,7 @@ export class OverrideMechanic {
         isKeyHeld: boolean,
         isGazing: boolean,
         currentRoom: RoomType | null,
-        isFlowerForced: boolean
+        isFlowerForced: boolean,
     ): OverrideState {
         // Update cooldown
         if (this.state.cooldownRemaining > 0) {
@@ -144,13 +144,13 @@ export class OverrideMechanic {
         this.updateHint(currentRoom);
 
         // Check if override is allowed in current room
-        const inAllowedRoom = currentRoom !== null &&
-            this.config.allowedRooms.includes(currentRoom);
+        const inAllowedRoom = currentRoom !== null
+            && this.config.allowedRooms.includes(currentRoom);
 
         // Check if override can be active
-        const canActivate = inAllowedRoom &&
-            this.state.cooldownRemaining <= 0 &&
-            (!this.config.requiresGaze || isGazing);
+        const canActivate = inAllowedRoom
+            && this.state.cooldownRemaining <= 0
+            && (!this.config.requiresGaze || isGazing);
 
         // Handle key press
         if (isKeyHeld && canActivate) {
@@ -174,7 +174,8 @@ export class OverrideMechanic {
                     this.onOverrideTrigger();
                 }
             }
-        } else {
+        }
+        else {
             // Key released or not allowed
             if (this.state.isActive) {
                 // Apply cooldown if was triggered
@@ -200,14 +201,14 @@ export class OverrideMechanic {
      */
     private updateHint(currentRoom: RoomType | null): void {
         // Only show hint in allowed rooms
-        const inAllowedRoom = currentRoom !== null &&
-            this.config.allowedRooms.includes(currentRoom);
+        const inAllowedRoom = currentRoom !== null
+            && this.config.allowedRooms.includes(currentRoom);
 
         // Show hint if conditions met and not already shown
-        this.hint.shouldShow = inAllowedRoom &&
-            !this.hint.hasBeenShown &&
-            this.hint.conditions.gazeTimeMet &&
-            this.hint.conditions.forcedTwice;
+        this.hint.shouldShow = inAllowedRoom
+            && !this.hint.hasBeenShown
+            && this.hint.conditions.gazeTimeMet
+            && this.hint.conditions.forcedTwice;
 
         // Mark as shown once displayed (external code should call markHintShown)
     }
@@ -277,17 +278,20 @@ export class OverrideMechanic {
      * Returns 0-1 for smooth flash effect
      */
     getColorInversionValue(): number {
-        if (!this.state.isTriggered) return 0;
+        if (!this.state.isTriggered)
+            return 0;
 
         // Flash effect: quick on, slower off
         const effectProgress = Math.min(1, this.state.holdDuration - this.config.holdThreshold);
         if (effectProgress < 0.1) {
             // Quick flash on
             return effectProgress / 0.1;
-        } else if (effectProgress < 0.3) {
+        }
+        else if (effectProgress < 0.3) {
             // Hold
             return 1;
-        } else if (effectProgress < 0.5) {
+        }
+        else if (effectProgress < 0.5) {
             // Fade off
             return 1 - (effectProgress - 0.3) / 0.2;
         }

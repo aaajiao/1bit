@@ -23,7 +23,7 @@ export function createFloorMaterial(size: number = 64): THREE.MeshLambertMateria
         data,
         size,
         size,
-        THREE.RGBAFormat
+        THREE.RGBAFormat,
     );
     tex.magFilter = THREE.NearestFilter;
     tex.wrapS = THREE.RepeatWrapping;
@@ -42,7 +42,7 @@ export function createFloorMaterial(size: number = 64): THREE.MeshLambertMateria
 export function createFloorMesh(chunkSize: number, material: THREE.Material): THREE.Mesh {
     const floor = new THREE.Mesh(
         new THREE.PlaneGeometry(chunkSize, chunkSize),
-        material
+        material,
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
@@ -60,8 +60,8 @@ export function createFloorMesh(chunkSize: number, material: THREE.Material): TH
 export function createCrackedFloorMesh(
     chunkSize: number,
     material: THREE.Material,
-    crackWidth: number = 4
-): { group: THREE.Group, fog?: THREE.InstancedMesh } {
+    crackWidth: number = 4,
+): { group: THREE.Group; fog?: THREE.InstancedMesh } {
     const group = new THREE.Group();
 
     // Calculate half-floor dimensions
@@ -127,7 +127,7 @@ export function createCrackedFloorMesh(
     const abyssMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
     const abyssFloor = new THREE.Mesh(
         new THREE.PlaneGeometry(crackWidth + 6, chunkSize),
-        abyssMaterial
+        abyssMaterial,
     );
     abyssFloor.rotation.x = -Math.PI / 2;
     abyssFloor.position.y = -8; // Deep abyss
@@ -161,8 +161,8 @@ export function createAbyssFog(chunkSize: number, crackWidth: number): THREE.Ins
         // Random position within the crack volume
         dummy.position.set(
             (Math.random() - 0.5) * crackWidth * 1.5, // Slightly wider spread
-            -160 + Math.random() * 162.0,            // Range from -160m to +2m
-            (Math.random() - 0.5) * chunkSize         // Along entire chunk length
+            -160 + Math.random() * 162.0, // Range from -160m to +2m
+            (Math.random() - 0.5) * chunkSize, // Along entire chunk length
         );
 
         // Random rotation and scale
@@ -174,7 +174,8 @@ export function createAbyssFog(chunkSize: number, crackWidth: number): THREE.Ins
         mesh.setMatrixAt(i, dummy.matrix);
 
         // Use user data to store speed for animation
-        if (!mesh.userData.speeds) mesh.userData.speeds = [];
+        if (!mesh.userData.speeds)
+            mesh.userData.speeds = [];
         mesh.userData.speeds[i] = 0.5 + Math.random() * 1.5; // Upward speed
     }
 
@@ -192,14 +193,14 @@ export function createAbyssFog(chunkSize: number, crackWidth: number): THREE.Ins
 export function createMoireFloorMesh(
     chunkSize: number,
     material: THREE.Material,
-    rotationAngle: number = 45
+    rotationAngle: number = 45,
 ): THREE.Group {
     const group = new THREE.Group();
 
     // First layer - standard floor
     const layer1 = new THREE.Mesh(
         new THREE.PlaneGeometry(chunkSize, chunkSize),
-        material
+        material,
     );
     layer1.rotation.x = -Math.PI / 2;
     layer1.receiveShadow = true;
@@ -213,7 +214,7 @@ export function createMoireFloorMesh(
 
     const layer2 = new THREE.Mesh(
         new THREE.PlaneGeometry(chunkSize * 1.5, chunkSize * 1.5), // Larger to cover corners after rotation
-        layer2Material
+        layer2Material,
     );
     layer2.rotation.x = -Math.PI / 2;
     layer2.rotation.z = (rotationAngle * Math.PI) / 180; // Rotate around Y axis in world space (Z in local after X rotation)
@@ -246,7 +247,7 @@ function createMoireLayerMaterial(size: number = 32): THREE.MeshLambertMaterial 
         data,
         size,
         size,
-        THREE.RGBAFormat
+        THREE.RGBAFormat,
     );
     tex.magFilter = THREE.NearestFilter;
     tex.wrapS = THREE.RepeatWrapping;

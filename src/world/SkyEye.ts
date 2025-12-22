@@ -1,6 +1,6 @@
+import type { AudioSystemInterface } from '../types';
 // 1-bit Chimera Void - Sky Eye System
 import * as THREE from 'three';
-import type { AudioSystemInterface } from '../types';
 
 interface RingUserData {
     speed?: number;
@@ -30,18 +30,18 @@ export class SkyEye {
      */
     private createGeometry(): void {
         const mat = new THREE.MeshBasicMaterial({
-            color: 0xffffff,
+            color: 0xFFFFFF,
             side: THREE.DoubleSide,
             depthTest: false,
             depthWrite: false,
-            fog: false,  // Not affected by scene fog
+            fog: false, // Not affected by scene fog
         });
 
         // Eye rings
         for (let i = 1; i <= 5; i++) {
             const ring = new THREE.Mesh(
                 new THREE.RingGeometry(i * 8, i * 8 + 1, 64),
-                mat
+                mat,
             );
             (ring.userData as RingUserData) = { speed: (Math.random() - 0.5) * 0.3 };
             this.group.add(ring);
@@ -50,7 +50,7 @@ export class SkyEye {
         // Pupil
         this.pupil = new THREE.Mesh(
             new THREE.CircleGeometry(5, 32),
-            mat
+            mat,
         );
         this.group.add(this.pupil);
     }
@@ -81,7 +81,7 @@ export class SkyEye {
         }
 
         // Ring rotation
-        this.group.children.forEach(ring => {
+        this.group.children.forEach((ring) => {
             const userData = ring.userData as RingUserData;
             if (userData.speed) {
                 ring.rotation.z += userData.speed * delta;
@@ -95,13 +95,15 @@ export class SkyEye {
      * @param audio - Audio system for sound
      */
     triggerBlink(audio: AudioSystemInterface): void {
-        if (this.isBlinking) return;
+        if (this.isBlinking)
+            return;
 
         this.isBlinking = true;
         const originalScaleY = this.group.scale.y;
 
         // Play sound
-        if (audio) audio.playEyeBlink();
+        if (audio)
+            audio.playEyeBlink();
 
         // Close eye
         setTimeout(() => {

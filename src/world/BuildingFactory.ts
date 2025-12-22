@@ -1,7 +1,7 @@
+import type { AnimatedObject, BuildingParams, SharedAssets } from '../types';
 // 1-bit Chimera Void - Building Factory
 import * as THREE from 'three';
 import { hash } from '../utils/hash';
-import type { BuildingParams, SharedAssets, AnimatedObject } from '../types';
 
 /**
  * Creates BLOCKS style building
@@ -22,7 +22,7 @@ export function createBlocksBuilding(buildGroup: THREE.Group, params: BuildingPa
         mesh.scale.set(
             2 + r2 * 4,
             3 + r3 * 4,
-            2 + r2 * 4
+            2 + r2 * 4,
         );
 
         const yPos = f * 3.5;
@@ -37,7 +37,8 @@ export function createBlocksBuilding(buildGroup: THREE.Group, params: BuildingPa
         buildGroup.add(mesh);
 
         const topY = yPos + mesh.scale.y * 1.5;
-        if (topY > maxHeight) maxHeight = topY;
+        if (topY > maxHeight)
+            maxHeight = topY;
     }
 
     return maxHeight;
@@ -73,7 +74,8 @@ export function createSpikesBuilding(buildGroup: THREE.Group, params: BuildingPa
         buildGroup.add(mesh);
 
         const topY = yPos + mesh.scale.y * 1.5;
-        if (topY > maxHeight) maxHeight = topY;
+        if (topY > maxHeight)
+            maxHeight = topY;
     }
 
     return maxHeight;
@@ -97,16 +99,20 @@ function selectSolidAsset(assetType: number, materialOverride: number, assets: S
     if (assetType > 0.8) {
         geometry = assets.knotGeo;
         material = assets.matSolid;
-    } else if (assetType > 0.6) {
+    }
+    else if (assetType > 0.6) {
         geometry = assets.coneGeo;
         material = assets.matDark;
-    } else if (assetType > 0.4) {
+    }
+    else if (assetType > 0.4) {
         geometry = assets.tetraGeo;
         material = assets.matWire;
-    } else if (assetType > 0.2) {
+    }
+    else if (assetType > 0.2) {
         geometry = assets.cylinderGeo;
         material = assets.matTreeBark;
-    } else {
+    }
+    else {
         geometry = assets.boxGeo;
         material = assets.matSolid;
     }
@@ -130,9 +136,11 @@ function calculateAssetScale(geometry: THREE.BufferGeometry, baseScale: number, 
 
     if (geometry === assets.coneGeo) {
         return new THREE.Vector3(scaleMod, scaleMod * 3, scaleMod);
-    } else if (geometry === assets.tetraGeo) {
+    }
+    else if (geometry === assets.tetraGeo) {
         return new THREE.Vector3(scaleMod * 2, scaleMod * 2, scaleMod * 2);
-    } else {
+    }
+    else {
         return new THREE.Vector3(scaleMod * 2, scaleMod * 1.5, scaleMod * 2);
     }
 }
@@ -236,7 +244,7 @@ function calculateFragmentPosition(isLiquid: boolean, f: number, r1: number, r2:
 export function createFluidBuilding(
     buildGroup: THREE.Group,
     params: BuildingParams,
-    animatedObjects: AnimatedObject[]
+    animatedObjects: AnimatedObject[],
 ): number {
     const { i, cx, cz, assets } = params;
     let maxHeight = 0;
@@ -251,11 +259,13 @@ export function createFluidBuilding(
         const mesh = isLiquid
             ? createLiquidMesh({ assets, f, r1, r2, r3 }, animatedObjects)
             : createSolidMesh({
-                assets,
-                assetType: hash(f, cx),
-                materialOverride: hash(f, cz),
-                r1, r2, r3
-            }, animatedObjects);
+                    assets,
+                    assetType: hash(f, cx),
+                    materialOverride: hash(f, cz),
+                    r1,
+                    r2,
+                    r3,
+                }, animatedObjects);
 
         const { yPos, xOffset, zOffset } = calculateFragmentPosition(isLiquid, f, r1, r2, r3);
 
@@ -265,7 +275,8 @@ export function createFluidBuilding(
         buildGroup.add(mesh);
 
         const topY = yPos + mesh.scale.y * 1.5;
-        if (topY > maxHeight) maxHeight = topY;
+        if (topY > maxHeight)
+            maxHeight = topY;
     }
 
     return maxHeight;

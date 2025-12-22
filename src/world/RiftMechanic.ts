@@ -1,6 +1,5 @@
-
-import * as THREE from 'three';
-import { PlayerManager } from '../player/PlayerManager';
+import type * as THREE from 'three';
+import type { PlayerManager } from '../player/PlayerManager';
 import type { AudioSystemInterface } from '../types';
 import { CHUNK_SIZE } from './ChunkManager';
 
@@ -13,7 +12,7 @@ export class RiftMechanic {
     public update(
         player: PlayerManager,
         audio: AudioSystemInterface,
-        cameraPosition: THREE.Vector3
+        cameraPosition: THREE.Vector3,
     ): void {
         const nearestChunkX = Math.round(cameraPosition.x / CHUNK_SIZE);
         const chunkCenterX = nearestChunkX * CHUNK_SIZE;
@@ -41,7 +40,8 @@ export class RiftMechanic {
             if (cameraPosition.y < 0 && cameraPosition.y > -5) {
                 audio.playRiftFall();
             }
-        } else {
+        }
+        else {
             // Player is on solid ground
             player.setGroundLevel(2.0);
             player.setGravity(29.4); // Default gravity

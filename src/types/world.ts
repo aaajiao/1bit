@@ -1,0 +1,145 @@
+// World-related types (Chunks, Cables, Weather, etc.)
+import type * as THREE from 'three';
+
+// ===== Day/Night System =====
+
+import type { AudioSystemInterface } from './audio';
+
+// ===== Building & Generation =====
+
+export interface BuildingParams {
+    i: number;
+    cx: number;
+    cz: number;
+    assets: SharedAssets;
+}
+
+export interface SharedAssets {
+    // Materials
+    matSolid: THREE.MeshLambertMaterial;
+    matDark: THREE.MeshLambertMaterial;
+    matWire: THREE.MeshBasicMaterial;
+    matPlasma: THREE.MeshLambertMaterial;
+    matTreeBark: THREE.MeshLambertMaterial;
+    matFlowerStem: THREE.MeshLambertMaterial;
+    matFlowerPetal: THREE.MeshPhongMaterial;
+    matFlowerCore: THREE.MeshStandardMaterial;
+    matLiquid: THREE.MeshPhongMaterial;
+    // Geometries
+    boxGeo: THREE.BoxGeometry;
+    blobGeo: THREE.IcosahedronGeometry;
+    sphereGeo: THREE.SphereGeometry;
+    knotGeo: THREE.TorusKnotGeometry;
+    coneGeo: THREE.ConeGeometry;
+    tetraGeo: THREE.TetrahedronGeometry;
+    cylinderGeo: THREE.CylinderGeometry;
+    dispose: () => void;
+}
+
+// ===== Animation Types =====
+
+export type AnimationType
+    = | 'ROTATE_FLOAT'
+        | 'LIQUID_WOBBLE'
+        | 'BRANCH_SWAY'
+        | 'LEAF_FLUTTER'
+        | 'PETAL_BREATHE'
+        | 'SEPAL_FLOAT'
+        | 'DUST_ORBIT';
+
+export interface AnimatedObjectUserData {
+    animType?: AnimationType;
+    speed?: number;
+    phase?: number;
+    baseScale?: THREE.Vector3;
+    initialRotZ?: number;
+    rigidity?: number;
+    isPlasma?: boolean;
+    axis?: THREE.Vector3;
+    baseRotX?: number;
+}
+
+export interface AnimatedObject extends THREE.Object3D {
+    userData: AnimatedObjectUserData;
+    material?: THREE.Material & { emissive?: THREE.Color };
+}
+
+// ===== Cable System =====
+
+export interface CableNode {
+    obj: { position: THREE.Vector3 };
+    topOffset: THREE.Vector3;
+    isGround: boolean;
+}
+
+export interface CableOptions {
+    droop: number;
+    heavySag: boolean;
+    offsetS: THREE.Vector3;
+    offsetE: THREE.Vector3;
+}
+
+export interface CableCache {
+    pStart: THREE.Vector3;
+    pEnd: THREE.Vector3;
+    mid: THREE.Vector3;
+}
+
+export interface DynamicCable {
+    line: THREE.Line;
+    startNode: CableNode;
+    endNode: CableNode;
+    options: CableOptions;
+    segments: number;
+    _cache: CableCache;
+}
+
+// ===== Chunk System =====
+
+export interface BuildingUserData {
+    initialPos: THREE.Vector3;
+    wanderSpeed: number;
+    wanderRange: number;
+    offset: number;
+    isMobile: boolean;
+}
+
+export interface ChunkUserData {
+    cables: DynamicCable[];
+    buildings: THREE.Group[];
+    animatedObjects: AnimatedObject[];
+}
+
+export interface Chunk extends THREE.Group {
+    userData: ChunkUserData;
+}
+
+// ===== Weather System =====
+
+export interface WeatherState {
+    weatherType: number;
+    weatherIntensity: number;
+    weatherTime: number;
+}
+
+export interface WeatherConfig {
+    minCooldown: number;
+    maxCooldown: number;
+    minDuration: number;
+    maxDuration: number;
+    transitionSpeed: number;
+    glitchChance: number;
+}
+
+export interface WeatherSystemInterface {
+    update: (delta: number, time: number) => WeatherState;
+    forceWeather: (type: string, duration?: number) => void;
+}
+
+export interface DayNightContext {
+    scene: THREE.Scene;
+    shaderQuad: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
+    audio: AudioSystemInterface;
+    weather: WeatherSystemInterface;
+    onSunset?: () => void;
+}

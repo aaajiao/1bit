@@ -1,12 +1,11 @@
-
+import type { AudioSystemInterface } from '../types';
+import type { RoomType } from '../world/RoomConfig';
 import * as THREE from 'three';
 import { Controls } from './Controls';
-import { HandsModel } from './HandsModel';
+import { forceFlowerIntensity, getFlowerIntensity, overrideFlowerIntensity, setFlowerIntensity } from './FlowerProp';
 import { GazeMechanic } from './GazeMechanic';
+import { HandsModel } from './HandsModel';
 import { OverrideMechanic } from './OverrideMechanic';
-import type { AudioSystemInterface } from '../types';
-import { RoomType } from '../world/RoomConfig';
-import { setFlowerIntensity, getFlowerIntensity, forceFlowerIntensity, overrideFlowerIntensity } from './FlowerProp';
 
 export interface PlayerContext {
     currentRoomType: RoomType;
@@ -37,7 +36,7 @@ export class PlayerManager {
     constructor(
         camera: THREE.PerspectiveCamera,
         domElement: HTMLElement,
-        private audio: AudioSystemInterface
+        private audio: AudioSystemInterface,
     ) {
         // Initialize subsystems
         this.controls = new Controls(camera, domElement);
@@ -56,7 +55,7 @@ export class PlayerManager {
             overrideTriggered: false,
             overrideProgress: 0,
             flowerIntensity: 0.5,
-            isShiftHeld: false
+            isShiftHeld: false,
         };
 
         this.setupCallbacks();
@@ -90,7 +89,8 @@ export class PlayerManager {
         this.controls.setOnJump((isDoubleJump) => {
             if (isDoubleJump) {
                 this.audio.playDoubleJump();
-            } else {
+            }
+            else {
                 this.audio.playJump();
             }
         });
@@ -172,7 +172,7 @@ export class PlayerManager {
             isShiftHeld,
             gazeState.isGazing,
             context.currentRoomType,
-            gazeState.isGazing && flowerIntensity < 0.3
+            gazeState.isGazing && flowerIntensity < 0.3,
         );
 
         // 5. Update Hands
@@ -189,7 +189,7 @@ export class PlayerManager {
             overrideTriggered: overrideState.isTriggered,
             overrideProgress: this.override.getHoldProgress(),
             flowerIntensity,
-            isShiftHeld
+            isShiftHeld,
         };
 
         return this.currentState;

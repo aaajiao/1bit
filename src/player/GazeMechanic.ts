@@ -1,26 +1,26 @@
 // 1-bit Chimera Void - Gaze Mechanic
 // Detects when player looks at the Sky Eye and triggers disciplinary response
 
-import * as THREE from 'three';
+import type * as THREE from 'three';
 
 /**
  * Gaze state information
  */
 export interface GazeState {
-    isGazing: boolean;          // Currently looking at sky eye
-    gazeIntensity: number;      // 0-1, how directly looking (based on pitch)
-    gazeDuration: number;       // How long currently gazing (seconds)
-    totalGazeTime: number;      // Total gaze time this session
-    gazeEvents: number;         // Number of times started gazing
+    isGazing: boolean; // Currently looking at sky eye
+    gazeIntensity: number; // 0-1, how directly looking (based on pitch)
+    gazeDuration: number; // How long currently gazing (seconds)
+    totalGazeTime: number; // Total gaze time this session
+    gazeEvents: number; // Number of times started gazing
 }
 
 /**
  * Gaze mechanic configuration
  */
 export interface GazeConfig {
-    pitchThreshold: number;     // Pitch angle to trigger gaze (radians, ~45°)
-    maxPitch: number;           // Maximum pitch (looking straight up)
-    intensityCurve: number;     // How quickly intensity ramps up
+    pitchThreshold: number; // Pitch angle to trigger gaze (radians, ~45°)
+    maxPitch: number; // Maximum pitch (looking straight up)
+    intensityCurve: number; // How quickly intensity ramps up
 }
 
 /**
@@ -41,9 +41,9 @@ export class GazeMechanic {
         this.camera = camera;
 
         this.config = {
-            pitchThreshold: Math.PI / 4,  // 45 degrees
-            maxPitch: Math.PI / 2,        // 90 degrees (straight up)
-            intensityCurve: 2.0,          // Quadratic curve
+            pitchThreshold: Math.PI / 4, // 45 degrees
+            maxPitch: Math.PI / 2, // 90 degrees (straight up)
+            intensityCurve: 2.0, // Quadratic curve
         };
 
         this.state = {
@@ -91,12 +91,9 @@ export class GazeMechanic {
         // Calculate intensity (0 at threshold, 1 at max pitch)
         let gazeIntensity = 0;
         if (isGazing) {
-            const normalizedPitch = (pitch - this.config.pitchThreshold) /
-                (this.config.maxPitch - this.config.pitchThreshold);
-            gazeIntensity = Math.pow(
-                Math.min(1, normalizedPitch),
-                1 / this.config.intensityCurve
-            );
+            const normalizedPitch = (pitch - this.config.pitchThreshold)
+                / (this.config.maxPitch - this.config.pitchThreshold);
+            gazeIntensity = Math.min(1, normalizedPitch) ** (1 / this.config.intensityCurve);
         }
 
         // Update state

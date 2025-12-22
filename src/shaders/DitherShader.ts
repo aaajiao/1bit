@@ -1,6 +1,6 @@
+import type { ShaderDefinition } from '../types';
 // 1-bit Chimera Void - Dither Shader
 import * as THREE from 'three';
-import type { ShaderDefinition } from '../types';
 
 /**
  * 1-BIT BAYER DITHER POST-PROCESSING SHADER (Enhanced)
@@ -17,21 +17,21 @@ export const DitherShader: ShaderDefinition = {
         outlineStrength: { value: 0.3 },
         enableDepthDither: { value: false }, // Disabled by default (requires depth buffer)
         ditherTransition: { value: 0.7 },
-        invertColors: { value: false },  // Day/night color inversion
+        invertColors: { value: false }, // Day/night color inversion
         // Weather
-        weatherType: { value: 0 },       // 0=clear, 1=static, 2=rain, 3=glitch
+        weatherType: { value: 0 }, // 0=clear, 1=static, 2=rain, 3=glitch
         weatherIntensity: { value: 0.0 },
         weatherTime: { value: 0.0 },
         // Room-specific uniforms (mental state spaces)
-        uNoiseDensity: { value: 0.5 },    // 0-1, controls dither pattern density
-        uThresholdBias: { value: 0.0 },   // -0.5 to 0.5, black/white balance offset
-        uTemporalJitter: { value: 0.0 },  // 0-1, temporal dither animation
-        uContrast: { value: 1.0 },        // 1.0+, overall contrast
-        uGlitchAmount: { value: 0.0 },    // 0-1, vertex displacement amplitude
-        uGlitchSpeed: { value: 0.0 },     // Hz, glitch animation frequency
-        uColorInversion: { value: 0.0 },  // 0-1, for override effect
+        uNoiseDensity: { value: 0.5 }, // 0-1, controls dither pattern density
+        uThresholdBias: { value: 0.0 }, // -0.5 to 0.5, black/white balance offset
+        uTemporalJitter: { value: 0.0 }, // 0-1, temporal dither animation
+        uContrast: { value: 1.0 }, // 1.0+, overall contrast
+        uGlitchAmount: { value: 0.0 }, // 0-1, vertex displacement amplitude
+        uGlitchSpeed: { value: 0.0 }, // Hz, glitch animation frequency
+        uColorInversion: { value: 0.0 }, // 0-1, for override effect
         uOverrideProgress: { value: 0.0 }, // 0-1, hold progress feedback
-        uTime: { value: 0.0 },            // Global time for animations
+        uTime: { value: 0.0 }, // Global time for animations
         // Flower intensity (affects world response)
         uFlowerIntensity: { value: 0.5 }, // 0-1, player's light intensity
     },

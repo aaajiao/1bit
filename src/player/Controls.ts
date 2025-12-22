@@ -1,6 +1,7 @@
+import type { ControlsConfig, PlayerPosition } from '../types';
 // 1-bit Chimera Void - Player Controls
 import * as THREE from 'three';
-import type { ControlsConfig, PlayerPosition } from '../types';
+import { PHYSICS_CONFIG } from '../config';
 
 /**
  * First-person keyboard + mouse controls
@@ -33,18 +34,8 @@ export class Controls {
     private direction: THREE.Vector3 = new THREE.Vector3();
     private prevTime: number = performance.now();
 
-    // Configuration
-    private config: ControlsConfig = {
-        speed: 60.0,
-        jumpForce: 15,
-        gravity: 9.8 * 3.0,
-        friction: 10.0,
-        groundHeight: 2.0,
-        bobSpeed: 0.012,
-        bobAmount: 0.15,
-        mouseSensitivity: 0.002,
-        maxJumps: 2,
-    };
+    // Configuration (imported from config module)
+    private config: ControlsConfig = { ...PHYSICS_CONFIG };
 
     // Dynamic ground level (can be changed per-frame for crack detection)
     private currentGroundLevel: number = 2.0;
@@ -152,7 +143,8 @@ export class Controls {
      * Handle scroll wheel for flower intensity control
      */
     private onWheel(e: WheelEvent): void {
-        if (!this.isLocked) return;
+        if (!this.isLocked)
+            return;
 
         e.preventDefault();
 
@@ -162,13 +154,14 @@ export class Controls {
     }
 
     private onMouseMove(e: MouseEvent): void {
-        if (!this.isLocked) return;
+        if (!this.isLocked)
+            return;
 
         this.camera.rotation.y -= e.movementX * this.config.mouseSensitivity;
         this.camera.rotation.x -= e.movementY * this.config.mouseSensitivity;
         this.camera.rotation.x = Math.max(
             -Math.PI / 2,
-            Math.min(Math.PI / 2, this.camera.rotation.x)
+            Math.min(Math.PI / 2, this.camera.rotation.x),
         );
     }
 
@@ -319,10 +312,13 @@ export class Controls {
     /**
      * Teleport player to specific position and reset velocity
      */
-    teleport(position: { x?: number, y?: number, z?: number }): void {
-        if (position.x !== undefined) this.camera.position.x = position.x;
-        if (position.y !== undefined) this.camera.position.y = position.y;
-        if (position.z !== undefined) this.camera.position.z = position.z;
+    teleport(position: { x?: number; y?: number; z?: number }): void {
+        if (position.x !== undefined)
+            this.camera.position.x = position.x;
+        if (position.y !== undefined)
+            this.camera.position.y = position.y;
+        if (position.z !== undefined)
+            this.camera.position.z = position.z;
 
         this.velocity.set(0, 0, 0);
     }

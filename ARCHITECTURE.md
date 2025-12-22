@@ -9,14 +9,26 @@
 ```
 src/
 ├── main.ts          # 仅负责：初始化、组装系统、运行主循环
-├── types.ts         # TypeScript 类型定义
+├── types/           # TypeScript 类型定义（模块化）
+│   ├── audio.ts     # 音频接口
+│   ├── world.ts     # 世界/区块/天气类型
+│   ├── player.ts    # 玩家/控制/手部类型
+│   ├── shader.ts    # 着色器 uniform 类型
+│   ├── app.ts       # 应用配置
+│   └── index.ts     # 统一导出
 ├── audio/           # 音效系统
 │   ├── AudioController.ts # 高层音频控制器（业务逻辑）
 │   └── AudioEngine.ts     # 底层 WebAudio 引擎
+├── config/          # 配置常量
+│   ├── audio.ts     # 音频参数配置
+│   ├── physics.ts   # 物理/玩家参数配置
+│   └── index.ts     # 统一导出
 ├── core/            # 核心初始化模块
+│   ├── GameContext.ts    # 游戏上下文接口（共享更新状态）
 │   ├── PostProcessing.ts # 后处理效果（Dither、Pixelation）
 │   ├── SceneSetup.ts     # 场景与相机初始化
-│   └── Signal.ts         # 信号模式（系统间解耦通信）
+│   ├── Signal.ts         # 信号模式（系统间解耦通信）
+│   └── Updatable.ts      # 可更新系统接口与注册器
 ├── player/          # 玩家相关（控制、手部、道具、机制）
 │   ├── Controls.ts       # 玩家移动与输入控制
 │   ├── FlowerProp.ts     # 手持花朵道具及其状态/动画
@@ -30,11 +42,14 @@ src/
 │   ├── RunStatsCollector.ts     # 收集本轮游戏的数据（注视时间、移动等）
 │   ├── SnapshotOverlay.ts       # 生成并在日落时显示的统计快照 UI
 │   └── StateSnapshotGenerator.ts # 将统计数据转化为视觉快照的逻辑
+├── state/           # 游戏状态管理
+│   └── GameStateManager.ts # 存档/读档系统（localStorage）
 ├── ui/              # 用户界面与HUD
 │   └── HUD.ts            # 抬头显示器（坐标、状态调试信息）
 ├── world/           # 世界系统（区块、建筑、天气、昼夜...）
 │   ├── BuildingFactory.ts # 程序化建筑生成
 │   ├── CableSystem.ts     # 程序化电缆生成与动画
+│   ├── ChunkAnimator.ts   # 区块动画逻辑（建筑、植物、雾气）
 │   ├── ChunkManager.ts    # 无限世界区块管理系统
 │   ├── DayNightCycle.ts   # 昼夜循环控制
 │   ├── FloorTile.ts       # 地面瓦片与网格生成

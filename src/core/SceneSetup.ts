@@ -1,6 +1,6 @@
+import type { AppConfig } from '../types';
 // Scene initialization module
 import * as THREE from 'three';
-import type { AppConfig } from '../types';
 
 /**
  * Components created by scene setup
@@ -26,7 +26,7 @@ export function createScene(container: HTMLElement, config: AppConfig): SceneCom
         80,
         window.innerWidth / window.innerHeight,
         0.1,
-        1000
+        1000,
     );
     camera.rotation.order = 'YXZ';
 
@@ -43,10 +43,10 @@ export function createScene(container: HTMLElement, config: AppConfig): SceneCom
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 
     // Lighting (intensity increased to compensate for r155+ decay changes)
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x111111, 1.2);
+    const hemiLight = new THREE.HemisphereLight(0xFFFFFF, 0x111111, 1.2);
     scene.add(hemiLight);
 
-    const scannerLight = new THREE.SpotLight(0xffffff, 4.0);
+    const scannerLight = new THREE.SpotLight(0xFFFFFF, 4.0);
     scannerLight.position.set(0, 80, 0);
     scannerLight.angle = Math.PI / 4;
     scannerLight.penumbra = 0.5;

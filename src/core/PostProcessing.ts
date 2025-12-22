@@ -59,7 +59,7 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
             },
             vertexShader: DitherShader.vertexShader,
             fragmentShader: DitherShader.fragmentShader,
-        })
+        }),
     );
     composerScene.add(shaderQuad);
 
@@ -71,7 +71,7 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
  */
 export function updatePostProcessingSize(
     components: PostProcessingComponents,
-    renderScale: number
+    renderScale: number,
 ): void {
     const width = window.innerWidth * renderScale;
     const height = window.innerHeight * renderScale;

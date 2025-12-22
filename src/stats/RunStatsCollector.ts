@@ -7,21 +7,21 @@ import { RoomType } from '../world/RoomConfig';
  * Raw runtime statistics collected during a run
  */
 export interface RunStats {
-    duration: number;           // Total seconds
-    samples: number;            // Number of recorded data points
+    duration: number; // Total seconds
+    samples: number; // Number of recorded data points
 
     // Flower/Light
     flowerIntensitySum: number;
 
     // Gaze (Sky Eye)
-    gazeEvents: number;         // Number of times looked at eye
-    gazeTimeTotal: number;      // Total seconds looking
-    gazeDepthMax: number;       // Maximum pitch angle reached
+    gazeEvents: number; // Number of times looked at eye
+    gazeTimeTotal: number; // Total seconds looking
+    gazeDepthMax: number; // Maximum pitch angle reached
 
     // Position/Room
     roomTime: Record<string, number>; // Time spent in each mental state room
     currentRoom: RoomType | null;
-    onCrackTime: number;        // Time spent in "neutral zone" (FORCED_ALIGNMENT)
+    onCrackTime: number; // Time spent in "neutral zone" (FORCED_ALIGNMENT)
     xPositionSum: number;
     xPositionMin: number;
     xPositionMax: number;
@@ -36,29 +36,29 @@ export interface RunStats {
  * Normalized metrics (0-1 range) for tag generation
  */
 export interface NormalizedMetrics {
-    avgFlower: number;          // 0-1
-    gazeRatio: number;          // 0-1
-    overrideRatio: number;      // 0-1
+    avgFlower: number; // 0-1
+    gazeRatio: number; // 0-1
+    overrideRatio: number; // 0-1
     roomRatios: Record<string, number>; // { INFO: 0-1, FORCED: 0-1, etc. }
-    crackRatio: number;         // 0-1
-    spreadX: number;            // 0-? (absolute distance)
+    crackRatio: number; // 0-1
+    spreadX: number; // 0-? (absolute distance)
 }
 
 /**
  * Behavior tags derived from normalized metrics
  */
-export type BehaviorTag =
-    | 'QUIET_LIGHT'
-    | 'MEDIUM_LIGHT'
-    | 'LOUD_LIGHT'
-    | 'HIGH_GAZE'
-    | 'LOW_GAZE'
-    | 'INFO_MAZE'
-    | 'CRACK_WALKER'
-    | 'INBETWEENER'
-    | 'BINARY_EDGE'
-    | 'NEUTRAL_SEEKER'
-    | 'RESISTER';
+export type BehaviorTag
+    = | 'QUIET_LIGHT'
+        | 'MEDIUM_LIGHT'
+        | 'LOUD_LIGHT'
+        | 'HIGH_GAZE'
+        | 'LOW_GAZE'
+        | 'INFO_MAZE'
+        | 'CRACK_WALKER'
+        | 'INBETWEENER'
+        | 'BINARY_EDGE'
+        | 'NEUTRAL_SEEKER'
+        | 'RESISTER';
 
 /**
  * Collects and processes runtime statistics
@@ -118,7 +118,7 @@ export class RunStatsCollector {
         currentRoom: RoomType | null,
         playerX: number,
         isOverrideActive: boolean,
-        isGlitchingFromOverride: boolean
+        isGlitchingFromOverride: boolean,
     ): void {
         this.stats.duration += deltaTime;
 
@@ -221,16 +221,19 @@ export class RunStatsCollector {
         // Light intensity tags
         if (metrics.avgFlower < 0.25) {
             tags.push('QUIET_LIGHT');
-        } else if (metrics.avgFlower < 0.6) {
+        }
+        else if (metrics.avgFlower < 0.6) {
             tags.push('MEDIUM_LIGHT');
-        } else {
+        }
+        else {
             tags.push('LOUD_LIGHT');
         }
 
         // Gaze relationship tags
         if (metrics.gazeRatio > 0.5) {
             tags.push('HIGH_GAZE');
-        } else if (metrics.gazeRatio < 0.15) {
+        }
+        else if (metrics.gazeRatio < 0.15) {
             tags.push('LOW_GAZE');
         }
 

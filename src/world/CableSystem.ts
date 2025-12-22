@@ -1,7 +1,7 @@
+import type { CableNode, CableOptions, DynamicCable } from '../types';
 // 1-bit Chimera Void - Cable System
 import * as THREE from 'three';
 import { CableShader } from '../shaders/DitherShader';
-import type { CableNode, CableOptions, DynamicCable } from '../types';
 
 // Shared shader material for all cables
 let cableShaderMat: THREE.ShaderMaterial | null = null;
@@ -44,7 +44,7 @@ export function updateCableTime(time: number): void {
 export function createDynamicCable(
     startNode: CableNode,
     endNode: CableNode,
-    options: CableOptions
+    options: CableOptions,
 ): DynamicCable {
     const segments = 12;
     const geometry = new THREE.BufferGeometry();
@@ -60,15 +60,15 @@ export function createDynamicCable(
 
     geometry.setAttribute(
         'position',
-        new THREE.BufferAttribute(positions, 3)
+        new THREE.BufferAttribute(positions, 3),
     );
     geometry.setAttribute(
         'lineDistance',
-        new THREE.BufferAttribute(distances, 1)
+        new THREE.BufferAttribute(distances, 1),
     );
     geometry.setAttribute(
         'randomSeed',
-        new THREE.BufferAttribute(randomSeeds, 1)
+        new THREE.BufferAttribute(randomSeeds, 1),
     );
 
     const line = new THREE.Line(geometry, getCableMaterial());
@@ -85,7 +85,7 @@ export function createDynamicCable(
             pStart: new THREE.Vector3(),
             pEnd: new THREE.Vector3(),
             mid: new THREE.Vector3(),
-        }
+        },
     };
 }
 
@@ -104,7 +104,8 @@ export function updateCableGeometry(cable: DynamicCable): void {
     // Calculate start position
     if (startNode.isGround) {
         pStart.copy(startNode.obj.position).add(options.offsetS);
-    } else {
+    }
+    else {
         pStart.copy(startNode.obj.position)
             .add(startNode.topOffset)
             .add(options.offsetS);
@@ -113,7 +114,8 @@ export function updateCableGeometry(cable: DynamicCable): void {
     // Calculate end position
     if (endNode.isGround) {
         pEnd.copy(endNode.obj.position).add(options.offsetE);
-    } else {
+    }
+    else {
         pEnd.copy(endNode.obj.position)
             .add(endNode.topOffset)
             .add(options.offsetE);
@@ -123,7 +125,8 @@ export function updateCableGeometry(cable: DynamicCable): void {
     mid.addVectors(pStart, pEnd).multiplyScalar(0.5);
     const dist = pStart.distanceTo(pEnd);
     let currentDroop = Math.max(0, options.droop - dist * 0.1);
-    if (options.heavySag) currentDroop += 20;
+    if (options.heavySag)
+        currentDroop += 20;
     mid.y -= currentDroop;
 
     // Update positions and lineDistance arrays
@@ -138,7 +141,7 @@ export function updateCableGeometry(cable: DynamicCable): void {
     positions[idx++] = pStart.z;
     distances[0] = 0;
 
-    let prevX = pStart.x, prevY = pStart.y, prevZ = pStart.z;
+    let prevX = pStart.x; let prevY = pStart.y; let prevZ = pStart.z;
 
     // Bezier curve interpolation
     for (let j = 1; j <= segments; j++) {
@@ -149,7 +152,7 @@ export function updateCableGeometry(cable: DynamicCable): void {
         const clampedY = Math.max(0.1, y);
 
         // Calculate segment distance for lineDistance attribute
-        const dx = x - prevX, dy = clampedY - prevY, dz = z - prevZ;
+        const dx = x - prevX; const dy = clampedY - prevY; const dz = z - prevZ;
         totalDist += Math.sqrt(dx * dx + dy * dy + dz * dz);
         distances[j] = totalDist;
 

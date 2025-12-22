@@ -1,6 +1,6 @@
+import type { SharedAssets as ISharedAssets } from '../types';
 // 1-bit Chimera Void - Shared Assets (Geometries & Materials)
 import * as THREE from 'three';
-import type { SharedAssets as ISharedAssets } from '../types';
 
 /**
  * Shared assets container - initialized once, reused everywhere
@@ -47,24 +47,24 @@ export class SharedAssets implements ISharedAssets {
             color: 0x000000,
         });
         this.matFlowerPetal = new THREE.MeshPhongMaterial({
-            color: 0xaaaaaa,
+            color: 0xAAAAAA,
             emissive: 0x111111,
-            specular: 0xffffff,
+            specular: 0xFFFFFF,
             shininess: 100,
             transparent: true,
             opacity: 0.9,
             side: THREE.DoubleSide,
         });
         this.matFlowerCore = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            emissive: 0xffffff,
+            color: 0xFFFFFF,
+            emissive: 0xFFFFFF,
             emissiveIntensity: 1.0,
             roughness: 0.3,
             metalness: 0.0,
         });
         this.matLiquid = new THREE.MeshPhongMaterial({
             color: 0x111111,
-            specular: 0xaaaaaa,
+            specular: 0xAAAAAA,
             shininess: 60,
         });
 
@@ -84,7 +84,7 @@ export class SharedAssets implements ISharedAssets {
     dispose(): void {
         // Dispose materials
         const values = Object.values(this) as unknown[];
-        values.forEach(value => {
+        values.forEach((value) => {
             if (value && typeof (value as { dispose?: () => void }).dispose === 'function') {
                 (value as { dispose: () => void }).dispose();
             }

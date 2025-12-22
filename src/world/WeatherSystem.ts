@@ -1,16 +1,16 @@
 // 1-bit Chimera Void - Weather System
 // Procedural 1-bit style weather effects
 
-import type { WeatherState, WeatherConfig, WeatherSystemInterface } from '../types';
+import type { WeatherConfig, WeatherState, WeatherSystemInterface } from '../types';
 
 /**
  * Weather types
  */
 export const WEATHER_TYPES = {
     CLEAR: 0,
-    STATIC: 1,      // Static snow/noise
-    RAIN: 2,        // Digital rain
-    GLITCH: 3,      // Signal glitch
+    STATIC: 1, // Static snow/noise
+    RAIN: 2, // Digital rain
+    GLITCH: 3, // Signal glitch
 } as const;
 
 export type WeatherType = typeof WEATHER_TYPES[keyof typeof WEATHER_TYPES];
@@ -25,18 +25,18 @@ export class WeatherSystem implements WeatherSystemInterface {
     private weatherTime: number = 0;
 
     // Timing
-    private duration: number = 0;          // Current weather duration
-    private elapsed: number = 0;           // Time elapsed in current weather
-    private cooldown: number = 0;          // Time until next weather can trigger
+    private duration: number = 0; // Current weather duration
+    private elapsed: number = 0; // Time elapsed in current weather
+    private cooldown: number = 0; // Time until next weather can trigger
 
     // Configuration
     private config: WeatherConfig = {
-        minCooldown: 60,        // Min seconds between weather events
-        maxCooldown: 180,       // Max seconds between weather events
-        minDuration: 15,        // Min weather duration
-        maxDuration: 45,        // Max weather duration
-        transitionSpeed: 0.5,   // Fade in/out speed
-        glitchChance: 0.002,    // Chance of glitch per frame
+        minCooldown: 60, // Min seconds between weather events
+        maxCooldown: 180, // Max seconds between weather events
+        minDuration: 15, // Min weather duration
+        maxDuration: 45, // Max weather duration
+        transitionSpeed: 0.5, // Fade in/out speed
+        glitchChance: 0.002, // Chance of glitch per frame
     };
 
     constructor() {
@@ -66,7 +66,8 @@ export class WeatherSystem implements WeatherSystemInterface {
             if (this.cooldown <= 0) {
                 this.startRandomWeather();
             }
-        } else {
+        }
+        else {
             // Update current weather
             this.elapsed += delta;
 
@@ -103,7 +104,7 @@ export class WeatherSystem implements WeatherSystemInterface {
 
         this.duration = this.randomRange(
             this.config.minDuration,
-            this.config.maxDuration
+            this.config.maxDuration,
         );
         this.elapsed = 0;
         this.targetIntensity = 0.6 + Math.random() * 0.4; // 0.6 to 1.0
@@ -115,7 +116,8 @@ export class WeatherSystem implements WeatherSystemInterface {
      * Trigger a short glitch effect
      */
     private triggerGlitch(): void {
-        if (this.currentWeather !== WEATHER_TYPES.CLEAR) return;
+        if (this.currentWeather !== WEATHER_TYPES.CLEAR)
+            return;
 
         this.currentWeather = WEATHER_TYPES.GLITCH;
         this.duration = 0.1 + Math.random() * 0.4; // 0.1 to 0.5 seconds
@@ -133,7 +135,7 @@ export class WeatherSystem implements WeatherSystemInterface {
         this.targetIntensity = 0;
         this.cooldown = this.randomRange(
             this.config.minCooldown,
-            this.config.maxCooldown
+            this.config.maxCooldown,
         );
     }
 
@@ -144,10 +146,10 @@ export class WeatherSystem implements WeatherSystemInterface {
      */
     forceWeather(type: string, duration: number = 30): void {
         const typeMap: Record<string, WeatherType> = {
-            'clear': WEATHER_TYPES.CLEAR,
-            'static': WEATHER_TYPES.STATIC,
-            'rain': WEATHER_TYPES.RAIN,
-            'glitch': WEATHER_TYPES.GLITCH,
+            clear: WEATHER_TYPES.CLEAR,
+            static: WEATHER_TYPES.STATIC,
+            rain: WEATHER_TYPES.RAIN,
+            glitch: WEATHER_TYPES.GLITCH,
         };
 
         this.currentWeather = typeMap[type] ?? WEATHER_TYPES.CLEAR;

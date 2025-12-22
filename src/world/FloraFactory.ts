@@ -1,7 +1,7 @@
+import type { AnimatedObject, BuildingParams } from '../types';
 // 1-bit Chimera Void - Flora Factory (Trees)
 import * as THREE from 'three';
 import { hash } from '../utils/hash';
-import type { BuildingParams, AnimatedObject } from '../types';
 
 /**
  * Creates a procedural tree with trunk, branches, and canopy
@@ -13,12 +13,12 @@ import type { BuildingParams, AnimatedObject } from '../types';
 export function createTree(
     buildGroup: THREE.Group,
     params: BuildingParams,
-    animatedObjects: AnimatedObject[]
+    animatedObjects: AnimatedObject[],
 ): number {
     const { i, cx, cz, assets } = params;
 
     const sizeGene = hash(i, cz * cx);
-    const globalScale = 0.5 + Math.pow(sizeGene, 4) * 4.0;
+    const globalScale = 0.5 + sizeGene ** 4 * 4.0;
 
     const trunkHeightBase = 10 + hash(i, cz) * 10;
     const trunkHeight = trunkHeightBase * globalScale;
@@ -38,13 +38,13 @@ export function createTree(
         const tRatio = t / segmentCount;
         const segHeight = trunkHeight / segmentCount;
 
-        const taper = 1.0 - Math.pow(tRatio, 1.5) * 0.8;
+        const taper = 1.0 - tRatio ** 1.5 * 0.8;
         const wBottom = trunkBaseWidth * taper;
 
         const seg = new THREE.Mesh(assets.cylinderGeo, assets.matTreeBark);
         seg.scale.set(wBottom, segHeight, wBottom);
 
-        const leanCurve = Math.pow(tRatio, 1.5) * leanAmount;
+        const leanCurve = tRatio ** 1.5 * leanAmount;
         const curveX = leanDirX * leanCurve;
         const curveZ = leanDirZ * leanCurve;
 
@@ -53,7 +53,7 @@ export function createTree(
         seg.position.set(
             curveX + wiggle,
             t * segHeight + segHeight / 2,
-            curveZ + wiggle
+            curveZ + wiggle,
         );
 
         seg.rotation.z = -(leanDirX * leanAmount * 0.05) + (hash(t, i) - 0.5) * 0.1;
@@ -75,16 +75,18 @@ export function createTree(
         const currentHeight = minH + (trunkHeight - minH) * lRatio;
 
         const tRatioGlobal = currentHeight / trunkHeight;
-        const leanCurve = Math.pow(tRatioGlobal, 1.5) * leanAmount;
+        const leanCurve = tRatioGlobal ** 1.5 * leanAmount;
         const trunkX = leanDirX * leanCurve;
         const trunkZ = leanDirZ * leanCurve;
 
         let reachBase = 5 * globalScale;
         if (shapeProfile === 0) {
             reachBase = reachBase * (1.0 - lRatio * 0.8) + 2;
-        } else if (shapeProfile === 1) {
+        }
+        else if (shapeProfile === 1) {
             reachBase = reachBase * Math.sin(lRatio * Math.PI) + 2;
-        } else {
+        }
+        else {
             reachBase = reachBase * (0.5 + lRatio) + 2;
         }
 
@@ -116,7 +118,7 @@ export function createTree(
             branch.scale.set(
                 trunkBaseWidth * 0.15,
                 reach,
-                trunkBaseWidth * 0.15
+                trunkBaseWidth * 0.15,
             );
             branch.position.y = reach / 2;
             bGroup.add(branch);
@@ -133,7 +135,7 @@ export function createTree(
                 leafMesh.position.set(
                     (hash(leaf, 0) - 0.5) * clusterSpread,
                     reach + (hash(leaf, 1) - 0.5) * clusterSpread,
-                    (hash(leaf, 2) - 0.5) * clusterSpread
+                    (hash(leaf, 2) - 0.5) * clusterSpread,
                 );
 
                 leafMesh.userData = {

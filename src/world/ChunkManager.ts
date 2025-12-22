@@ -1,20 +1,22 @@
+import type {
+    BuildingUserData,
+    CableNode,
+    Chunk,
+    ChunkUserData,
+    DynamicCable,
+} from '../types';
+import type { RoomShaderConfig } from './RoomConfig';
+import type { SharedAssets } from './SharedAssets';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
 import { hash } from '../utils/hash';
-import { getSharedAssets, SharedAssets } from './SharedAssets';
-import { createFloorMaterial, createFloorMesh, createCrackedFloorMesh, createMoireFloorMesh } from './FloorTile';
-import { createBlocksBuilding, createSpikesBuilding, createFluidBuilding } from './BuildingFactory';
+import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
+import { createDynamicCable } from './CableSystem';
+import { animateChunk } from './ChunkAnimator';
+import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createMoireFloorMesh } from './FloorTile';
 import { createTree } from './FloraFactory';
-import { createDynamicCable, updateCableGeometry } from './CableSystem';
-import { RoomType, getRoomTypeFromPosition, ROOM_CONFIGS, RoomShaderConfig, lerpRoomShaderConfig } from './RoomConfig';
-import type {
-    Chunk,
-    ChunkUserData,
-    CableNode,
-    DynamicCable,
-    AnimatedObject,
-    BuildingUserData,
-} from '../types';
+import { getRoomTypeFromPosition, lerpRoomShaderConfig, ROOM_CONFIGS, RoomType } from './RoomConfig';
+import { getSharedAssets } from './SharedAssets';
 
 // Configuration
 export const CHUNK_SIZE = 80;
@@ -93,8 +95,8 @@ export class ChunkManager {
         chunk.userData = {
             cables: [],
             buildings: [],
-            animatedObjects: [],  // Pre-collected animated objects for optimization
-            roomType: roomType,
+            animatedObjects: [], // Pre-collected animated objects for optimization
+            roomType,
         } as ExtendedChunkUserData;
 
         // Floor - select type based on room
@@ -109,9 +111,11 @@ export class ChunkManager {
                 // We'll store it in userData.fogSystem (requires type update or loose typing)
                 (chunk.userData as any).fogSystem = crackedSystem.fog;
             }
-        } else if (roomType === RoomType.IN_BETWEEN) {
+        }
+        else if (roomType === RoomType.IN_BETWEEN) {
             floor = createMoireFloorMesh(CHUNK_SIZE, this.floorMaterial);
-        } else {
+        }
+        else {
             floor = createFloorMesh(CHUNK_SIZE, this.floorMaterial);
         }
         chunk.add(floor);
@@ -130,9 +134,12 @@ export class ChunkManager {
             // Determine style
             const styleSeed = hash(i, cx);
             let style = 'BLOCKS';
-            if (styleSeed > 0.9) style = 'FLUID';
-            else if (styleSeed > 0.7) style = 'TREE';
-            else if (styleSeed > 0.35) style = 'SPIKES';
+            if (styleSeed > 0.9)
+                style = 'FLUID';
+            else if (styleSeed > 0.7)
+                style = 'TREE';
+            else if (styleSeed > 0.35)
+                style = 'SPIKES';
 
             // Mobility settings
             let isMobile = false;
@@ -145,7 +152,7 @@ export class ChunkManager {
                 wanderSpeed: 0.2 + hash(i, i) * 0.3,
                 wanderRange: 2.0 + hash(i, cx) * 5.0,
                 offset: hash(i, cz) * 100,
-                isMobile: isMobile,
+                isMobile,
             };
 
             let maxHeight = 0;
@@ -155,11 +162,14 @@ export class ChunkManager {
             // Generate based on style
             if (style === 'TREE') {
                 maxHeight = createTree(buildGroup, params, animatedObjects);
-            } else if (style === 'FLUID') {
+            }
+            else if (style === 'FLUID') {
                 maxHeight = createFluidBuilding(buildGroup, params, animatedObjects);
-            } else if (style === 'SPIKES') {
+            }
+            else if (style === 'SPIKES') {
                 maxHeight = createSpikesBuilding(buildGroup, params);
-            } else {
+            }
+            else {
                 maxHeight = createBlocksBuilding(buildGroup, params);
             }
 
@@ -184,7 +194,8 @@ export class ChunkManager {
      * Create cables for a chunk
      */
     private createCables(chunk: Chunk, nodes: CableNode[], cx: number, cz: number): void {
-        if (nodes.length < 1) return;
+        if (nodes.length < 1)
+            return;
 
         // Cables between buildings
         if (nodes.length > 1) {
@@ -200,12 +211,12 @@ export class ChunkManager {
                         offsetS: new THREE.Vector3(
                             (hash(s, i) - 0.5) * 2,
                             0,
-                            (hash(i, s) - 0.5) * 2
+                            (hash(i, s) - 0.5) * 2,
                         ),
                         offsetE: new THREE.Vector3(
                             (hash(s, i + 1) - 0.5) * 2,
                             0,
-                            (hash(i + 1, s) - 0.5) * 2
+                            (hash(i + 1, s) - 0.5) * 2,
                         ),
                     });
                     chunk.add(cable.line);
@@ -227,8 +238,8 @@ export class ChunkManager {
                         new THREE.Vector3(
                             Math.cos(angle) * dist,
                             0,
-                            Math.sin(angle) * dist
-                        )
+                            Math.sin(angle) * dist,
+                        ),
                     );
                     groundPos.y = 0.1;
 
@@ -244,7 +255,7 @@ export class ChunkManager {
                         offsetS: new THREE.Vector3(
                             hash(k, i) - 0.5,
                             0,
-                            hash(i, k) - 0.5
+                            hash(i, k) - 0.5,
                         ),
                         offsetE: new THREE.Vector3(0, 0, 0),
                     });
@@ -277,94 +288,9 @@ export class ChunkManager {
      * @param delta - Delta time in seconds
      */
     animate(time: number, delta: number): void {
+        // Animate all chunks (delegated to ChunkAnimator)
         for (const key in this.activeChunks) {
-            const chunk = this.activeChunks[key];
-
-            // Animate buildings (mobile wandering)
-            if (chunk.userData.buildings) {
-                chunk.userData.buildings.forEach(group => {
-                    const ud = group.userData as BuildingUserData;
-                    if (ud.isMobile) {
-                        const driftTime = time * ud.wanderSpeed + ud.offset;
-                        group.position.x = ud.initialPos.x + Math.sin(driftTime) * ud.wanderRange;
-                        group.position.z = ud.initialPos.z + Math.cos(driftTime * 0.7) * ud.wanderRange;
-                        group.position.y = ud.initialPos.y + Math.sin(driftTime * 0.5) * 2.0;
-                    }
-                });
-            }
-
-            // Animate pre-collected objects (P0 optimization)
-            if (chunk.userData.animatedObjects) {
-                chunk.userData.animatedObjects.forEach((obj: AnimatedObject) => {
-                    const ud = obj.userData;
-                    if (!ud) return;
-
-                    if (ud.animType === 'ROTATE_FLOAT' && ud.speed !== undefined) {
-                        obj.rotation.x += ud.speed * delta;
-                        obj.rotation.z += ud.speed * delta;
-                    }
-                    if (ud.animType === 'LIQUID_WOBBLE' && ud.baseScale && ud.speed !== undefined && ud.phase !== undefined) {
-                        const s = Math.sin(time * ud.speed + ud.phase);
-                        const sy = 1.0 + s * 0.15;
-                        const sxz = 1.0 - s * 0.07;
-                        obj.scale.set(
-                            ud.baseScale.x * sxz,
-                            ud.baseScale.y * sy,
-                            ud.baseScale.z * sxz
-                        );
-                    }
-                    if (ud.animType === 'BRANCH_SWAY' && ud.initialRotZ !== undefined && ud.speed !== undefined && ud.phase !== undefined && ud.rigidity !== undefined) {
-                        const sway = Math.sin(time * ud.speed + ud.phase) * 0.05 * (1.0 / ud.rigidity);
-                        obj.rotation.z = ud.initialRotZ + sway;
-                        obj.rotation.y += Math.cos(time * 0.5 + ud.phase) * 0.002;
-                    }
-                    if (ud.animType === 'LEAF_FLUTTER' && ud.phase !== undefined) {
-                        obj.rotation.x += Math.sin(time * 5.0 + ud.phase) * 0.05;
-                        obj.rotation.z += Math.cos(time * 3.0 + ud.phase) * 0.05;
-                    }
-                    if (ud.isPlasma && obj.material?.emissive) {
-                        const pulse = 0.5 + Math.sin(time * 2 + obj.position.x) * 0.5;
-                        obj.material.emissive.setHSL(0, 0, pulse * 0.2);
-                    }
-                });
-            }
-
-            // Update cables
-            if (chunk.userData.cables) {
-                chunk.userData.cables.forEach((cable: DynamicCable) => {
-                    updateCableGeometry(cable);
-                });
-            }
-
-            // Animate fog system for cracked floors
-            const fogSystem = (chunk.userData as any).fogSystem as THREE.InstancedMesh;
-            if (fogSystem && fogSystem.userData.speeds) {
-                const matrix = new THREE.Matrix4();
-                const position = new THREE.Vector3();
-                const rotation = new THREE.Quaternion();
-                const scale = new THREE.Vector3();
-
-                for (let i = 0; i < fogSystem.count; i++) {
-                    fogSystem.getMatrixAt(i, matrix);
-                    matrix.decompose(position, rotation, scale);
-
-                    // Move up
-                    const speed = fogSystem.userData.speeds[i];
-                    position.y += speed * delta;
-
-                    // Reset if too high (fade out range 0-2m)
-                    if (position.y > 2.0) {
-                        position.y = -160.0; // Reset to deep abyss
-                        // Randomize x/z slightly on reset
-                        position.x += (Math.random() - 0.5) * 0.5;
-                        position.z += (Math.random() - 0.5) * 0.5;
-                    }
-
-                    matrix.compose(position, rotation, scale);
-                    fogSystem.setMatrixAt(i, matrix);
-                }
-                fogSystem.instanceMatrix.needsUpdate = true;
-            }
+            animateChunk(this.activeChunks[key], time, delta);
         }
 
         // Update room transition
@@ -380,7 +306,7 @@ export class ChunkManager {
             this.currentShaderConfig = lerpRoomShaderConfig(
                 fromConfig,
                 toConfig,
-                this.roomTransitionProgress
+                this.roomTransitionProgress,
             );
         }
     }
@@ -451,11 +377,13 @@ export class ChunkManager {
             for (let z = -1; z <= 1; z++) {
                 const key = `${cx + x},${cz + z}`;
                 const chunk = this.activeChunks[key];
-                if (!chunk || !chunk.userData.cables) continue;
+                if (!chunk || !chunk.userData.cables)
+                    continue;
 
                 // Check cables in this chunk
                 for (const cable of chunk.userData.cables) {
-                    if (!cable.line) continue;
+                    if (!cable.line)
+                        continue;
 
                     // Approximate distance to the line segment
                     // Simple check against midpoint first
@@ -463,7 +391,8 @@ export class ChunkManager {
                     const end = cable.endNode.obj.position.clone().add(cable.endNode.topOffset);
                     const mid = start.clone().lerp(end, 0.5);
 
-                    if (playerPos.distanceToSquared(mid) > 2500) continue; // Skip far cables (>50m)
+                    if (playerPos.distanceToSquared(mid) > 2500)
+                        continue; // Skip far cables (>50m)
 
                     // Accurate distance to segment
                     const line = new THREE.Line3(start, end);
@@ -482,7 +411,8 @@ export class ChunkManager {
                         const sagPoint = mid.clone();
                         sagPoint.y -= cable.options.droop;
                         const sagDist = playerPos.distanceTo(sagPoint);
-                        if (sagDist < minDistance) minDistance = sagDist;
+                        if (sagDist < minDistance)
+                            minDistance = sagDist;
                     }
                 }
             }

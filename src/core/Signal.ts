@@ -1,16 +1,16 @@
 /**
  * 轻量级信号类 - 用于系统间解耦通信
- * 
+ *
  * 使用示例:
  * ```typescript
  * const onJump = new Signal<{ isDoubleJump: boolean }>();
- * 
+ *
  * // 订阅
  * const unsubscribe = onJump.connect((data) => console.log(data));
- * 
+ *
  * // 发射
  * onJump.emit({ isDoubleJump: true });
- * 
+ *
  * // 取消订阅
  * unsubscribe();
  * ```

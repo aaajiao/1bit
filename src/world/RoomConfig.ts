@@ -5,33 +5,33 @@
  * Room type enumeration representing different mental states
  */
 export enum RoomType {
-    INFO_OVERFLOW = 'INFO_OVERFLOW',      // High noise, no response
+    INFO_OVERFLOW = 'INFO_OVERFLOW', // High noise, no response
     FORCED_ALIGNMENT = 'FORCED_ALIGNMENT', // Split world, binary choice
-    IN_BETWEEN = 'IN_BETWEEN',             // Glitch, misread by both systems
-    POLARIZED = 'POLARIZED',               // Pure binary, zero dithering
+    IN_BETWEEN = 'IN_BETWEEN', // Glitch, misread by both systems
+    POLARIZED = 'POLARIZED', // Pure binary, zero dithering
 }
 
 /**
  * Shader parameters for each room type
  */
 export interface RoomShaderConfig {
-    uNoiseDensity: number;     // 0-1, dither pattern density
-    uThresholdBias: number;    // -0.5 to 0.5, black/white balance offset
-    uTemporalJitter: number;   // 0-1, temporal animation
-    uContrast: number;         // 1.0+, overall contrast
-    uGlitchAmount: number;     // 0-1, vertex displacement amplitude
-    uGlitchSpeed: number;      // Hz, glitch animation frequency
+    uNoiseDensity: number; // 0-1, dither pattern density
+    uThresholdBias: number; // -0.5 to 0.5, black/white balance offset
+    uTemporalJitter: number; // 0-1, temporal animation
+    uContrast: number; // 1.0+, overall contrast
+    uGlitchAmount: number; // 0-1, vertex displacement amplitude
+    uGlitchSpeed: number; // Hz, glitch animation frequency
 }
 
 /**
  * Audio parameters for each room type
  */
 export interface RoomAudioConfig {
-    baseFrequency: number;          // Ambient drone base frequency (Hz)
+    baseFrequency: number; // Ambient drone base frequency (Hz)
     harmonic: 'consonant' | 'dissonant' | 'binaural';
-    noiseLayer: boolean;            // Whether to add high-frequency noise
-    noiseGain: number;              // 0-1
-    beatFrequency?: number;         // For binaural beats (L/R Hz difference)
+    noiseLayer: boolean; // Whether to add high-frequency noise
+    noiseGain: number; // 0-1
+    beatFrequency?: number; // For binaural beats (L/R Hz difference)
 }
 
 /**
@@ -41,10 +41,10 @@ export interface RoomConfig {
     shader: RoomShaderConfig;
     audio: RoomAudioConfig;
     visualCues: {
-        buildingFlicker: boolean;   // Buildings swap geometry
-        zFighting: boolean;         // Depth conflict artifacts
-        crackVisible: boolean;      // Central crack/rift
-        zeroDither: boolean;        // Pure 1-bit, no dithering
+        buildingFlicker: boolean; // Buildings swap geometry
+        zFighting: boolean; // Depth conflict artifacts
+        crackVisible: boolean; // Central crack/rift
+        zeroDither: boolean; // Pure 1-bit, no dithering
     };
 }
 
@@ -171,7 +171,7 @@ export const INFO_OVERFLOW_REFRESH_MAP: Record<number, number> = {
 export function lerpRoomShaderConfig(
     from: RoomShaderConfig,
     to: RoomShaderConfig,
-    t: number
+    t: number,
 ): RoomShaderConfig {
     const lerp = (a: number, b: number) => a + (b - a) * t;
     return {
@@ -191,8 +191,11 @@ export function getRoomTypeFromPosition(cx: number, cz: number): RoomType {
     // Use hash-based distribution for variety
     const hash = Math.abs(Math.sin(cx * 12.9898 + cz * 78.233) * 43758.5453) % 1;
 
-    if (hash < 0.25) return RoomType.INFO_OVERFLOW;
-    if (hash < 0.50) return RoomType.FORCED_ALIGNMENT;
-    if (hash < 0.75) return RoomType.IN_BETWEEN;
+    if (hash < 0.25)
+        return RoomType.INFO_OVERFLOW;
+    if (hash < 0.50)
+        return RoomType.FORCED_ALIGNMENT;
+    if (hash < 0.75)
+        return RoomType.IN_BETWEEN;
     return RoomType.POLARIZED;
 }

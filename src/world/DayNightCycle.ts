@@ -1,14 +1,14 @@
 // 1-bit Chimera Void - Day/Night Cycle System
-import * as THREE from 'three';
+import type * as THREE from 'three';
 import type { DayNightContext } from '../types';
 
 /**
  * Manages day/night cycle with randomization
  */
 export class DayNightCycle {
-    private cycleDuration: number = 300;     // Current cycle duration (randomized 4-6 min)
+    private cycleDuration: number = 300; // Current cycle duration (randomized 4-6 min)
     private isDay: boolean = true;
-    private nightIntensity: number = 0.5;    // 0.3-1.0, affects background darkness
+    private nightIntensity: number = 0.5; // 0.3-1.0, affects background darkness
     private inEclipse: boolean = false;
     private eclipseEndTime: number = 0;
 
@@ -58,7 +58,8 @@ export class DayNightCycle {
             // Transition weather chance
             if (!newIsDay && Math.random() < 0.3) {
                 context.weather.forceWeather('static', 15 + Math.random() * 15);
-            } else if (newIsDay && Math.random() < 0.2) {
+            }
+            else if (newIsDay && Math.random() < 0.2) {
                 context.weather.forceWeather('rain', 10 + Math.random() * 10);
             }
 

@@ -1,24 +1,25 @@
 // 1-bit Chimera Void - Main Entry Point
-import * as THREE from 'three';
-import { ChunkManager, CHUNK_SIZE } from './world/ChunkManager';
-import { updateCableTime } from './world/CableSystem';
-import { AudioController } from './audio/AudioController';
-import { WeatherSystem } from './world/WeatherSystem';
-import { DayNightCycle } from './world/DayNightCycle';
-import { SkyEye } from './world/SkyEye';
-import { RunStatsCollector } from './stats/RunStatsCollector';
-import { StateSnapshotGenerator } from './stats/StateSnapshotGenerator';
-import { SnapshotOverlay } from './stats/SnapshotOverlay';
-import { RoomType } from './world/RoomConfig';
-import { createScene } from './core/SceneSetup';
-import { createPostProcessing, updatePostProcessingSize, type PostProcessingComponents } from './core/PostProcessing';
-import { HUD } from './ui/HUD';
-import { ScreenshotManager } from './utils/ScreenshotManager';
+import type * as THREE from 'three';
+import type { PostProcessingComponents } from './core/PostProcessing';
 import type { AppConfig } from './types';
-
+import { AudioController } from './audio/AudioController';
+import { createPostProcessing, updatePostProcessingSize } from './core/PostProcessing';
+import { createScene } from './core/SceneSetup';
 // New Managers
 import { PlayerManager } from './player/PlayerManager';
+import { RunStatsCollector } from './stats/RunStatsCollector';
+import { SnapshotOverlay } from './stats/SnapshotOverlay';
+import { StateSnapshotGenerator } from './stats/StateSnapshotGenerator';
+import { HUD } from './ui/HUD';
+import { ScreenshotManager } from './utils/ScreenshotManager';
+import { updateCableTime } from './world/CableSystem';
+import { CHUNK_SIZE, ChunkManager } from './world/ChunkManager';
+import { DayNightCycle } from './world/DayNightCycle';
 import { RiftMechanic } from './world/RiftMechanic';
+import { RoomType } from './world/RoomConfig';
+
+import { SkyEye } from './world/SkyEye';
+import { WeatherSystem } from './world/WeatherSystem';
 
 // Extend Window interface for app reference
 declare global {
@@ -77,7 +78,8 @@ class ChimeraVoid {
         // Audio system
         this.audio = new AudioController();
         document.addEventListener('click', () => {
-            if (!this.audio.enabled) this.audio.init();
+            if (!this.audio.enabled)
+                this.audio.init();
         }, { once: true });
 
         // Player Manager
@@ -153,7 +155,8 @@ class ChimeraVoid {
         // 3. Update Mechanics
         if (currentRoomType === RoomType.FORCED_ALIGNMENT) {
             this.riftMechanic.update(this.player, this.audio, playerPos);
-        } else if (currentRoomType === RoomType.INFO_OVERFLOW && Math.random() < 0.02) {
+        }
+        else if (currentRoomType === RoomType.INFO_OVERFLOW && Math.random() < 0.02) {
             this.audio.playInfoChirp();
         }
 
@@ -172,7 +175,7 @@ class ChimeraVoid {
             currentRoomType,
             playerPos.x,
             playerState.overrideActive,
-            playerState.overrideTriggered
+            playerState.overrideTriggered,
         );
 
         this.dayNight.update(t, {
@@ -195,19 +198,22 @@ class ChimeraVoid {
             weatherState,
             shaderConfig,
             playerState.flowerIntensity,
-            playerState.overrideProgress
+            playerState.overrideProgress,
         );
 
         // Audio tick
         this.audio.tick(delta);
 
         // Sky Eye
-        if (this.skyEye) this.skyEye.update(delta, playerPos, this.audio);
+        if (this.skyEye)
+            this.skyEye.update(delta, playerPos, this.audio);
 
         // Scanner Light
         if (this.scannerLight) {
             this.scannerLight.target.position.set(
-                Math.sin(t * 0.5) * 100, 0, Math.cos(t * 0.5) * 100
+                Math.sin(t * 0.5) * 100,
+                0,
+                Math.cos(t * 0.5) * 100,
             );
             this.scannerLight.target.updateMatrixWorld();
         }
@@ -222,7 +228,7 @@ class ChimeraVoid {
             isGazing: playerState.isGazing,
             overrideActive: playerState.overrideActive,
             overrideProgress: playerState.overrideProgress,
-            tags: this.runStats.generateTags()
+            tags: this.runStats.generateTags(),
         });
 
         // Loop Render
@@ -233,14 +239,16 @@ class ChimeraVoid {
         const cableDist = this.chunkManager.getDistanceToNearestCable(playerPos);
         if (cableDist < 8.0) {
             this.audio.startCableHum();
-        } else if (cableDist > 12.0) {
+        }
+        else if (cableDist > 12.0) {
             this.audio.stopCableHum();
         }
 
         if (cableDist < 12.0) {
             const humIntensity = Math.max(0, 1 - Math.max(0, cableDist - 1) / 11.0);
             this.audio.updateCableHum(humIntensity);
-            if (cableDist < 2.5 && Math.random() < 0.01) this.audio.playCablePulse();
+            if (cableDist < 2.5 && Math.random() < 0.01)
+                this.audio.playCablePulse();
         }
     }
 

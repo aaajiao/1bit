@@ -1,7 +1,7 @@
+import type { FingerStructure, ThumbStructure } from '../types';
 // 1-bit Chimera Void - Hands Model
 import * as THREE from 'three';
-import { createFlowerProp, animateFlower } from './FlowerProp';
-import type { FingerStructure, ThumbStructure } from '../types';
+import { animateFlower, createFlowerProp } from './FlowerProp';
 
 interface FlowerGroup extends THREE.Group {
     userData: {
@@ -44,7 +44,7 @@ export class HandsModel {
      */
     private init(): void {
         // Hand light
-        const handLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        const handLight = new THREE.DirectionalLight(0xFFFFFF, 0.5);
         handLight.position.set(0, 2, 0);
         this.handsGroup.add(handLight);
 
@@ -74,7 +74,7 @@ export class HandsModel {
         // Proximal
         const s1 = new THREE.Mesh(
             new THREE.BoxGeometry(w, w * 0.85, l1),
-            this.handMat
+            this.handMat,
         );
         s1.position.z = -l1 / 2;
         root.add(s1);
@@ -82,7 +82,7 @@ export class HandsModel {
         // Joint 1
         const j1 = new THREE.Mesh(
             new THREE.SphereGeometry(w * 0.55, 8, 8),
-            this.jointMat
+            this.jointMat,
         );
         j1.position.z = -l1;
         root.add(j1);
@@ -94,7 +94,7 @@ export class HandsModel {
 
         const s2 = new THREE.Mesh(
             new THREE.BoxGeometry(w * 0.9, w * 0.8, l2),
-            this.handMat
+            this.handMat,
         );
         s2.position.z = -l2 / 2;
         s2Group.add(s2);
@@ -102,7 +102,7 @@ export class HandsModel {
         // Joint 2
         const j2 = new THREE.Mesh(
             new THREE.SphereGeometry(w * 0.5, 8, 8),
-            this.jointMat
+            this.jointMat,
         );
         j2.position.z = -l2;
         s2Group.add(j2);
@@ -114,7 +114,7 @@ export class HandsModel {
 
         const s3 = new THREE.Mesh(
             new THREE.BoxGeometry(w * 0.8, w * 0.7, l3),
-            this.handMat
+            this.handMat,
         );
         s3.position.z = -l3 / 2;
         s3Group.add(s3);
@@ -135,14 +135,14 @@ export class HandsModel {
 
         const s1 = new THREE.Mesh(
             new THREE.BoxGeometry(width, width * 0.9, l2),
-            this.handMat
+            this.handMat,
         );
         s1.position.z = -l2 / 2;
         s1Group.add(s1);
 
         const j1 = new THREE.Mesh(
             new THREE.SphereGeometry(width * 0.55, 8, 8),
-            this.jointMat
+            this.jointMat,
         );
         j1.position.z = -l2;
         s1Group.add(j1);
@@ -153,7 +153,7 @@ export class HandsModel {
 
         const s2 = new THREE.Mesh(
             new THREE.BoxGeometry(width * 0.9, width * 0.8, l3),
-            this.handMat
+            this.handMat,
         );
         s2.position.z = -l3 / 2;
         s2Group.add(s2);
@@ -180,7 +180,7 @@ export class HandsModel {
         // Wrist
         const wrist = new THREE.Mesh(
             new THREE.BoxGeometry(0.22, 0.08, 0.1),
-            this.jointMat
+            this.jointMat,
         );
         wrist.position.z = 0.15;
         handMeshGroup.add(wrist);
@@ -191,7 +191,7 @@ export class HandsModel {
 
         const palm = new THREE.Mesh(
             new THREE.BoxGeometry(0.26, 0.06, 0.32),
-            this.handMat
+            this.handMat,
         );
         palm.position.z = -0.05;
         palmGroup.add(palm);
@@ -199,7 +199,7 @@ export class HandsModel {
         // Thenar
         const thenar = new THREE.Mesh(
             new THREE.SphereGeometry(0.08, 12, 12),
-            this.handMat
+            this.handMat,
         );
         thenar.scale.set(1.0, 0.6, 1.4);
         thenar.position.set(isLeft ? 0.1 : -0.1, -0.04, 0.02);
@@ -209,7 +209,7 @@ export class HandsModel {
         // Hypothenar
         const hypo = new THREE.Mesh(
             new THREE.SphereGeometry(0.06, 12, 12),
-            this.handMat
+            this.handMat,
         );
         hypo.scale.set(0.8, 0.5, 1.2);
         hypo.position.set(isLeft ? -0.1 : 0.1, -0.04, 0.05);
@@ -264,7 +264,8 @@ export class HandsModel {
             g.add(flower);
             // Store reference for external access
             g.userData.flower = flower;
-        } else {
+        }
+        else {
             // Left hand - relaxed pose
             fIndex.root.rotation.x = 0.2;
             fIndex.s2.rotation.x = 0.2;
@@ -311,7 +312,7 @@ export class HandsModel {
         this.handsGroup.position.y = Math.sin(this.time * 2) * 0.02 - pitchOffset;
 
         // Animate flower on right hand
-        this.rightHand.children.forEach(child => {
+        this.rightHand.children.forEach((child) => {
             const flowerChild = child as FlowerGroup;
             if (flowerChild.userData?.bloom) {
                 animateFlower(flowerChild, timeMs * 0.001, delta);

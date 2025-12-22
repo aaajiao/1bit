@@ -15,8 +15,8 @@ interface FlowerGroupUserData {
     coreLight?: THREE.PointLight;
     intensity: number;
     targetIntensity: number;
-    isBeingForced: boolean;     // True when gaze is forcing intensity down
-    forcedIntensity: number;    // The intensity to force to when gazing
+    isBeingForced: boolean; // True when gaze is forcing intensity down
+    forcedIntensity: number; // The intensity to force to when gazing
 }
 
 interface FlowerGroup extends THREE.Group {
@@ -51,7 +51,7 @@ export function createFlowerProp(): FlowerGroup {
     bloom.position.set(0, 0.8, 0);
 
     // Core light
-    const coreLight = new THREE.PointLight(0xffffff, 3.0, 8.0);
+    const coreLight = new THREE.PointLight(0xFFFFFF, 3.0, 8.0);
     coreLight.castShadow = true;
     coreLight.shadow.bias = -0.0001;
     bloom.add(coreLight);
@@ -59,7 +59,7 @@ export function createFlowerProp(): FlowerGroup {
     // Core mesh
     const coreMesh = new THREE.Mesh(
         new THREE.IcosahedronGeometry(0.07, 1),
-        assets.matFlowerCore
+        assets.matFlowerCore,
     );
     bloom.add(coreMesh);
 
@@ -68,12 +68,12 @@ export function createFlowerProp(): FlowerGroup {
         const angle = (p / 7) * Math.PI * 2;
         const petal = new THREE.Mesh(
             new THREE.ConeGeometry(0.05, 0.5, 3),
-            assets.matFlowerPetal
+            assets.matFlowerPetal,
         );
         petal.position.set(
             Math.sin(angle) * 0.08,
             0.2,
-            Math.cos(angle) * 0.08
+            Math.cos(angle) * 0.08,
         );
         petal.lookAt(0, 0, 0);
         petal.rotation.x -= 2.2;
@@ -90,17 +90,17 @@ export function createFlowerProp(): FlowerGroup {
         const angle = (s / 5) * Math.PI * 2 + 0.5;
         const sepal = new THREE.Mesh(
             new THREE.TetrahedronGeometry(0.2),
-            assets.matWire
+            assets.matWire,
         );
         sepal.position.set(
             Math.sin(angle) * 0.12,
             0.05,
-            Math.cos(angle) * 0.12
+            Math.cos(angle) * 0.12,
         );
         sepal.rotation.set(
             Math.random(),
             Math.random(),
-            Math.random()
+            Math.random(),
         );
         (sepal.userData as FlowerPartUserData) = {
             animType: 'SEPAL_FLOAT',
@@ -120,14 +120,14 @@ export function createFlowerProp(): FlowerGroup {
         dust.position.set(
             r * Math.sin(phi) * Math.cos(theta),
             r * Math.cos(phi),
-            r * Math.sin(phi) * Math.sin(theta)
+            r * Math.sin(phi) * Math.sin(theta),
         );
         (dust.userData as FlowerPartUserData) = {
             animType: 'DUST_ORBIT',
             axis: new THREE.Vector3(
                 Math.random() - 0.5,
                 Math.random() - 0.5,
-                Math.random() - 0.5
+                Math.random() - 0.5,
             ).normalize(),
             speed: 0.4 + Math.random(),
         };
@@ -136,12 +136,12 @@ export function createFlowerProp(): FlowerGroup {
 
     flowerGroup.add(bloom);
     flowerGroup.userData = {
-        bloom: bloom,
-        coreLight: coreLight,
-        intensity: 0.5,           // Default intensity
-        targetIntensity: 0.5,     // Target for smooth interpolation
-        isBeingForced: false,     // Not being forced by gaze
-        forcedIntensity: 0.1,     // Default forced intensity when gazing
+        bloom,
+        coreLight,
+        intensity: 0.5, // Default intensity
+        targetIntensity: 0.5, // Target for smooth interpolation
+        isBeingForced: false, // Not being forced by gaze
+        forcedIntensity: 0.1, // Default forced intensity when gazing
     };
 
     return flowerGroup;
@@ -173,7 +173,7 @@ export function getFlowerIntensity(flowerGroup: FlowerGroup): number {
 export function forceFlowerIntensity(
     flowerGroup: FlowerGroup,
     isForced: boolean,
-    forcedValue: number = 0.1
+    forcedValue: number = 0.1,
 ): void {
     flowerGroup.userData.isBeingForced = isForced;
     flowerGroup.userData.forcedIntensity = forcedValue;
@@ -199,7 +199,8 @@ export function overrideFlowerIntensity(flowerGroup: FlowerGroup): void {
  */
 export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: number): void {
     const bloom = flowerGroup.userData.bloom;
-    if (!bloom) return;
+    if (!bloom)
+        return;
 
     const ud = flowerGroup.userData;
     const assets = getSharedAssets();
@@ -224,10 +225,12 @@ export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: num
     if (intensity < 0.3) {
         state = 0; // Dim
         stateProgress = intensity / 0.3;
-    } else if (intensity < 0.7) {
+    }
+    else if (intensity < 0.7) {
         state = 1; // Soft
         stateProgress = (intensity - 0.3) / 0.4;
-    } else {
+    }
+    else {
         state = 2; // Intense
         stateProgress = (intensity - 0.7) / 0.3;
     }
@@ -236,9 +239,9 @@ export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: num
     // State-based light intensity and distance
     if (ud.coreLight) {
         const lightParams = [
-            { intensity: 0.3 + stateProgress * 0.5, distance: 2.0 + stateProgress * 1.0 },  // Dim: 0.3-0.8, 2-3m
-            { intensity: 1.0 + stateProgress * 2.0, distance: 4.0 + stateProgress * 2.0 },  // Soft: 1.0-3.0, 4-6m
-            { intensity: 4.0 + stateProgress * 4.0, distance: 8.0 + stateProgress * 4.0 },  // Intense: 4.0-8.0, 8-12m
+            { intensity: 0.3 + stateProgress * 0.5, distance: 2.0 + stateProgress * 1.0 }, // Dim: 0.3-0.8, 2-3m
+            { intensity: 1.0 + stateProgress * 2.0, distance: 4.0 + stateProgress * 2.0 }, // Soft: 1.0-3.0, 4-6m
+            { intensity: 4.0 + stateProgress * 4.0, distance: 8.0 + stateProgress * 4.0 }, // Intense: 4.0-8.0, 8-12m
         ];
         const params = lightParams[state];
         ud.coreLight.intensity = params.intensity;
@@ -260,9 +263,9 @@ export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: num
     // ----- 4. BLOOM SCALE -----
     // More dramatic scaling between states
     const scaleParams = [
-        0.6 + stateProgress * 0.15,  // Dim: 0.6 - 0.75
-        0.8 + stateProgress * 0.15,  // Soft: 0.8 - 0.95
-        1.0 + stateProgress * 0.3,   // Intense: 1.0 - 1.3
+        0.6 + stateProgress * 0.15, // Dim: 0.6 - 0.75
+        0.8 + stateProgress * 0.15, // Soft: 0.8 - 0.95
+        1.0 + stateProgress * 0.3, // Intense: 1.0 - 1.3
     ];
     bloom.scale.setScalar(scaleParams[state]);
 
@@ -274,7 +277,8 @@ export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: num
     // ----- 6. PETAL/SEPAL/DUST ANIMATIONS -----
     bloom.children.forEach((part) => {
         const partData = part.userData as FlowerPartUserData;
-        if (!partData || !partData.animType) return;
+        if (!partData || !partData.animType)
+            return;
 
         if (partData.animType === 'PETAL_BREATHE' && partData.baseRotX !== undefined && partData.phase !== undefined) {
             // Petal opening based on state
