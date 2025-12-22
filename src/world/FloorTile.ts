@@ -52,53 +52,134 @@ export function createFloorMesh(chunkSize: number, material: THREE.Material): TH
 /**
  * Creates a floor with a central crack/rift for FORCED_ALIGNMENT rooms
  * The crack splits the floor into two halves with pure black abyss in between
+ * Now features jagged texturing and geometry
  * @param chunkSize - Size of the chunk
  * @param material - Floor material
- * @param crackWidth - Width of the central crack (default 4 meters)
+ * @param crackWidth - Base width of the central crack (default 4 meters)
  */
 export function createCrackedFloorMesh(
     chunkSize: number,
     material: THREE.Material,
     crackWidth: number = 4
-): THREE.Group {
+): { group: THREE.Group, fog?: THREE.InstancedMesh } {
     const group = new THREE.Group();
 
     // Calculate half-floor dimensions
     const halfFloorWidth = (chunkSize - crackWidth) / 2;
     const halfCrackWidth = crackWidth / 2;
 
-    // Left floor half (negative X side)
-    const leftFloor = new THREE.Mesh(
-        new THREE.PlaneGeometry(halfFloorWidth, chunkSize),
-        material
-    );
+    // Geometry with segments for vertex manipulation (jagged edge)
+    const segmentsZ = 32; // More segments along Z for jagged detail
+    const segmentsX = 4;
+
+    // --- Left Floor Half (Negative X) ---
+    const leftGeo = new THREE.PlaneGeometry(halfFloorWidth, chunkSize, segmentsX, segmentsZ);
+    const leftPos = leftGeo.attributes.position;
+
+    for (let i = 0; i < leftPos.count; i++) {
+        const x = leftPos.getX(i);
+        const z = -leftPos.getY(i); // Plane is created in XY, mapped to XZ. Y in geo is -Z in world
+
+        // Right edge of left floor is at x = halfFloorWidth / 2
+        // We want to perturb vertices near this edge
+        if (x > halfFloorWidth / 2 - 0.1) {
+            // Jagged noise: mix of sine waves
+            const noise = Math.sin(z * 0.5) * 0.8 + Math.sin(z * 2.1) * 0.3 + (Math.random() - 0.5) * 0.4;
+            // Subtract from X (move left, widening gap randomly) or add (narrowing)
+            // But we want to keep a minimum gap, so let's mostly erode
+            leftPos.setX(i, x - Math.abs(noise) * 0.8);
+        }
+    }
+    leftPos.needsUpdate = true;
+    leftGeo.computeVertexNormals();
+
+    const leftFloor = new THREE.Mesh(leftGeo, material);
     leftFloor.rotation.x = -Math.PI / 2;
     leftFloor.position.x = -(halfCrackWidth + halfFloorWidth / 2);
     leftFloor.receiveShadow = true;
     group.add(leftFloor);
 
-    // Right floor half (positive X side)
-    const rightFloor = new THREE.Mesh(
-        new THREE.PlaneGeometry(halfFloorWidth, chunkSize),
-        material
-    );
+    // --- Right Floor Half (Positive X) ---
+    const rightGeo = new THREE.PlaneGeometry(halfFloorWidth, chunkSize, segmentsX, segmentsZ);
+    const rightPos = rightGeo.attributes.position;
+
+    for (let i = 0; i < rightPos.count; i++) {
+        const x = rightPos.getX(i);
+        const z = -rightPos.getY(i);
+
+        // Left edge of right floor is at x = -halfFloorWidth / 2
+        if (x < -halfFloorWidth / 2 + 0.1) {
+            const noise = Math.sin(z * 0.5 + 123.4) * 0.8 + Math.sin(z * 2.1) * 0.3 + (Math.random() - 0.5) * 0.4;
+            // Add to X (move right, widening gap)
+            rightPos.setX(i, x + Math.abs(noise) * 0.8);
+        }
+    }
+    rightPos.needsUpdate = true;
+    rightGeo.computeVertexNormals();
+
+    const rightFloor = new THREE.Mesh(rightGeo, material);
     rightFloor.rotation.x = -Math.PI / 2;
     rightFloor.position.x = halfCrackWidth + halfFloorWidth / 2;
     rightFloor.receiveShadow = true;
     group.add(rightFloor);
 
-    // Optional: Add a deep black plane below the crack for visual depth
+    // Abyss plane (pure black)
     const abyssMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
     const abyssFloor = new THREE.Mesh(
-        new THREE.PlaneGeometry(crackWidth + 2, chunkSize),
+        new THREE.PlaneGeometry(crackWidth + 6, chunkSize),
         abyssMaterial
     );
     abyssFloor.rotation.x = -Math.PI / 2;
-    abyssFloor.position.y = -5; // 5 meters below ground level
-    abyssFloor.position.x = 0;
+    abyssFloor.position.y = -8; // Deep abyss
     group.add(abyssFloor);
 
-    return group;
+    // --- Abyss Fog ---
+    const fog = createAbyssFog(chunkSize, crackWidth);
+    fog.position.y = -5; // Start fog deep down
+    group.add(fog);
+
+    return { group, fog };
+}
+
+/**
+ * Creates an instanced mesh for rising fog particles in the abyss
+ */
+export function createAbyssFog(chunkSize: number, crackWidth: number): THREE.InstancedMesh {
+    const particleCount = 60;
+    const geometry = new THREE.PlaneGeometry(1.5, 1.5);
+    const material = new THREE.MeshBasicMaterial({
+        color: 0x333333, // Dark grey fog
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.4,
+    });
+
+    const mesh = new THREE.InstancedMesh(geometry, material, particleCount);
+    const dummy = new THREE.Object3D();
+
+    for (let i = 0; i < particleCount; i++) {
+        // Random position within the crack volume
+        dummy.position.set(
+            (Math.random() - 0.5) * crackWidth * 0.8, // Centered in crack
+            Math.random() * 5.0,                      // Height spread 0-5m
+            (Math.random() - 0.5) * chunkSize         // Along entire chunk length
+        );
+
+        // Random rotation and scale
+        dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+        const s = 1.0 + Math.random() * 2.0;
+        dummy.scale.set(s, s, s);
+
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+
+        // Use user data to store speed for animation
+        if (!mesh.userData.speeds) mesh.userData.speeds = [];
+        mesh.userData.speeds[i] = 0.5 + Math.random() * 1.5; // Upward speed
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    return mesh;
 }
 
 /**

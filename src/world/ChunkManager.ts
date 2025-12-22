@@ -98,9 +98,17 @@ export class ChunkManager {
         } as ExtendedChunkUserData;
 
         // Floor - select type based on room
+        // Floor - select type based on room
         let floor: THREE.Object3D;
         if (roomType === RoomType.FORCED_ALIGNMENT) {
-            floor = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial);
+            const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial);
+            floor = crackedSystem.group;
+
+            // Store fog system for animation
+            if (crackedSystem.fog) {
+                // We'll store it in userData.fogSystem (requires type update or loose typing)
+                (chunk.userData as any).fogSystem = crackedSystem.fog;
+            }
         } else if (roomType === RoomType.IN_BETWEEN) {
             floor = createMoireFloorMesh(CHUNK_SIZE, this.floorMaterial);
         } else {
@@ -326,6 +334,36 @@ export class ChunkManager {
                 chunk.userData.cables.forEach((cable: DynamicCable) => {
                     updateCableGeometry(cable);
                 });
+            }
+
+            // Animate fog system for cracked floors
+            const fogSystem = (chunk.userData as any).fogSystem as THREE.InstancedMesh;
+            if (fogSystem && fogSystem.userData.speeds) {
+                const matrix = new THREE.Matrix4();
+                const position = new THREE.Vector3();
+                const rotation = new THREE.Quaternion();
+                const scale = new THREE.Vector3();
+
+                for (let i = 0; i < fogSystem.count; i++) {
+                    fogSystem.getMatrixAt(i, matrix);
+                    matrix.decompose(position, rotation, scale);
+
+                    // Move up
+                    const speed = fogSystem.userData.speeds[i];
+                    position.y += speed * delta;
+
+                    // Reset if too high (fade out range 0-2m)
+                    if (position.y > 2.0) {
+                        position.y = -8.0; // Reset to abyss
+                        // Randomize x/z slightly on reset
+                        position.x += (Math.random() - 0.5) * 0.5;
+                        position.z += (Math.random() - 0.5) * 0.5;
+                    }
+
+                    matrix.compose(position, rotation, scale);
+                    fogSystem.setMatrixAt(i, matrix);
+                }
+                fogSystem.instanceMatrix.needsUpdate = true;
             }
         }
 
