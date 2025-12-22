@@ -747,7 +747,7 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 
 ---
 
-*Wired Brutalism: Chimera Void* - 一次关于程序化生成、极简主义美学与心理体验设计的实验。
+*1bit* - 一次关于程序化生成、极简主义美学与心理体验设计的实验。
 
 ---
 

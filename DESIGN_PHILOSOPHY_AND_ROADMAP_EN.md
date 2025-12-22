@@ -1,10 +1,10 @@
-# 🏛 Wired Brutalism: Chimera Void - Design Philosophy & Roadmap
+# 🏛 1bit - Design Philosophy & Roadmap
 
 ## 🏛 Philosophical Core
 
 ### 1. The 1-Bit Aesthetic as "Existence vs. Void"
 
-In *Chimera Void*, 1-bit is not a retro stylistic choice; it is a metaphysical statement.
+In *1bit*, 1-bit is not a retro stylistic choice; it is a metaphysical statement.
 - **Black (#000000) represents the System**: The absolute, the rigid, the void.
 - **White (#FFFFFF) represents the Self**: The signal, the ephemeral, the observer.
 - **Dithering represents Noise**: The friction between the system and the self.
