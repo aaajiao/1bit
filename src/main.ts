@@ -203,21 +203,35 @@ class ChimeraVoid {
             this.audio.updateBinauralPosition(this.camera.position.x, 20);
 
             // Crack detection: check if player is above the crack
-            // Crack is centered in each chunk (local x=0), so world X is chunkX * CHUNK_SIZE
-            // Use round to find nearest chunk center
             const nearestChunkX = Math.round(this.camera.position.x / CHUNK_SIZE);
             const chunkCenterX = nearestChunkX * CHUNK_SIZE;
             const distFromCenter = Math.abs(this.camera.position.x - chunkCenterX);
+
+            // RIFT AUDIO: Fog Sound
+            // Start if not already playing, but we can call startRiftFog repeatedly as it has internal check
+            this.audio.startRiftFog();
+            // Intensity based on proximity (closer = louder)
+            // Normalized: 1.0 at 0m, 0.0 at 10m
+            const riftProximity = Math.max(0, 1 - distFromCenter / 10);
+            this.audio.updateRiftFog(riftProximity);
 
             // Crack half-width is 2m
             if (distFromCenter < 2) {
                 // Player is above the crack - infinite fall with low gravity
                 this.controls.setGroundLevel(-1000);
                 this.controls.setGravity(5.0); // Lunar gravity for slow, long fall
+
+                // Trigger fall sound if just started falling
+                if (this.camera.position.y < 0 && this.camera.position.y > -5) {
+                    this.audio.playRiftFall();
+                }
             } else {
                 // Player is on solid ground
                 this.controls.setGroundLevel(2.0);
                 this.controls.setGravity(29.4); // Default gravity
+
+                // Safety: Stop fall sound if we stepped out
+                this.audio.stopRiftFall();
             }
 
             // Fall reset check
@@ -236,11 +250,17 @@ class ChimeraVoid {
 
                 // Reset gravity immediately
                 this.controls.setGravity(29.4);
+
+                // Play respawn sound
+                this.audio.playRiftRespawn();
             }
         } else {
             // Reset ground level and gravity for other room types
             this.controls.setGroundLevel(2.0);
             this.controls.setGravity(29.4);
+
+            // Make sure rift fog is stopped if we leave the room
+            this.audio.stopRiftFog();
         }
 
         // Play random info chirps (for INFO_OVERFLOW room)

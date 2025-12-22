@@ -45,6 +45,12 @@ export class AudioSystem implements AudioSystemInterface {
     private lastFlowerState: number = -1; // -1=unset, 0=dim, 1=soft, 2=intense
     private flowerSilenceTimer: number = 0; // Frames since last change
 
+    // Rift audio state
+    private riftFogNode: { noise: AudioBufferSourceNode, gain: GainNode, filter: BiquadFilterNode, lfo: OscillatorNode } | null = null;
+    private riftFallOsc: OscillatorNode | null = null;
+    private riftFallNoise: AudioBufferSourceNode | null = null;
+    private riftFallGain: GainNode | null = null;
+
     /**
      * Initialize audio context (must be called after user interaction)
      */
@@ -589,6 +595,205 @@ export class AudioSystem implements AudioSystemInterface {
         osc1.stop(now + 0.06);
         osc2.start(now + 0.03);
         osc2.stop(now + 0.1);
+    }
+
+    // ==================== RIFT AUDIO ====================
+
+    /**
+     * Start rift "Fog" sound - White noise with LFO filtered sweep
+     * Creates a swelling, breathing mist effect
+     */
+    startRiftFog(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain || this.riftFogNode) return;
+
+        const now = this.audioContext.currentTime;
+
+        // 1. Create White Noise (simpler, louder)
+        const bufferSize = this.audioContext.sampleRate * 2; // 2 seconds buffer
+        const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+        const data = buffer.getChannelData(0);
+
+        for (let i = 0; i < bufferSize; i++) {
+            // Standard white noise
+            data[i] = (Math.random() * 2 - 1) * 0.5;
+        }
+
+        const noise = this.audioContext.createBufferSource();
+        noise.buffer = buffer;
+        noise.loop = true;
+
+        // 2. Filter with LFO
+        const filter = this.audioContext.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.Q.value = 2; // Higher resonance for "windy" feel
+        filter.frequency.value = 600; // Higher base frequency
+
+        const lfo = this.audioContext.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.value = 0.2; // 5 seconds cycle
+
+        const lfoGain = this.audioContext.createGain();
+        lfoGain.gain.value = 400; // Large sweep
+
+        lfo.connect(lfoGain);
+        lfoGain.connect(filter.frequency);
+
+        // 3. Gain control
+        const gain = this.audioContext.createGain();
+        gain.gain.setValueAtTime(0, now);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+
+        noise.start(now);
+        lfo.start(now);
+
+        this.riftFogNode = { noise, gain, filter, lfo };
+    }
+
+    /**
+     * Update rift fog intensity based on distance
+     * @param intensity 0.0 to 1.0 (1.0 = at the edge)
+     */
+    updateRiftFog(intensity: number): void {
+        if (!this.riftFogNode || !this.audioContext) return;
+
+        // Louder target volume (0.8 max instead of 0.25)
+        const targetVol = Math.max(0, Math.min(1, intensity)) * 0.8;
+
+        // Use exponential ramp for more natural volume change, but ensure we don't hit 0 exactly for exp ramp
+        // Fallback to setTargetAtTime
+        this.riftFogNode.gain.gain.setTargetAtTime(targetVol, this.audioContext.currentTime, 0.2);
+    }
+
+    /**
+     * Stop rift fog sound
+     */
+    stopRiftFog(): void {
+        if (!this.riftFogNode) return;
+
+        const { noise, gain, lfo } = this.riftFogNode;
+        const now = this.audioContext?.currentTime || 0;
+
+        // Fade out
+        gain.gain.setTargetAtTime(0, now, 0.5);
+
+        setTimeout(() => {
+            noise.stop();
+            lfo.stop();
+        }, 600);
+
+        this.riftFogNode = null;
+    }
+
+    /**
+     * Start rift fall sound - Dramatic wind rush + shepherd-like Shepard tone feel
+     */
+    playRiftFall(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain || this.riftFallGain) return;
+
+        const now = this.audioContext.currentTime;
+
+        // Master gain for this effect
+        this.riftFallGain = this.audioContext.createGain();
+        this.riftFallGain.gain.setValueAtTime(0, now);
+        this.riftFallGain.gain.linearRampToValueAtTime(0.4, now + 0.5); // Fade in relatively fast
+        this.riftFallGain.connect(this.masterGain);
+
+        // 1. Wind Rush (Filtered Noise)
+        const bufferSize = this.audioContext.sampleRate * 2;
+        const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+        this.riftFallNoise = this.audioContext.createBufferSource();
+        this.riftFallNoise.buffer = buffer;
+        this.riftFallNoise.loop = true;
+
+        const windFilter = this.audioContext.createBiquadFilter();
+        windFilter.type = 'bandpass';
+        windFilter.Q.value = 1;
+        windFilter.frequency.setValueAtTime(400, now);
+        // Frequency rises as we fall (Doppler-ish / intensity increase)
+        windFilter.frequency.exponentialRampToValueAtTime(2000, now + 3.0);
+
+        this.riftFallNoise.connect(windFilter);
+        windFilter.connect(this.riftFallGain);
+
+        // 2. Descending Shepard-like Oscillator (The "falling" sensation)
+        this.riftFallOsc = this.audioContext.createOscillator();
+        this.riftFallOsc.type = 'sawtooth';
+        this.riftFallOsc.frequency.setValueAtTime(200, now);
+        this.riftFallOsc.frequency.exponentialRampToValueAtTime(50, now + 3.0); // Drop in pitch
+
+        const oscGain = this.audioContext.createGain();
+        oscGain.gain.value = 0.15;
+
+        this.riftFallOsc.connect(oscGain);
+        oscGain.connect(this.riftFallGain);
+
+        this.riftFallNoise.start(now);
+        this.riftFallOsc.start(now);
+    }
+
+    /**
+     * Stop fall sound immediately (e.g. if player jumps out of rift)
+     */
+    stopRiftFall(): void {
+        if (!this.riftFallGain || !this.audioContext) return;
+
+        const now = this.audioContext.currentTime;
+
+        // Fade out quickly
+        this.riftFallGain.gain.cancelScheduledValues(now);
+        this.riftFallGain.gain.setValueAtTime(this.riftFallGain.gain.value, now);
+        this.riftFallGain.gain.linearRampToValueAtTime(0, now + 0.1);
+
+        const oldNoise = this.riftFallNoise;
+        const oldOsc = this.riftFallOsc;
+        const oldGain = this.riftFallGain;
+
+        setTimeout(() => {
+            oldNoise?.stop();
+            oldOsc?.stop();
+            oldGain?.disconnect();
+        }, 150);
+
+        this.riftFallNoise = null;
+        this.riftFallOsc = null;
+        this.riftFallGain = null;
+    }
+
+    /**
+     * Stop fall sound and play respawn "pop"
+     */
+    playRiftRespawn(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+
+        // Stop falling sound first
+        this.stopRiftFall();
+
+        const now = this.audioContext.currentTime;
+
+        // Play Respawn Pop - Reverse suction feel
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(50, now);
+        osc.frequency.exponentialRampToValueAtTime(800, now + 0.1); // Rapid rise
+
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.3, now + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc.start(now);
+        osc.stop(now + 0.3);
     }
 
     // ==================== WEATHER AUDIO ====================
