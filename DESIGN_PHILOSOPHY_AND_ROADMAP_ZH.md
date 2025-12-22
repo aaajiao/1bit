@@ -694,11 +694,369 @@ uniform float uSaturation;      // 0–1，0=灰度，1=全彩
 
 ---
 
+
+---
+
+## 📍 现状评估
+
+在实施路线图之前，以下是对现有代码库的评估：
+
+### 现有模块
+
+| 模块 | 状态 | 备注 |
+|--------|--------|-------|
+| `DitherShader.ts` | **部分完成** | 拥有基本的 Bayer 抖动、边缘检测、天气效果。缺失：`uNoiseDensity`、`uThresholdBias`、`uTemporalJitter`、`uContrast` 等每个房间的 uniform 变量。拥有用于昼夜交替的 `invertColors`。 |
+| `ChunkManager.ts` | **需扩展** | 生成带有建筑/线缆的程序化分块。没有 `roomType` 枚举或精神状态房间配置。 |
+| `FlowerProp.ts` | **需扩展** | 拥有花瓣/花萼/尘埃动画的视觉花朵。没有 `setIntensity()` 方法或强度控制。 |
+| `AudioSystem.ts` | **部分完成** | 带有脚步声、环境嗡嗡声、线缆脉冲、眨眼声、昼夜声音的 Web Audio API。缺失：用于注视的低通滤波器、每个房间的音频层、双耳节拍。 |
+| `Controls.ts` | **需扩展** | 基本的 FPS 控制（WASD + 鼠标观看）。没有注视检测（俯仰角 > 45°），没有覆盖键处理。 |
+| `SkyEye.ts` | **存在** | 天空之眼视觉效果已存在。需与注视机制集成。 |
+| `RunStats` | **未开始** | 没有运行时指标收集基础架构。 |
+| `StateSnapshot` | **未开始** | 没有运行结束总结生成。 |
+
+### 需新增模块
+
+- `RunStatsCollector.ts` - 运行时行为采样
+- `StateSnapshotGenerator.ts` - 标签生成与图案渲染
+- `RoomConfig.ts` - 每个房间的着色器/音频配置
+- `GazeMechanic.ts` - 注视检测与响应系统
+
+---
+
+## 🎓 玩家探索设计
+
+机制必须是在没有显式教程的情况下可被发现的。以下环境提示将引导玩家学习：
+
+### 1. 花朵强度发现
+
+**环境提示：**
+- 首次加载时，花朵在 0.3–0.5 强度之间轻微脉冲 10 秒
+- 强度增加时播放微妙的音频提示（升调）
+- 世界的抖动密度会对花朵亮度做出可见的反应
+
+**控制映射：**
+```typescript
+// 滚轮控制花朵强度
+window.addEventListener('wheel', (e) => {
+  const delta = -Math.sign(e.deltaY) * 0.1;
+  flower.setIntensity(flower.intensity + delta);
+});
+```
+
+**兜底方案：** 60 秒无交互后，出现极简文本提示：`[scroll]`
+
+### 2. 注视机制发现
+
+**环境提示：**
+- 天空之眼在首次出生时位于地平线上，无法忽视
+- 当玩家自然环顾四周，越过 45° 俯仰角阈值时，立即触发视觉/音频反馈
+- 反馈具有戏剧性，足以被注意到但并非惩罚性的
+
+**视觉线索：**
+- 屏幕边缘在 45° 俯仰角处出现一条细白线（类似地平线标记）
+- 当玩家首次越过阈值时，此线短暂脉冲
+
+### 3. 覆盖键发现
+
+**环境提示：**
+- 在 POLARIZED 房间中，仅在以下情况后出现覆盖提示：
+  1. 玩家注视眼睛累计 > 5 秒
+  2. 玩家的花朵强度至少被强制降低（< 0.2）两次
+- 提示是叙事性的（diegetic）：附近的建筑表面出现闪烁的文本：`[HOLD TO RESIST]`
+
+**时机：**
+- 首次游玩：条件满足后提示出现
+- 后续运行：提示时机随机化（30s–120s）以保持惊喜感
+
+### 4. 房间过渡感知
+
+**环境提示：**
+- 房间边界通过微妙的视觉变化标记：
+  - INFO_OVERFLOW：远处的建筑在进入前开始闪烁
+  - FORCED_ALIGNMENT：在到达前 20 米可见裂缝
+  - IN_BETWEEN：边界边缘出现 Z-fighting 伪影
+  - POLARIZED：进入时抖动突然消失
+
+**音频线索：**
+- 房间音频特征之间 0.5 秒的交叉淡入淡出
+- 过渡平滑但这可被感知
+
+---
+
+## 🔊 音频系统技术规范
+
+音频系统使用 Web Audio API，架构如下：
+
+### 音频图结构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      AudioContext                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────┐    ┌─────────────┐    ┌──────────────┐    │
+│  │   环境音    │    │  房间层     │    │   事件层     │    │
+│  │   Drone     │    │ (每个房间)  │    │  (One-shots) │    │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬───────┘    │
+│         │                  │                  │             │
+│         ▼                  ▼                  ▼             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │                    MasterGain                        │   │
+│  └───────────────────────────┬─────────────────────────┘   │
+│                              │                              │
+│                              ▼                              │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              GazeLowPassFilter                       │   │
+│  │         (BiquadFilter, 动态控制)                     │   │
+│  └───────────────────────────┬─────────────────────────┘   │
+│                              │                              │
+│                              ▼                              │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │                    Destination                       │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 注视低通滤波器实现
+
+```typescript
+class GazeAudioController {
+  private lowPassFilter: BiquadFilterNode;
+  private targetFrequency: number = 20000; // 未注视时全频段
+  private currentFrequency: number = 20000;
+
+  constructor(audioContext: AudioContext) {
+    this.lowPassFilter = audioContext.createBiquadFilter();
+    this.lowPassFilter.type = 'lowpass';
+    this.lowPassFilter.frequency.value = 20000;
+    this.lowPassFilter.Q.value = 0.7;
+  }
+
+  /**
+   * 基于注视状态更新滤波器
+   * @param isGazing - 玩家是否正在看天空之眼
+   * @param gazeIntensity - 0–1，玩家看的直接程度（基于 pitch）
+   */
+  updateGaze(isGazing: boolean, gazeIntensity: number): void {
+    // 目标：20000Hz (几乎开) → 400Hz (完全注视)
+    this.targetFrequency = isGazing
+      ? 400 + (1 - gazeIntensity) * 19600
+      : 20000;
+  }
+
+  /**
+   * 平滑插值（在动画循环中调用）
+   */
+  tick(deltaTime: number): void {
+    const lerpSpeed = 3.0; // 过渡速度
+    this.currentFrequency += (this.targetFrequency - this.currentFrequency) * lerpSpeed * deltaTime;
+    this.lowPassFilter.frequency.setValueAtTime(
+      this.currentFrequency,
+      this.lowPassFilter.context.currentTime
+    );
+  }
+}
+```
+
+### 每个房间的音频配置
+
+```typescript
+interface RoomAudioConfig {
+  baseFrequency: number;      // 环境 Drone 基础频率 (Hz)
+  harmonic: 'consonant' | 'dissonant' | 'binaural'; // 协和 | 不协和 | 双耳
+  noiseLayer: boolean;        // 是否添加高频噪声
+  noiseGain: number;          // 0–1
+  beatFrequency?: number;     // 用于双耳节拍 (L/R Hz 差异)
+}
+
+const ROOM_AUDIO_CONFIGS: Record<string, RoomAudioConfig> = {
+  INFO_OVERFLOW: {
+    baseFrequency: 60,
+    harmonic: 'dissonant',
+    noiseLayer: true,
+    noiseGain: 0.15,
+  },
+  FORCED_ALIGNMENT: {
+    baseFrequency: 55,
+    harmonic: 'binaural',
+    noiseLayer: false,
+    noiseGain: 0,
+    beatFrequency: 20, // 20Hz 双耳节拍
+  },
+  IN_BETWEEN: {
+    baseFrequency: 50,
+    harmonic: 'dissonant',
+    noiseLayer: true,
+    noiseGain: 0.08,
+  },
+  POLARIZED: {
+    baseFrequency: 40,
+    harmonic: 'consonant', // 具有讽刺意味的“干净”声音，用于压抑的房间
+    noiseLayer: false,
+    noiseGain: 0,
+  },
+};
+```
+
+### 双耳节拍实现 (FORCED_ALIGNMENT)
+
+```typescript
+class BinauralBeatGenerator {
+  private leftOsc: OscillatorNode;
+  private rightOsc: OscillatorNode;
+  private merger: ChannelMergerNode;
+
+  constructor(audioContext: AudioContext, baseFreq: number, beatFreq: number) {
+    // 创建立体声合并器
+    this.merger = audioContext.createChannelMerger(2);
+
+    // 左耳振荡器
+    this.leftOsc = audioContext.createOscillator();
+    this.leftOsc.type = 'sine';
+    this.leftOsc.frequency.value = baseFreq;
+
+    // 右耳振荡器 (失谐)
+    this.rightOsc = audioContext.createOscillator();
+    this.rightOsc.type = 'sine';
+    this.rightOsc.frequency.value = baseFreq + beatFreq;
+
+    // 路由到分离的声道
+    const leftGain = audioContext.createGain();
+    const rightGain = audioContext.createGain();
+    leftGain.gain.value = 0.1;
+    rightGain.gain.value = 0.1;
+
+    this.leftOsc.connect(leftGain);
+    this.rightOsc.connect(rightGain);
+    leftGain.connect(this.merger, 0, 0);  // 左声道
+    rightGain.connect(this.merger, 0, 1); // 右声道
+  }
+
+  /**
+   * 基于玩家 X 位置调整节拍强度 (裂缝接近度)
+   * @param xPosition - 玩家 X 坐标
+   * @param crackWidth - 中立区宽度
+   */
+  updatePosition(xPosition: number, crackWidth: number): void {
+    const distanceFromCrack = Math.abs(xPosition);
+    const intensity = Math.max(0, 1 - distanceFromCrack / crackWidth);
+
+    // 越接近裂缝 = 双耳效应越强
+    // ... 
+  }
+
+  connect(destination: AudioNode): void {
+    this.merger.connect(destination);
+  }
+
+  start(): void {
+    this.leftOsc.start();
+    this.rightOsc.start();
+  }
+
+  stop(): void {
+    this.leftOsc.stop();
+    this.rightOsc.stop();
+  }
+}
+```
+
+### 覆盖音效
+
+```typescript
+/**
+ * 激活覆盖时播放“撕裂”声
+ * 带有戏剧性包络的白噪声爆发
+ */
+function playOverrideTear(audioContext: AudioContext, masterGain: GainNode): void {
+  const now = audioContext.currentTime;
+
+  // 白噪声缓冲区
+  const bufferSize = audioContext.sampleRate * 0.3;
+  const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  const noise = audioContext.createBufferSource();
+  noise.buffer = buffer;
+
+  // 带通滤波器用于“数字撕裂”特征
+  const filter = audioContext.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 2000;
+  filter.Q.value = 1.5;
+
+  // 戏剧性包络
+  const gain = audioContext.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.4, now + 0.01); // 快速起音
+  gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25); // 快速衰减
+
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(masterGain);
+
+  noise.start(now);
+  noise.stop(now + 0.3);
+}
+```
+
+---
+
+## ♿ 无障碍考量
+
+### 视觉无障碍
+
+| 关注点 | 缓解措施 |
+|---------|------------|
+| 光敏性癫痫 | 添加 `reducedMotion` 设置：禁用时间抖动，将故障效果减慢至 < 3Hz，移除覆盖闪烁 |
+| 高对比度问题 | 1-bit 美学本质上是高对比度的；无需额外措施 |
+| 晕动症 | 添加 `reducedMotion` 设置：减少头部晃动，减慢房间过渡 |
+
+**实现：**
+
+```typescript
+interface AccessibilitySettings {
+  reducedMotion: boolean;
+  audioDescriptions: boolean; // 未来：叙述房间过渡
+  disableFlashing: boolean;
+}
+
+// 在 DitherShader 中，遵循 reducedMotion：
+if (settings.reducedMotion) {
+  uniforms.uTemporalJitter.value = 0;
+  uniforms.uGlitchSpeed.value = Math.min(uniforms.uGlitchSpeed.value, 2.0);
+}
+
+// 覆盖视觉效果：跳过颜色反转闪烁
+if (settings.disableFlashing) {
+  // 跳过 0.1s “破坏”效果，直接进入强度提升
+}
+```
+
+### 音频无障碍
+
+| 关注点 | 缓解措施 |
+|---------|------------|
+| 听力障碍 | 所有音频提示都有视觉对应物（注视 = 对比度变化，覆盖 = 屏幕闪烁） |
+| 双耳节拍不适 | 添加 `disableBinauralBeats` 设置：替换为单声道声像效果 |
+| 音量敏感度 | 独立的音量滑块：主音量、环境音、事件音 |
+
+### 控制无障碍
+
+| 关注点 | 缓解措施 |
+|---------|------------|
+| 行动受限 | 可配置的键位绑定；纯鼠标模式（自动行走切换） |
+| 覆盖按住持续时间 | 可调节的按住时间（默认 1s，范围 0.3s–3s） |
+
+---
+
 ## 🛠 技术路线图
 
 ### 第一阶段：地基（着色器与状态）
-
-**持续时间**：2–3 周
 
 **目标：**
 
@@ -724,8 +1082,6 @@ uniform float uSaturation;      // 0–1，0=灰度，1=全彩
 
 ### 第二阶段：规训（机制）
 
-**持续时间**：2–3 周
-
 **目标：**
 
 - 实现“注视”机制：凝视天空之眼时自动降低光照强度。
@@ -748,4 +1104,8 @@ uniform float uSaturation;      // 0–1，0=灰度，1=全彩
 
 ---
 
-*文档版本：1.0（中文）*
+*文档版本：1.1（中文）*
+
+**更新日志：**
+- v1.1：添加了现状评估、玩家探索设计、音频系统技术规范、无障碍考量。删除了技术路线图中的持续时间估算。
+
