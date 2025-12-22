@@ -91,7 +91,16 @@ Describes what the player does (Input) and how the system responds (Feedback).
 - **Psychological Effect**  
   Feeling "in-between." The discomfort of not picking a side.
 
-### 4. The Resistance (Override Key)
+### 4. The Lost Mechanic (Fall Input)
+
+- **Player Action**  
+  Jumping into the rift abyss in `FORCED_ALIGNMENT`.
+- **System Feedback (Physical/Visual)**  
+  Gravity instantly drops (simulating lunar gravity), creating a long, weightless, accelerating fall. Fog rushes upwards at high speed. At -150m, the player is forcibly reset to the edge.
+- **Psychological Effect**  
+  The consequence of trying to escape the binary is falling into a void loop. Falling is not an escape, but another form of entrapment.
+
+### 5. The Resistance (Override Key)
 
 - **Player Action**  
   Hold the "Override" key (e.g., Space or Shift) while looking at the Sky Eye in the `POLARIZED` room.
@@ -102,7 +111,7 @@ Describes what the player does (Input) and how the system responds (Feedback).
 - **Psychological Effect**  
   Defiance. Breaking the rules of the simulation, even if just for a second.
 
-### 5. The State Snapshot (End of Run)
+### 6. The State Snapshot (End of Run)
 
 - **System Action**  
   Calculates a summary based on sampled metrics.
@@ -117,7 +126,7 @@ Describes what the player does (Input) and how the system responds (Feedback).
 
 To generate the end-of-run "State Snapshot," we track player behavior non-intrusively.
 
-### 6. Data Collection Model
+### 7. Data Collection Model
 
 ```typescript
 interface RunStats {
@@ -145,7 +154,7 @@ interface RunStats {
 }
 ```
 
-#### 6.1 Recording Strategy
+#### 7.1 Recording Strategy
 
 We sample every **2.0 seconds** to avoid performance overhead.
 
@@ -204,7 +213,7 @@ function updateRunStats(deltaTime) {
 }
 ```
 
-#### 6.2 Normalization Phase
+#### 7.2 Normalization Phase
 
 When the run ends, raw stats are converted to normalized 0–1 metrics:
 
@@ -236,7 +245,7 @@ function normalizeRunStats(rawStats: RunStats): NormalizedMetrics {
 }
 ```
 
-#### 6.3 Tag Generation
+#### 7.3 Tag Generation
 
 Normalized metrics are converted to discrete, human-readable tags:
 
@@ -301,7 +310,7 @@ function generateRunTags(metrics: NormalizedMetrics): string[] {
 - `NEUTRAL_SEEKER`: Spent significant time on the crack (FORCED_ALIGNMENT).
 - `RESISTER`: Used the Override mechanic (at least once).
 
-#### 6.4 Visual Pattern Generation
+#### 7.4 Visual Pattern Generation
 
 Tags drive a procedural 1-bit texture that is displayed briefly at run end.
 
@@ -396,7 +405,7 @@ function getPatternFromTags(tags: string[]): ShaderUniforms {
 
 The pattern is rendered to a small quad (e.g., 256×256 or 512×512) and displayed in the bottom-right corner of the screen, or overlaid briefly on the ground beneath the player. It fades in over 0.5 seconds, remains for 2 seconds, then fades out over 1 second. The pattern loops/tiles to fill the quad seamlessly.
 
-#### 6.5 Text Selection & Composition
+#### 7.5 Text Selection & Composition
 
 Using the same tags, a combination of pre-written sentences creates the text snapshot.
 
@@ -582,9 +591,8 @@ The pressure to pick a side. No true middle ground allowed. This room embodies t
 - A massive vertical chasm divides the space into left and right halves.
 - Left side: Clean, geometric, well-lit structures (low dithering density ~0.4). The aesthetic is pristine but oppressively orderly.
 - Right side: Broken, organic, partially collapsed structures (high dithering density ~0.7). Chaotic but more visually "honest."
-- The crack itself: An abyss of pure black, no bottom visible. Traversing it means crossing into uncertainty.
+- The crack itself: An abyss of pure black, physically allowing for infinite fall.
 - Line cables that span the chasm like ideological banners, taut and trembling.
-- The floor on the crack: Semi-transparent or glitching, implying instability underfoot.
 
 **Audio Language**
 

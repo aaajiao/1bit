@@ -354,7 +354,7 @@ export class ChunkManager {
 
                     // Reset if too high (fade out range 0-2m)
                     if (position.y > 2.0) {
-                        position.y = -8.0; // Reset to abyss
+                        position.y = -160.0; // Reset to deep abyss
                         // Randomize x/z slightly on reset
                         position.x += (Math.random() - 0.5) * 0.5;
                         position.z += (Math.random() - 0.5) * 0.5;

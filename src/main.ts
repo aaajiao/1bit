@@ -203,22 +203,44 @@ class ChimeraVoid {
             this.audio.updateBinauralPosition(this.camera.position.x, 20);
 
             // Crack detection: check if player is above the crack
-            // Crack is centered in each chunk, 4 meters wide
-            const chunkX = Math.floor(this.camera.position.x / CHUNK_SIZE);
-            const chunkCenterX = chunkX * CHUNK_SIZE + CHUNK_SIZE / 2;
+            // Crack is centered in each chunk (local x=0), so world X is chunkX * CHUNK_SIZE
+            // Use round to find nearest chunk center
+            const nearestChunkX = Math.round(this.camera.position.x / CHUNK_SIZE);
+            const chunkCenterX = nearestChunkX * CHUNK_SIZE;
             const distFromCenter = Math.abs(this.camera.position.x - chunkCenterX);
 
             // Crack half-width is 2m
             if (distFromCenter < 2) {
-                // Player is above the crack - set ground to abyss bottom
-                this.controls.setGroundLevel(-8);
+                // Player is above the crack - infinite fall with low gravity
+                this.controls.setGroundLevel(-1000);
+                this.controls.setGravity(5.0); // Lunar gravity for slow, long fall
             } else {
                 // Player is on solid ground
                 this.controls.setGroundLevel(2.0);
+                this.controls.setGravity(29.4); // Default gravity
+            }
+
+            // Fall reset check
+            const playerPos = this.camera.position;
+            if (playerPos.y < -150) {
+                // Calculate safe spawn point (3.5m from center, on the side they fell closest to)
+                const sign = playerPos.x > chunkCenterX ? 1 : -1;
+                const safeX = chunkCenterX + sign * 3.5;
+
+                // Teleport back to surface
+                this.controls.teleport({
+                    x: safeX,
+                    y: 2.0, // Ground height
+                    z: playerPos.z
+                });
+
+                // Reset gravity immediately
+                this.controls.setGravity(29.4);
             }
         } else {
-            // Reset ground level for other room types
+            // Reset ground level and gravity for other room types
             this.controls.setGroundLevel(2.0);
+            this.controls.setGravity(29.4);
         }
 
         // Play random info chirps (for INFO_OVERFLOW room)

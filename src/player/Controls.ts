@@ -315,4 +315,23 @@ export class Controls {
     getGroundLevel(): number {
         return this.currentGroundLevel;
     }
+
+    /**
+     * Teleport player to specific position and reset velocity
+     */
+    teleport(position: { x?: number, y?: number, z?: number }): void {
+        if (position.x !== undefined) this.camera.position.x = position.x;
+        if (position.y !== undefined) this.camera.position.y = position.y;
+        if (position.z !== undefined) this.camera.position.z = position.z;
+
+        this.velocity.set(0, 0, 0);
+    }
+
+    /**
+     * Set gravity dynamically
+     * @param g - New gravity value
+     */
+    setGravity(g: number): void {
+        this.config.gravity = g;
+    }
 }

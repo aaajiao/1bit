@@ -145,7 +145,7 @@ export function createCrackedFloorMesh(
  * Creates an instanced mesh for rising fog particles in the abyss
  */
 export function createAbyssFog(chunkSize: number, crackWidth: number): THREE.InstancedMesh {
-    const particleCount = 60;
+    const particleCount = 400;
     const geometry = new THREE.PlaneGeometry(1.5, 1.5);
     const material = new THREE.MeshBasicMaterial({
         color: 0x333333, // Dark grey fog
@@ -160,8 +160,8 @@ export function createAbyssFog(chunkSize: number, crackWidth: number): THREE.Ins
     for (let i = 0; i < particleCount; i++) {
         // Random position within the crack volume
         dummy.position.set(
-            (Math.random() - 0.5) * crackWidth * 0.8, // Centered in crack
-            Math.random() * 5.0,                      // Height spread 0-5m
+            (Math.random() - 0.5) * crackWidth * 1.5, // Slightly wider spread
+            -160 + Math.random() * 162.0,            // Range from -160m to +2m
             (Math.random() - 0.5) * chunkSize         // Along entire chunk length
         );
 
