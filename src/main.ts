@@ -126,6 +126,15 @@ class ChimeraVoid {
             }
         });
 
+        // Setup jump audio callback
+        this.controls.setOnJump((isDoubleJump) => {
+            if (isDoubleJump) {
+                this.audio.playDoubleJump();
+            } else {
+                this.audio.playJump();
+            }
+        });
+
         // Events
         this.setupWindowEvents();
         this.setupScreenshotKey();
@@ -204,18 +213,30 @@ class ChimeraVoid {
 
         // Handle room transitions (audio)
         if (currentRoomType !== this.previousRoomType) {
+            console.log(`[Room Transition] ${this.previousRoomType} -> ${currentRoomType}`);
+
+            // Play room transition sound (skip initial load)
+            if (this.previousRoomType !== null) {
+                this.audio.playRoomTransition();
+            }
+
             // Stop previous room's audio effects
             if (this.previousRoomType === RoomType.FORCED_ALIGNMENT) {
+                console.log('[Audio] Stopping binaural beat');
                 this.audio.stopBinauralBeat();
             }
             // Start new room's audio effects
             if (currentRoomType === RoomType.FORCED_ALIGNMENT) {
                 const roomConfig = this.chunkManager.getCurrentRoomConfig();
+                console.log('[Audio] Room config:', roomConfig.audio);
                 if (roomConfig.audio.beatFrequency) {
+                    console.log(`[Audio] Starting binaural beat: ${roomConfig.audio.baseFrequency}Hz + ${roomConfig.audio.beatFrequency}Hz`);
                     this.audio.startBinauralBeat(
                         roomConfig.audio.baseFrequency,
                         roomConfig.audio.beatFrequency
                     );
+                } else {
+                    console.warn('[Audio] No beatFrequency in config!');
                 }
             }
             this.previousRoomType = currentRoomType;
@@ -224,6 +245,11 @@ class ChimeraVoid {
         // Update binaural beat position (for FORCED_ALIGNMENT)
         if (currentRoomType === RoomType.FORCED_ALIGNMENT) {
             this.audio.updateBinauralPosition(this.camera.position.x, 20);
+        }
+
+        // Play random info chirps (for INFO_OVERFLOW room)
+        if (currentRoomType === RoomType.INFO_OVERFLOW && Math.random() < 0.02) {
+            this.audio.playInfoChirp();
         }
 
         // Update controls
@@ -252,6 +278,9 @@ class ChimeraVoid {
 
             // Get current intensity
             flowerIntensity = getFlowerIntensity(flower);
+
+            // Update flower audio based on intensity
+            this.audio.updateFlowerAudio(flowerIntensity);
         }
 
         // Update override mechanic
@@ -296,6 +325,9 @@ class ChimeraVoid {
         uniforms.weatherType.value = weatherState.weatherType;
         uniforms.weatherIntensity.value = weatherState.weatherIntensity;
         uniforms.weatherTime.value = weatherState.weatherTime;
+
+        // Update weather audio
+        this.audio.updateWeatherAudio(weatherState.weatherType, weatherState.weatherIntensity);
 
         // Update room-specific shader uniforms
         uniforms.uNoiseDensity.value = shaderConfig.uNoiseDensity;

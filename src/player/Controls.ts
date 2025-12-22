@@ -26,6 +26,7 @@ export class Controls {
 
     // Jump state
     private jumpCount: number = 0;
+    private onJump: ((isDoubleJump: boolean) => void) | null = null;
 
     // Physics
     private velocity: THREE.Vector3 = new THREE.Vector3();
@@ -96,6 +97,9 @@ export class Controls {
                 break;
             case 'Space':
                 if (this.canJump || this.jumpCount < this.config.maxJumps) {
+                    // Determine if this is a double jump (air jump)
+                    const isDoubleJump = !this.canJump && this.jumpCount > 0;
+
                     // Reset vertical velocity for consistent air jumps
                     if (!this.canJump) {
                         this.velocity.y = 0;
@@ -104,6 +108,11 @@ export class Controls {
                     this.velocity.y += this.config.jumpForce;
                     this.canJump = false;
                     this.jumpCount++;
+
+                    // Trigger jump audio callback
+                    if (this.onJump) {
+                        this.onJump(isDoubleJump);
+                    }
                 }
                 break;
         }
@@ -279,5 +288,13 @@ export class Controls {
      */
     isPointerLocked(): boolean {
         return this.isLocked;
+    }
+
+    /**
+     * Set callback for jump events
+     * @param callback - Called with isDoubleJump boolean
+     */
+    setOnJump(callback: (isDoubleJump: boolean) => void): void {
+        this.onJump = callback;
     }
 }

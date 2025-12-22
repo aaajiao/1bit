@@ -748,6 +748,7 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 | 文档 | 内容 | 推荐读者 |
 |------|------|---------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 代码架构与开发规范 | 开发者 |
+| [AUDIO_SYSTEM.md](AUDIO_SYSTEM.md) | 程序化音效系统详细文档 | 开发者/音效设计师 |
 | [DESIGN_PHILOSOPHY_EN.md](DESIGN_PHILOSOPHY_AND_ROADMAP_EN.md) | 设计哲学与路线图 (英文) | 设计师/研究者 |
 | [DESIGN_PHILOSOPHY_ZH.md](DESIGN_PHILOSOPHY_AND_ROADMAP_ZH.md) | 设计哲学与路线图 (中文) | 设计师/研究者 |
 

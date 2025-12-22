@@ -33,6 +33,17 @@ export class AudioSystem implements AudioSystemInterface {
     private binauralGain: GainNode | null = null;
     private binauralActive: boolean = false;
 
+    // Weather audio state
+    private weatherNoiseSource: AudioBufferSourceNode | null = null;
+    private weatherNoiseGain: GainNode | null = null;
+    private weatherRainInterval: number | null = null;
+    private currentWeatherType: number = 0; // 0=clear, 1=static, 2=rain, 3=glitch
+
+    // Flower audio state - IKEDA STYLE: pure sine, only during change
+    private lastFlowerIntensity: number = -1;
+    private lastFlowerState: number = -1; // -1=unset, 0=dim, 1=soft, 2=intense
+    private flowerSilenceTimer: number = 0; // Frames since last change
+
     /**
      * Initialize audio context (must be called after user interaction)
      */
@@ -327,11 +338,11 @@ export class AudioSystem implements AudioSystemInterface {
         this.binauralRight.type = 'sine';
         this.binauralRight.frequency.value = baseFreq + beatFreq;
 
-        // Gains for each channel
+        // Gains for each channel (louder for audibility)
         const leftGain = this.audioContext.createGain();
         const rightGain = this.audioContext.createGain();
-        leftGain.gain.value = 0.1;
-        rightGain.gain.value = 0.1;
+        leftGain.gain.value = 0.4;
+        rightGain.gain.value = 0.4;
 
         // Route to separate channels
         this.binauralLeft.connect(leftGain);
@@ -448,4 +459,490 @@ export class AudioSystem implements AudioSystemInterface {
         osc.start(now);
         osc.stop(now + 0.15);
     }
+
+    /**
+     * Play room transition sound - digital threshold crossing
+     * Extended version with layered noise and frequency sweep (~400ms)
+     */
+    playRoomTransition(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+
+        const now = this.audioContext.currentTime;
+        const duration = 0.4;
+
+        // Layer 1: White noise with sweeping filter
+        const bufferSize = Math.floor(this.audioContext.sampleRate * duration);
+        const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = this.audioContext.createBufferSource();
+        noise.buffer = buffer;
+
+        // Bandpass filter sweeping from high to low
+        const noiseFilter = this.audioContext.createBiquadFilter();
+        noiseFilter.type = 'bandpass';
+        noiseFilter.frequency.setValueAtTime(3000, now);
+        noiseFilter.frequency.exponentialRampToValueAtTime(400, now + duration);
+        noiseFilter.Q.value = 3;
+
+        const noiseGain = this.audioContext.createGain();
+        noiseGain.gain.setValueAtTime(0, now);
+        noiseGain.gain.linearRampToValueAtTime(0.1, now + 0.02);
+        noiseGain.gain.setValueAtTime(0.1, now + 0.1);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, now + duration);
+
+        noise.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+        noiseGain.connect(this.masterGain);
+
+        // Layer 2: Descending tone sweep (digital "warp" feel)
+        const osc = this.audioContext.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(800, now);
+        osc.frequency.exponentialRampToValueAtTime(150, now + duration * 0.8);
+
+        const oscFilter = this.audioContext.createBiquadFilter();
+        oscFilter.type = 'lowpass';
+        oscFilter.frequency.setValueAtTime(2000, now);
+        oscFilter.frequency.exponentialRampToValueAtTime(300, now + duration);
+
+        const oscGain = this.audioContext.createGain();
+        oscGain.gain.setValueAtTime(0, now);
+        oscGain.gain.linearRampToValueAtTime(0.08, now + 0.03);
+        oscGain.gain.setValueAtTime(0.08, now + 0.15);
+        oscGain.gain.exponentialRampToValueAtTime(0.01, now + duration);
+
+        osc.connect(oscFilter);
+        oscFilter.connect(oscGain);
+        oscGain.connect(this.masterGain);
+
+        // Start and stop
+        noise.start(now);
+        noise.stop(now + duration);
+        osc.start(now);
+        osc.stop(now + duration);
+    }
+
+    /**
+     * Play jump sound - ascending digital blip (first jump)
+     */
+    playJump(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+
+        const now = this.audioContext.currentTime;
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+
+        // Square wave for harsh 8-bit feel
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.exponentialRampToValueAtTime(300, now + 0.06);
+
+        // Short, punchy envelope
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.setTargetAtTime(0.001, now + 0.05, 0.015);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc.start(now);
+        osc.stop(now + 0.08);
+    }
+
+    /**
+     * Play double jump sound - higher pitch, dual-tone burst
+     * More urgent/special feeling than regular jump
+     */
+    playDoubleJump(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+
+        const now = this.audioContext.currentTime;
+
+        // First tone (square wave)
+        const osc1 = this.audioContext.createOscillator();
+        const gain1 = this.audioContext.createGain();
+        osc1.type = 'square';
+        osc1.frequency.setValueAtTime(250, now);
+        osc1.frequency.exponentialRampToValueAtTime(500, now + 0.05);
+        gain1.gain.setValueAtTime(0.1, now);
+        gain1.gain.setTargetAtTime(0.001, now + 0.04, 0.01);
+        osc1.connect(gain1);
+        gain1.connect(this.masterGain);
+
+        // Second tone (sine wave, slightly delayed) for "echo" effect
+        const osc2 = this.audioContext.createOscillator();
+        const gain2 = this.audioContext.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(400, now + 0.03);
+        osc2.frequency.exponentialRampToValueAtTime(600, now + 0.08);
+        gain2.gain.setValueAtTime(0, now);
+        gain2.gain.setValueAtTime(0.08, now + 0.03);
+        gain2.gain.setTargetAtTime(0.001, now + 0.07, 0.015);
+        osc2.connect(gain2);
+        gain2.connect(this.masterGain);
+
+        osc1.start(now);
+        osc1.stop(now + 0.06);
+        osc2.start(now + 0.03);
+        osc2.stop(now + 0.1);
+    }
+
+    // ==================== WEATHER AUDIO ====================
+
+    /**
+     * Update weather audio based on current weather state
+     * @param weatherType - 0=clear, 1=static, 2=rain, 3=glitch
+     * @param intensity - 0 to 1
+     */
+    updateWeatherAudio(weatherType: number, intensity: number): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+
+        // Handle weather type changes
+        if (weatherType !== this.currentWeatherType) {
+            // Stop previous weather audio
+            this.stopStaticAmbient();
+            this.stopRainAmbient();
+
+            // Start new weather audio
+            if (weatherType === 1) {
+                this.startStaticAmbient();
+            } else if (weatherType === 2) {
+                this.startRainAmbient();
+            } else if (weatherType === 3) {
+                this.playGlitchBurst();
+            }
+
+            this.currentWeatherType = weatherType;
+        }
+
+        // Update intensity
+        if (this.weatherNoiseGain) {
+            this.weatherNoiseGain.gain.setTargetAtTime(
+                intensity * 0.15,
+                this.audioContext.currentTime,
+                0.1
+            );
+        }
+    }
+
+    /**
+     * Start static ambient - "Low Frequency Drone"
+     * DISTINCT: Continuous low-frequency oscillation with slow LFO modulation
+     * FREQUENCY RANGE: 40-80Hz (very low, felt more than heard)
+     */
+    private startStaticAmbient(): void {
+        if (!this.audioContext || !this.masterGain || this.weatherNoiseSource) return;
+
+        // Gain control for overall volume
+        this.weatherNoiseGain = this.audioContext.createGain();
+        this.weatherNoiseGain.gain.value = 0;
+        this.weatherNoiseGain.connect(this.masterGain);
+
+        // Main drone oscillator (50Hz - very low)
+        const drone = this.audioContext.createOscillator();
+        drone.type = 'triangle'; // Softer than square
+        drone.frequency.value = 50;
+
+        // LFO for slow pitch modulation (creates "breathing" feel)
+        const lfo = this.audioContext.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.value = 0.3; // Very slow: 0.3Hz = 3 second cycle
+
+        const lfoGain = this.audioContext.createGain();
+        lfoGain.gain.value = 10; // Modulate pitch by ±10Hz
+
+        lfo.connect(lfoGain);
+        lfoGain.connect(drone.frequency);
+
+        // Drone gain
+        const droneGain = this.audioContext.createGain();
+        droneGain.gain.value = 0.25;
+        drone.connect(droneGain);
+        droneGain.connect(this.weatherNoiseGain);
+
+        // Second harmonic for thickness (100Hz)
+        const harmonic = this.audioContext.createOscillator();
+        harmonic.type = 'sine';
+        harmonic.frequency.value = 100;
+        const harmonicGain = this.audioContext.createGain();
+        harmonicGain.gain.value = 0.08;
+        harmonic.connect(harmonicGain);
+        harmonicGain.connect(this.weatherNoiseGain);
+
+        drone.start();
+        lfo.start();
+        harmonic.start();
+
+        // Store for cleanup
+        this.weatherNoiseSource = drone as unknown as AudioBufferSourceNode;
+        // Store LFO and harmonic in a cleanup array (hacky but works)
+        (this as any)._staticExtra = [lfo, harmonic];
+    }
+
+    /**
+     * Stop static ambient noise
+     */
+    private stopStaticAmbient(): void {
+        if (this.weatherNoiseSource) {
+            try {
+                (this.weatherNoiseSource as unknown as OscillatorNode).stop();
+            } catch (e) { /* Already stopped */ }
+            this.weatherNoiseSource = null;
+        }
+        // Stop extra oscillators
+        const extra = (this as any)._staticExtra as OscillatorNode[] | undefined;
+        if (extra) {
+            extra.forEach(osc => { try { osc.stop(); } catch (e) { /* */ } });
+            (this as any)._staticExtra = null;
+        }
+        this.weatherNoiseGain = null;
+    }
+
+    /**
+     * Start rain ambient - "Melodic Descent"
+     * DISTINCT: Long sine tone sweeps with slow decay
+     * FREQUENCY RANGE: 300-1200Hz (mid-range, clearly audible tones)
+     */
+    private startRainAmbient(): void {
+        if (!this.audioContext || !this.masterGain || this.weatherRainInterval) return;
+
+        // Gain node for overall rain volume
+        this.weatherNoiseGain = this.audioContext.createGain();
+        this.weatherNoiseGain.gain.value = 0;
+        this.weatherNoiseGain.connect(this.masterGain);
+
+        // Musical note frequencies (pentatonic scale)
+        const notes = [1200, 900, 800, 600, 400, 300];
+        let noteIndex = 0;
+
+        const playTone = () => {
+            if (!this.audioContext || !this.weatherNoiseGain) return;
+
+            const now = this.audioContext.currentTime;
+            const osc = this.audioContext.createOscillator();
+            const gain = this.audioContext.createGain();
+
+            // Pure sine for clean tone
+            osc.type = 'sine';
+
+            // Start at note, glide down slightly
+            const startFreq = notes[noteIndex];
+            osc.frequency.setValueAtTime(startFreq, now);
+            osc.frequency.exponentialRampToValueAtTime(startFreq * 0.8, now + 0.4);
+
+            // Long envelope: 400ms with slow decay
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.setValueAtTime(0.1, now + 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+
+            osc.connect(gain);
+            gain.connect(this.weatherNoiseGain);
+
+            osc.start(now);
+            osc.stop(now + 0.45);
+
+            // Cycle through notes
+            noteIndex = (noteIndex + 1) % notes.length;
+        };
+
+        // 500ms interval for spacious feel
+        const scheduleNextTone = () => {
+            if (this.weatherRainInterval === null) return;
+            playTone();
+            this.weatherRainInterval = window.setTimeout(scheduleNextTone, 500);
+        };
+
+        this.weatherRainInterval = window.setTimeout(scheduleNextTone, 0);
+    }
+
+    /**
+     * Stop rain ambient
+     */
+    private stopRainAmbient(): void {
+        if (this.weatherRainInterval !== null) {
+            clearTimeout(this.weatherRainInterval);
+            this.weatherRainInterval = null;
+        }
+        this.weatherNoiseGain = null;
+    }
+
+    /**
+     * Play glitch burst - "Digital Stutter"
+     * DISTINCT: Extended chaotic high-frequency pattern with stuttering
+     * FREQUENCY RANGE: 2000-6000Hz (high, harsh, clearly different from others)
+     * DURATION: 600-1000ms (much longer)
+     */
+    playGlitchBurst(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+
+        const now = this.audioContext.currentTime;
+        const totalDuration = 0.6 + Math.random() * 0.4; // 600-1000ms
+
+        // Play rapid stuttering pattern
+        const burstCount = 8 + Math.floor(Math.random() * 8); // 8-16 bursts
+
+        for (let i = 0; i < burstCount; i++) {
+            // Variable timing (creates stutter effect)
+            const burstStart = now + i * (totalDuration / burstCount);
+            const burstDuration = 0.02 + Math.random() * 0.04; // 20-60ms each
+
+            // Random silence gaps (30% chance to skip)
+            if (Math.random() < 0.3) continue;
+
+            const osc = this.audioContext.createOscillator();
+            const gain = this.audioContext.createGain();
+
+            // High frequency range (clearly different from drone and tones)
+            osc.type = 'square';
+            const baseFreq = 2000 + Math.random() * 4000; // 2-6kHz
+            osc.frequency.setValueAtTime(baseFreq, burstStart);
+
+            // Pitch jump mid-burst for chaotic feel
+            if (Math.random() > 0.5) {
+                osc.frequency.setValueAtTime(baseFreq * 1.5, burstStart + burstDuration * 0.5);
+            }
+
+            // Sharp on/off
+            gain.gain.setValueAtTime(0.08, burstStart);
+            gain.gain.setValueAtTime(0, burstStart + burstDuration);
+
+            osc.connect(gain);
+            gain.connect(this.masterGain);
+
+            osc.start(burstStart);
+            osc.stop(burstStart + burstDuration + 0.01);
+        }
+    }
+
+    // ==================== FLOWER AUDIO - IKEDA STYLE ====================
+
+    /**
+     * Update flower audio based on current intensity
+     * IKEDA STYLE: Only plays during intensity CHANGE, silent when stable
+     * Uses pure sine waves, mathematically precise
+     * @param intensity - 0.0 to 1.0
+     */
+    updateFlowerAudio(intensity: number): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+
+        // Determine current state (0=dim, 1=soft, 2=intense)
+        let currentState = 0;
+        if (intensity >= 0.7) currentState = 2;
+        else if (intensity >= 0.3) currentState = 1;
+
+        // Check for state transition - play confirmation tone
+        if (this.lastFlowerState !== -1 && currentState !== this.lastFlowerState) {
+            const ascending = currentState > this.lastFlowerState;
+            this.playFlowerStateChange(ascending);
+        }
+        this.lastFlowerState = currentState;
+
+        // Calculate change magnitude
+        const changeThreshold = 0.01; // Minimum change to trigger sound
+        const intensityChange = Math.abs(intensity - this.lastFlowerIntensity);
+
+        if (this.lastFlowerIntensity >= 0 && intensityChange > changeThreshold) {
+            // Play a brief tone proportional to current intensity
+            this.playFlowerChangeTone(intensity, intensityChange);
+            this.flowerSilenceTimer = 0;
+        } else {
+            // No significant change - increment silence timer
+            this.flowerSilenceTimer++;
+        }
+
+        this.lastFlowerIntensity = intensity;
+    }
+
+    /**
+     * Play a brief pure sine tone during intensity change
+     * Frequency maps to intensity, volume maps to change speed
+     * @param intensity - Current intensity 0-1
+     * @param changeSpeed - How fast intensity is changing
+     */
+    private playFlowerChangeTone(intensity: number, changeSpeed: number): void {
+        if (!this.audioContext || !this.masterGain) return;
+
+        // Allow overlapping tones for continuity
+        if (this.flowerSilenceTimer < 2) return;
+
+        const now = this.audioContext.currentTime;
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+
+        // Pure sine wave
+        osc.type = 'sine';
+
+        // Frequency: 150Hz (dim) to 500Hz (intense) - softer, lower range
+        const baseFreq = 150;
+        const freq = baseFreq + intensity * 350; // Linear 150-500Hz
+        osc.frequency.value = freq;
+
+        // Volume: very soft (max 0.06)
+        const volume = Math.min(changeSpeed * 2 + 0.02, 0.06);
+
+        // Duration with soft fade-in and long decay (200-400ms)
+        const duration = 0.2 + changeSpeed * 0.2;
+
+        // Soft attack (fade in over 30ms)
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(volume, now + 0.03);
+        gain.gain.setValueAtTime(volume, now + duration * 0.4); // Hold
+        gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc.start(now);
+        osc.stop(now + duration + 0.02);
+    }
+
+    /**
+     * Play state change confirmation tone
+     * @param ascending - true if intensity increased, false if decreased
+     */
+    playFlowerStateChange(ascending: boolean): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain) return;
+
+        const now = this.audioContext.currentTime;
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+
+        // Pure sine - Ikeda precision
+        osc.type = 'sine';
+
+        if (ascending) {
+            // Ascending: pure fifth interval (3:2 ratio)
+            // 400Hz → 600Hz (perfect fifth)
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.exponentialRampToValueAtTime(600, now + 0.08);
+        } else {
+            // Descending: perfect fourth interval (4:3 ratio)
+            // 600Hz → 450Hz
+            osc.frequency.setValueAtTime(600, now);
+            osc.frequency.exponentialRampToValueAtTime(450, now + 0.08);
+        }
+
+        // Short, clean envelope
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+
+        osc.start(now);
+        osc.stop(now + 0.15);
+    }
+
+    /**
+     * Stop flower audio (cleanup/reset state)
+     */
+    stopFlowerAudio(): void {
+        this.lastFlowerIntensity = -1;
+        this.lastFlowerState = -1;
+        this.flowerSilenceTimer = 0;
+    }
 }
+

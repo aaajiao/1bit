@@ -148,6 +148,15 @@ export interface AudioSystemInterface {
     playDayNightTransition(toNight: boolean): void;
     setVolume(value: number): void;
     toggleMute(): void;
+    // New methods
+    playRoomTransition(): void;
+    playJump(): void;
+    playDoubleJump(): void;
+    updateWeatherAudio(weatherType: number, intensity: number): void;
+    playGlitchBurst(): void;
+    updateFlowerAudio(intensity: number): void;
+    playFlowerStateChange(ascending: boolean): void;
+    stopFlowerAudio(): void;
 }
 
 export interface WeatherSystemInterface {
