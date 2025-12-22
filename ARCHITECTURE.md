@@ -117,6 +117,16 @@ this.newSystem.update(delta, { /* 依赖 */ });
 
 - **语言**: TypeScript
 - **构建工具**: Vite
+- **测试**: Vitest (`npm test`)
 - **主要依赖**: Three.js
 
+### 测试覆盖
+
+| 目录 | 测试文件 | 状态 |
+|------|----------|------|
+| `utils/` | `hash.test.ts` | ✅ |
+| `stats/` | `RunStatsCollector.test.ts` | ✅ |
+| `stats/` | `StateSnapshotGenerator.test.ts` | ✅ |
+
 *最后更新: 2024-12-22*
+
