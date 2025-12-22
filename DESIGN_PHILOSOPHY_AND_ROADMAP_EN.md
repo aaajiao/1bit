@@ -149,7 +149,7 @@ interface RunStats {
 
 We sample every **2.0 seconds** to avoid performance overhead.
 
-```javascript
+```typescript
 function updateRunStats(deltaTime) {
   runStats.duration += deltaTime;
   
@@ -538,7 +538,7 @@ The anxiety of over-connection: you scream into the void, and the void replies w
 
 **Interactive Mechanics**
 
-```javascript
+```typescript
 // INFO_OVERFLOW specific systems
 const noiseDensityMap = {
   0.1: 0.75,  // Dim light
@@ -1065,9 +1065,9 @@ if (settings.disableFlashing) {
 
 **Deliverables:**
 
-- `ChunkManager.js` can generate and manage chunks with assigned `roomType`.
-- `DitherShader.js` exposes `uNoiseDensity`, `uThresholdBias`, `uTemporalJitter`, `uContrast` as dynamically updateable uniforms.
-- `FlowerProp.js` supports `setIntensity(0–1)` with smooth lerping.
+- `ChunkManager.ts` can generate and manage chunks with assigned `roomType`.
+- `DitherShader.ts` exposes `uNoiseDensity`, `uThresholdBias`, `uTemporalJitter`, `uContrast` as dynamically updateable uniforms.
+- `FlowerProp.ts` supports `setIntensity(0-1)` with smooth lerping.
 - `RunStats` object persists and accumulates data throughout a session.
 
 **Success Criteria:**
@@ -1089,7 +1089,7 @@ if (settings.disableFlashing) {
 
 **Deliverables:**
 
-- `Controls.js` detects Gaze state (pitch > 45°) and broadcasts events.
+- `Controls.ts` detects Gaze state (pitch > 45) and broadcasts events.
 - `Flower` responds to Gaze by auto-lerping intensity.
 - `AudioSystem` applies low-pass filter smoothly when Gazing.
 - Haptic pulse patterns implemented (single pulse on Gaze start, periodic while gazing).
@@ -1102,7 +1102,98 @@ if (settings.disableFlashing) {
 
 ---
 
-*Document Version: 1.1 (English)*
+### Phase 3: Mental State Rooms
+
+**Objectives:**
+
+- Implement four Mental State Rooms: `INFO_OVERFLOW`, `FORCED_ALIGNMENT`, `IN_BETWEEN`, `POLARIZED`.
+- Configure independent shader parameters and audio settings for each room.
+- Implement smooth transitions between rooms (visual and audio crossfade).
+- Add environmental hints at room boundaries.
+
+**Deliverables:**
+
+- `RoomConfig.ts` defines shader/audio parameters for each room.
+- `ChunkManager.ts` assigns `roomType` based on position.
+- `DitherShader.ts` dynamically adjusts uniforms based on current room.
+- `AudioSystem.ts` supports per-room audio layers and binaural beats (FORCED_ALIGNMENT).
+- Room boundary visual hints (flickering, Z-fighting artifacts, dithering changes).
+
+**Success Criteria:**
+
+- Entering different rooms produces distinct and unique visual/audio changes.
+- Room transitions are smooth (0.5s crossfade).
+- Binaural beats in FORCED_ALIGNMENT vary based on player X position.
+- POLARIZED room displays pure zero-dithering 1-bit rendering.
+
+---
+
+### Phase 4: The Resistance (Override Mechanic)
+
+**Objectives:**
+
+- Implement the Override key mechanic: holding a specific key in POLARIZED room forces flower intensity to 1.0.
+- Add Override visual effects: color invert flash, shader brief "crash".
+- Add Override audio effects: white noise "tear" sound.
+- Implement conditional trigger logic for Override prompt.
+
+**Deliverables:**
+
+- `Controls.ts` handles Override key (Space or Shift) hold detection.
+- `OverrideMechanic.ts` manages Override state, timing, and effect triggering.
+- `DitherShader.ts` supports color inversion and glitch effects.
+- `AudioSystem.ts` adds `playOverrideTear()` method.
+- Override prompt logic: only displays `[HOLD TO RESIST]` after conditions met (gaze cumulative > 5s, flower forced low 2+ times).
+
+**Success Criteria:**
+
+- Holding Override key in POLARIZED room produces clear visual/audio feedback.
+- Override effect duration correlates with hold time (configurable, default 1s trigger).
+- Override prompt appears diegetically at appropriate timing.
+- Accessibility settings can disable flashing effects.
+
+---
+
+### Phase 5: State Snapshot (End-of-Run Summary)
+
+**Objectives:**
+
+- Implement runtime metrics collection system (`RunStats`).
+- Implement end-of-run tag generation algorithm.
+- Implement procedural 1-bit pattern generation (tag-driven).
+- Implement observational text selection and display (Edward Yang tone).
+
+**Deliverables:**
+
+- `RunStatsCollector.ts` samples player behavior every 2 seconds (intensity, gaze, position, override).
+- `TagGenerator.ts` generates behavior tags from normalized metrics.
+- `StateSnapshotGenerator.ts` generates 1-bit patterns and composed text from tags.
+- `StateSnapshot.frag` shader renders final pattern (noise/stripes/checkerboard/radial).
+- End-of-run UI: displays pattern and text snapshot.
+
+**Success Criteria:**
+
+- End-of-run correctly generates tags reflecting player behavior.
+- Each run generates a unique 1-bit pattern "fingerprint".
+- Displayed observational text matches player behavior tags.
+- Runtime metrics collection has no noticeable performance impact.
+
+---
+
+### Future Optimization Phase
+
+**Potential Objectives:**
+
+- Mobile adaptation (touch controls, performance optimization).
+- Accessibility improvements (`reducedMotion`, `disableBinauralBeats`, configurable key bindings).
+- Multi-language support optimization (Simplified Chinese/English text library improvements).
+- Run data persistence and history viewing.
+- Audio description features (narrate room transitions for visually impaired players).
+
+---
+
+*Document Version: 1.2 (English)*
 
 **Changelog:**
+- v1.2: Completed Technical Roadmap with Phase 3 (Mental State Rooms), Phase 4 (Override Mechanic), Phase 5 (State Snapshot), and Future Optimization Phase.
 - v1.1: Added Current Status Assessment, Player Discovery Design, Audio System Technical Specification, Accessibility Considerations. Removed time estimates from Technical Roadmap.

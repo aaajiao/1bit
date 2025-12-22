@@ -149,7 +149,7 @@ interface RunStats {
 
 我们每 **2.0 秒** 采样一次，以避免性能开销。
 
-```javascript
+```typescript
 function updateRunStats(deltaTime) {
   runStats.duration += deltaTime;
   
@@ -538,7 +538,7 @@ const textTable = {
 
 **交互机制**
 
-```javascript
+```typescript
 // INFO_OVERFLOW 特定系统
 const noiseDensityMap = {
   0.1: 0.75,  // 调暗光线
@@ -1067,9 +1067,9 @@ if (settings.disableFlashing) {
 
 **交付物：**
 
-- `ChunkManager.js` 能够生成并管理分配了 `roomType` 的分块（chunk）。
-- `DitherShader.js` 公开 `uNoiseDensity`、`uThresholdBias`、`uTemporalJitter`、`uContrast` 作为动态更新的 uniform。
-- `FlowerProp.js` 支持平滑插值的 `setIntensity(0–1)`。
+- `ChunkManager.ts` 能够生成并管理分配了 `roomType` 的分块（chunk）。
+- `DitherShader.ts` 公开 `uNoiseDensity`、`uThresholdBias`、`uTemporalJitter`、`uContrast` 作为动态更新的 uniform。
+- `FlowerProp.ts` 支持平滑插值的 `setIntensity(0–1)`。
 - `RunStats` 对象在整个会话（session）中保持并积累数据。
 
 **验收标准：**
@@ -1091,7 +1091,7 @@ if (settings.disableFlashing) {
 
 **交付物：**
 
-- `Controls.js` 检测“注视”状态（俯仰角 > 45°）并广播事件。
+- `Controls.ts` 检测“注视”状态（俯仰角 > 45°）并广播事件。
 - “花朵”通过自动插值强度来响应“注视”。
 - `AudioSystem` 在注视时平滑地应用低通滤波器。
 - 触觉脉冲模式实现（注视开始时单次脉冲，注视过程中周期性脉冲）。
@@ -1104,8 +1104,99 @@ if (settings.disableFlashing) {
 
 ---
 
-*文档版本：1.1（中文）*
+### 第三阶段：精神状态空间（房间）
+
+**目标：**
+
+- 实现四个精神状态房间：`INFO_OVERFLOW`、`FORCED_ALIGNMENT`、`IN_BETWEEN`、`POLARIZED`。
+- 为每个房间配置独立的着色器参数和音频配置。
+- 实现房间之间的平滑过渡（视觉与音频交叉淡入淡出）。
+- 添加房间边界的环境提示。
+
+**交付物：**
+
+- `RoomConfig.ts` 定义每个房间的着色器/音频参数。
+- `ChunkManager.ts` 根据位置分配 `roomType`。
+- `DitherShader.ts` 根据当前房间动态调整 uniform 值。
+- `AudioSystem.ts` 支持每房间音频层及双耳节拍（FORCED_ALIGNMENT）。
+- 房间边界视觉提示（闪烁、Z-fighting 伪影、抖动变化）。
+
+**验收标准：**
+
+- 进入不同房间产生明显且独特的视觉/音频变化。
+- 房间过渡平滑（0.5 秒交叉淡入淡出）。
+- FORCED_ALIGNMENT 中双耳节拍根据玩家 X 位置变化。
+- POLARIZED 房间呈现纯粹的零抖动 1-bit 渲染。
+
+---
+
+### 第四阶段：反抗（覆盖机制）
+
+**目标：**
+
+- 实现"覆盖"键（Override）机制：在 POLARIZED 房间中按住特定键可强制花朵强度为 1.0。
+- 添加覆盖的视觉效果："颜色反转"闪烁、着色器短暂"崩溃"。
+- 添加覆盖的音频效果：白噪声"撕裂"声。
+- 实现覆盖提示的条件触发逻辑。
+
+**交付物：**
+
+- `Controls.ts` 处理覆盖键（Space 或 Shift）的按住检测。
+- `OverrideMechanic.ts` 管理覆盖状态、计时与效果触发。
+- `DitherShader.ts` 支持颜色反转与故障效果。
+- `AudioSystem.ts` 添加 `playOverrideTear()` 方法。
+- 覆盖提示逻辑：仅在满足条件（注视累计 > 5 秒、花朵被压低 2+ 次）后显示 `[HOLD TO RESIST]`。
+
+**验收标准：**
+
+- 在 POLARIZED 房间中按住覆盖键会产生明显的视觉/音频反馈。
+- 覆盖效果持续时间与按住时间相关（可配置，默认 1 秒触发）。
+- 覆盖提示在合适的时机以叙事性方式（diegetic）出现。
+- 无障碍设置可禁用闪烁效果。
+
+---
+
+### 第五阶段：状态快照（运行结束总结）
+
+**目标：**
+
+- 实现运行时指标收集系统（`RunStats`）。
+- 实现运行结束时的标签生成算法。
+- 实现程序化 1-bit 图案生成（基于标签）。
+- 实现观察性文本选择与显示（杨德昌风格）。
+
+**交付物：**
+
+- `RunStatsCollector.ts` 实现每 2 秒采样玩家行为（光强、注视、位置、覆盖）。
+- `TagGenerator.ts` 根据归一化指标生成行为标签。
+- `StateSnapshotGenerator.ts` 根据标签生成 1-bit 图案与组合文本。
+- `StateSnapshot.frag` 着色器渲染最终图案（噪声/条纹/棋盘格/径向）。
+- 运行结束 UI：显示图案与文本快照。
+
+**验收标准：**
+
+- 运行结束时正确生成反映玩家行为的标签。
+- 每次运行生成独特的 1-bit 图案"指纹"。
+- 显示的观察性文本与玩家行为标签匹配。
+- 运行时指标收集对性能无明显影响。
+
+---
+
+### 后续优化阶段
+
+**潜在目标：**
+
+- 移动端适配（触控控制、性能优化）。
+- 无障碍功能完善（`reducedMotion`、`disableBinauralBeats`、可配置键位）。
+- 多语言支持优化（简体中文/英文文本库完善）。
+- 运行数据持久化与历史记录查看。
+- 音频描述功能（为视障玩家叙述房间过渡）。
+
+---
+
+*文档版本：1.2（中文）*
 
 **更新日志：**
+- v1.2：完善技术路线图，添加第三阶段（精神状态空间）、第四阶段（覆盖机制）、第五阶段（状态快照）及后续优化阶段。
 - v1.1：添加了现状评估、玩家探索设计、音频系统技术规范、无障碍考量。删除了技术路线图中的持续时间估算。
 
