@@ -1,4 +1,4 @@
-# Wired Brutalism: Chimera Void
+# 1bit
 
 ![Wired Brutalism Preview](https://github.com/user-attachments/assets/fa430efe-91ff-4c16-bcf8-f275057777a2)
 
