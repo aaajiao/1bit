@@ -11,16 +11,19 @@ src/
 ├── main.ts          # 仅负责：初始化、组装系统、运行主循环
 ├── types.ts         # TypeScript 类型定义
 ├── audio/           # 音效系统
-│   └── AudioSystem.ts # 音效管理（背景音、音效、Binaural Beats 等）
+│   ├── AudioController.ts # 高层音频控制器（业务逻辑）
+│   └── AudioEngine.ts     # 底层 WebAudio 引擎
 ├── core/            # 核心初始化模块
 │   ├── PostProcessing.ts # 后处理效果（Dither、Pixelation）
-│   └── SceneSetup.ts     # 场景与相机初始化
+│   ├── SceneSetup.ts     # 场景与相机初始化
+│   └── Signal.ts         # 信号模式（系统间解耦通信）
 ├── player/          # 玩家相关（控制、手部、道具、机制）
 │   ├── Controls.ts       # 玩家移动与输入控制
 │   ├── FlowerProp.ts     # 手持花朵道具及其状态/动画
 │   ├── GazeMechanic.ts   # 注视机制（检测玩家看向 Sky Eye）
 │   ├── HandsModel.ts     # 玩家手部模型管理
-│   └── OverrideMechanic.ts # “Override”机制逻辑（Shift 键触发）
+│   ├── OverrideMechanic.ts # “Override”机制逻辑（Shift 键触发）
+│   └── PlayerManager.ts  # 玩家系统总管（整合 Controls, Hands, Gaze, Override）
 ├── shaders/         # 着色器
 │   └── DitherShader.ts   # 1-bit 抖动着色器定义
 ├── stats/           # 游戏统计与快照系统
@@ -36,6 +39,7 @@ src/
 │   ├── DayNightCycle.ts   # 昼夜循环控制
 │   ├── FloorTile.ts       # 地面瓦片与网格生成
 │   ├── FloraFactory.ts    # 程序化植物生成
+│   ├── RiftMechanic.ts    # 裂缝机制（坠落、重生、音频）
 │   ├── RoomConfig.ts      # 不同“心智房间”的配置（Info Overflow, Forced Alignment 等）
 │   ├── SharedAssets.ts    # 共享材质与几何体资源
 │   ├── SkyEye.ts          # 空中“Sky Eye”对象的行为与视觉
@@ -102,7 +106,7 @@ this.newSystem.update(delta, { /* 依赖 */ });
 | 统计/快照 | `stats/` | RunStatsCollector, SnapshotOverlay |
 | UI/HUD | `ui/` | HUD |
 | 渲染效果 | `shaders/` | DitherShader |
-| 音效 | `audio/` | AudioSystem |
+| 音效 | `audio/` | AudioEngine, AudioController |
 | 工具 | `utils/` | hash, ObjectPool, ScreenshotManager |
 | 样式 | `styles/` | main.css |
 
@@ -111,7 +115,7 @@ this.newSystem.update(delta, { /* 依赖 */ });
 ## 🔄 重构信号
 
 如果发现以下情况，应该重构：
-- `main.ts` 超过 300 行 ✅ *（当前约 350 行，已提取 HUD、截图和音频逻辑）*
+- `main.ts` 超过 300 行 ✅ *（当前约 280 行，已提取 PlayerManager 和 RiftMechanic）*
 - 同一功能的代码分散在多处
 - 需要复制粘贴代码
 
@@ -132,5 +136,5 @@ this.newSystem.update(delta, { /* 依赖 */ });
 | `stats/` | `RunStatsCollector.test.ts` | ✅ |
 | `stats/` | `StateSnapshotGenerator.test.ts` | ✅ |
 
-*最后更新: 2024-12-22*
+*最后更新: 2025-12-22*
 
