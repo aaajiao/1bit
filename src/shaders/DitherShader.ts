@@ -22,6 +22,17 @@ export const DitherShader: ShaderDefinition = {
         weatherType: { value: 0 },       // 0=clear, 1=static, 2=rain, 3=glitch
         weatherIntensity: { value: 0.0 },
         weatherTime: { value: 0.0 },
+        // Room-specific uniforms (mental state spaces)
+        uNoiseDensity: { value: 0.5 },    // 0-1, controls dither pattern density
+        uThresholdBias: { value: 0.0 },   // -0.5 to 0.5, black/white balance offset
+        uTemporalJitter: { value: 0.0 },  // 0-1, temporal dither animation
+        uContrast: { value: 1.0 },        // 1.0+, overall contrast
+        uGlitchAmount: { value: 0.0 },    // 0-1, vertex displacement amplitude
+        uGlitchSpeed: { value: 0.0 },     // Hz, glitch animation frequency
+        uColorInversion: { value: 0.0 },  // 0-1, for override effect
+        uTime: { value: 0.0 },            // Global time for animations
+        // Flower intensity (affects world response)
+        uFlowerIntensity: { value: 0.5 }, // 0-1, player's light intensity
     },
     vertexShader: `
         varying vec2 vUv;
@@ -42,6 +53,16 @@ export const DitherShader: ShaderDefinition = {
         uniform int weatherType;
         uniform float weatherIntensity;
         uniform float weatherTime;
+        // Room-specific uniforms
+        uniform float uNoiseDensity;
+        uniform float uThresholdBias;
+        uniform float uTemporalJitter;
+        uniform float uContrast;
+        uniform float uGlitchAmount;
+        uniform float uGlitchSpeed;
+        uniform float uColorInversion;
+        uniform float uTime;
+        uniform float uFlowerIntensity;
         varying vec2 vUv;
 
         // ===== BAYER MATRICES =====
@@ -145,8 +166,10 @@ export const DitherShader: ShaderDefinition = {
             vec4 color = texture2D(tDiffuse, vUv);
             float gray = getLuminance(color.rgb);
 
-            // Gamma correction and brightness boost
+            // Apply contrast (room-specific)
             gray = pow(gray, 0.8) * 2.0;
+            gray = (gray - 0.5) * uContrast + 0.5;
+            gray = clamp(gray, 0.0, 1.0);
 
             // Edge detection
             float edge = 0.0;
@@ -154,24 +177,41 @@ export const DitherShader: ShaderDefinition = {
                 edge = sobelEdge(tDiffuse, vUv, resolution);
             }
 
-            // Dithering threshold
+            // Dithering threshold with room-specific modifications
             vec2 pixelCoord = gl_FragCoord.xy;
             float threshold;
 
+            // Apply temporal jitter for animated dithering (room-specific)
+            vec2 jitteredCoord = pixelCoord;
+            if (uTemporalJitter > 0.0) {
+                float jitterOffset = sin(uTime * 10.0 + pixelCoord.x * 0.1) * uTemporalJitter * 2.0;
+                jitteredCoord.x += jitterOffset;
+                jitteredCoord.y += cos(uTime * 8.0 + pixelCoord.y * 0.1) * uTemporalJitter * 2.0;
+            }
+
             if (enableDepthDither) {
-                // Depth-aware dithering (requires depth buffer - currently disabled)
-                // For now, use distance from center as pseudo-depth
                 float pseudoDepth = length(vUv - 0.5) * 2.0;
                 pseudoDepth = smoothstep(0.0, 1.0, pseudoDepth);
-
-                // Mix fine (8x8) and coarse (2x2) dithering based on depth
-                float fineThreshold = bayer8x8(pixelCoord);
-                float coarseThreshold = bayer2x2(pixelCoord);
+                float fineThreshold = bayer8x8(jitteredCoord);
+                float coarseThreshold = bayer2x2(jitteredCoord);
                 threshold = mix(fineThreshold, coarseThreshold, smoothstep(ditherTransition - 0.2, ditherTransition + 0.2, pseudoDepth));
             } else {
-                // Standard 4x4 Bayer
-                threshold = bayer4x4(pixelCoord);
+                // For POLARIZED room (zeroDither), use hard threshold
+                if (uNoiseDensity < 0.01) {
+                    threshold = 0.5; // Pure 1-bit, no dithering
+                } else {
+                    threshold = bayer4x4(jitteredCoord);
+                    // Apply noise density - scales the dither pattern
+                    threshold = mix(0.5, threshold, uNoiseDensity);
+                }
             }
+
+            // Apply threshold bias (shifts black/white balance)
+            threshold += uThresholdBias;
+
+            // Apply flower intensity influence on threshold
+            // Brighter flower = slightly higher threshold = more white
+            threshold -= (uFlowerIntensity - 0.5) * 0.1;
 
             // Dither to black/white
             vec3 finalColor = (gray < threshold) ? vec3(0.0) : vec3(1.0);
@@ -181,9 +221,23 @@ export const DitherShader: ShaderDefinition = {
                 finalColor = vec3(0.0);
             }
 
+            // Glitch effect (room-specific, applied to UV offset)
+            if (uGlitchAmount > 0.0) {
+                float glitchLine = step(0.98, fract(vUv.y * 30.0 + uTime * uGlitchSpeed));
+                if (glitchLine > 0.5 && fract(sin(uTime * 100.0) * 12345.0) > 0.7) {
+                    finalColor = vec3(1.0) - finalColor;
+                }
+            }
+
             // Day/night inversion
             if (invertColors) {
                 finalColor = vec3(1.0) - finalColor;
+            }
+
+            // Override color inversion effect (for resistance mechanic)
+            if (uColorInversion > 0.0) {
+                vec3 inverted = vec3(1.0) - finalColor;
+                finalColor = mix(finalColor, inverted, uColorInversion);
             }
 
             // Weather effects

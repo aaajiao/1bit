@@ -16,6 +16,14 @@ export class Controls {
     private moveRight: boolean = false;
     public canJump: boolean = false;
 
+    // Override/Resistance state
+    private overrideKeyHeld: boolean = false;
+    private overrideKeyCode: string = 'ShiftLeft'; // Default to left shift
+
+    // Flower intensity control via scroll wheel
+    private targetFlowerIntensity: number = 0.5;
+    private onFlowerIntensityChange: ((intensity: number) => void) | null = null;
+
     // Physics
     private velocity: THREE.Vector3 = new THREE.Vector3();
     private direction: THREE.Vector3 = new THREE.Vector3();
@@ -41,6 +49,7 @@ export class Controls {
     private boundOnMouseMove: (e: MouseEvent) => void;
     private boundOnClick: () => void;
     private boundOnPointerLockChange: () => void;
+    private boundOnWheel: (e: WheelEvent) => void;
 
     constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
         this.camera = camera;
@@ -52,6 +61,7 @@ export class Controls {
         this.boundOnMouseMove = this.onMouseMove.bind(this);
         this.boundOnClick = this.onClick.bind(this);
         this.boundOnPointerLockChange = this.onPointerLockChange.bind(this);
+        this.boundOnWheel = this.onWheel.bind(this);
 
         this.bindEvents();
     }
@@ -65,6 +75,7 @@ export class Controls {
         document.addEventListener('mousemove', this.boundOnMouseMove);
         document.addEventListener('click', this.boundOnClick);
         document.addEventListener('pointerlockchange', this.boundOnPointerLockChange);
+        document.addEventListener('wheel', this.boundOnWheel, { passive: false });
     }
 
     private onKeyDown(e: KeyboardEvent): void {
@@ -80,6 +91,10 @@ export class Controls {
                 }
                 break;
         }
+        // Override key (Shift or Space when not jumping)
+        if (e.code === this.overrideKeyCode || e.code === 'ShiftRight') {
+            this.overrideKeyHeld = true;
+        }
     }
 
     private onKeyUp(e: KeyboardEvent): void {
@@ -88,6 +103,27 @@ export class Controls {
             case 'KeyA': this.moveLeft = false; break;
             case 'KeyS': this.moveBackward = false; break;
             case 'KeyD': this.moveRight = false; break;
+        }
+        // Override key release
+        if (e.code === this.overrideKeyCode || e.code === 'ShiftRight') {
+            this.overrideKeyHeld = false;
+        }
+    }
+
+    /**
+     * Handle scroll wheel for flower intensity control
+     */
+    private onWheel(e: WheelEvent): void {
+        if (!this.isLocked) return;
+
+        e.preventDefault();
+
+        // Scroll up = increase intensity, scroll down = decrease
+        const delta = -Math.sign(e.deltaY) * 0.1;
+        this.targetFlowerIntensity = Math.max(0, Math.min(1, this.targetFlowerIntensity + delta));
+
+        if (this.onFlowerIntensityChange) {
+            this.onFlowerIntensityChange(this.targetFlowerIntensity);
         }
     }
 
@@ -184,5 +220,41 @@ export class Controls {
         document.removeEventListener('mousemove', this.boundOnMouseMove);
         document.removeEventListener('click', this.boundOnClick);
         document.removeEventListener('pointerlockchange', this.boundOnPointerLockChange);
+        document.removeEventListener('wheel', this.boundOnWheel);
+    }
+
+    /**
+     * Check if override key is currently held
+     */
+    isOverrideKeyHeld(): boolean {
+        return this.overrideKeyHeld;
+    }
+
+    /**
+     * Get target flower intensity (from scroll wheel)
+     */
+    getTargetFlowerIntensity(): number {
+        return this.targetFlowerIntensity;
+    }
+
+    /**
+     * Set callback for flower intensity changes
+     */
+    setOnFlowerIntensityChange(callback: (intensity: number) => void): void {
+        this.onFlowerIntensityChange = callback;
+    }
+
+    /**
+     * Get camera reference for external use (e.g., gaze detection)
+     */
+    getCamera(): THREE.PerspectiveCamera {
+        return this.camera;
+    }
+
+    /**
+     * Check if pointer is locked (game is active)
+     */
+    isPointerLocked(): boolean {
+        return this.isLocked;
     }
 }

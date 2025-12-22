@@ -9,6 +9,11 @@ import { AudioSystem } from './audio/AudioSystem';
 import { WeatherSystem } from './world/WeatherSystem';
 import { DayNightCycle } from './world/DayNightCycle';
 import { SkyEye } from './world/SkyEye';
+import { GazeMechanic } from './player/GazeMechanic';
+import { OverrideMechanic } from './player/OverrideMechanic';
+import { setFlowerIntensity, getFlowerIntensity, forceFlowerIntensity, overrideFlowerIntensity } from './player/FlowerProp';
+import { RunStatsCollector } from './stats/RunStatsCollector';
+import { RoomType } from './world/RoomConfig';
 import type { AppConfig, DayNightContext } from './types';
 
 // Extend Window interface for app reference
@@ -38,6 +43,12 @@ class ChimeraVoid {
     private dayNight: DayNightCycle;
     private prevTime: number = performance.now();
     private shaderQuad: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
+
+    // New systems
+    private gazeMechanic: GazeMechanic;
+    private overrideMechanic: OverrideMechanic;
+    private runStats: RunStatsCollector;
+    private previousRoomType: RoomType | null = null;
 
     private config: AppConfig = {
         renderScale: 0.5,
@@ -111,6 +122,16 @@ class ChimeraVoid {
                     weatherType: { value: 0 },
                     weatherIntensity: { value: 0.0 },
                     weatherTime: { value: 0.0 },
+                    // Room-specific uniforms
+                    uNoiseDensity: { value: 0.5 },
+                    uThresholdBias: { value: 0.0 },
+                    uTemporalJitter: { value: 0.0 },
+                    uContrast: { value: 1.0 },
+                    uGlitchAmount: { value: 0.0 },
+                    uGlitchSpeed: { value: 0.0 },
+                    uColorInversion: { value: 0.0 },
+                    uTime: { value: 0.0 },
+                    uFlowerIntensity: { value: 0.5 },
                 },
                 vertexShader: DitherShader.vertexShader,
                 fragmentShader: DitherShader.fragmentShader,
@@ -155,6 +176,34 @@ class ChimeraVoid {
         // Weather and Day/Night systems
         this.weather = new WeatherSystem();
         this.dayNight = new DayNightCycle();
+
+        // Initialize new systems
+        this.gazeMechanic = new GazeMechanic(this.camera);
+        this.overrideMechanic = new OverrideMechanic();
+        this.runStats = new RunStatsCollector();
+
+        // Setup gaze mechanic callbacks
+        this.gazeMechanic.setOnGazeStart(() => {
+            this.audio.playGazeStartPulse();
+        });
+
+        // Setup override mechanic callbacks
+        this.overrideMechanic.setOnOverrideTrigger(() => {
+            this.audio.playOverrideTear();
+            // Force flower to max intensity
+            const flower = this.handsModel.getFlower();
+            if (flower) {
+                overrideFlowerIntensity(flower);
+            }
+        });
+
+        // Setup flower intensity control via scroll wheel
+        this.controls.setOnFlowerIntensityChange((intensity) => {
+            const flower = this.handsModel.getFlower();
+            if (flower) {
+                setFlowerIntensity(flower, intensity);
+            }
+        });
 
         // Events
         this.setupWindowEvents();
@@ -203,6 +252,38 @@ class ChimeraVoid {
         this.chunkManager.update(this.camera);
         this.chunkManager.animate(t, delta);
 
+        // Update player room based on position
+        const pos = this.controls.getPosition();
+        this.chunkManager.updatePlayerRoom(this.camera.position.x, this.camera.position.z);
+
+        // Get current room type and shader config
+        const currentRoomType = this.chunkManager.getCurrentRoomType();
+        const shaderConfig = this.chunkManager.getCurrentShaderConfig();
+
+        // Handle room transitions (audio)
+        if (currentRoomType !== this.previousRoomType) {
+            // Stop previous room's audio effects
+            if (this.previousRoomType === RoomType.FORCED_ALIGNMENT) {
+                this.audio.stopBinauralBeat();
+            }
+            // Start new room's audio effects
+            if (currentRoomType === RoomType.FORCED_ALIGNMENT) {
+                const roomConfig = this.chunkManager.getCurrentRoomConfig();
+                if (roomConfig.audio.beatFrequency) {
+                    this.audio.startBinauralBeat(
+                        roomConfig.audio.baseFrequency,
+                        roomConfig.audio.beatFrequency
+                    );
+                }
+            }
+            this.previousRoomType = currentRoomType;
+        }
+
+        // Update binaural beat position (for FORCED_ALIGNMENT)
+        if (currentRoomType === RoomType.FORCED_ALIGNMENT) {
+            this.audio.updateBinauralPosition(this.camera.position.x, 20);
+        }
+
         // Update controls
         const isMoving = this.controls.update(time);
 
@@ -210,6 +291,47 @@ class ChimeraVoid {
         if (isMoving && this.controls.canJump) {
             this.audio.playFootstep();
         }
+
+        // Update gaze mechanic
+        const gazeState = this.gazeMechanic.update(delta);
+
+        // Update audio gaze filter
+        this.audio.updateGaze(gazeState.isGazing, gazeState.gazeIntensity);
+        this.audio.tick(delta);
+
+        // Get flower reference
+        const flower = this.handsModel.getFlower();
+        let flowerIntensity = 0.5;
+
+        if (flower) {
+            // Force flower intensity based on gaze
+            const isGazing = gazeState.isGazing;
+            forceFlowerIntensity(flower, isGazing, this.gazeMechanic.calculateForcedFlowerIntensity());
+
+            // Get current intensity
+            flowerIntensity = getFlowerIntensity(flower);
+        }
+
+        // Update override mechanic
+        const overrideState = this.overrideMechanic.update(
+            delta,
+            this.controls.isOverrideKeyHeld(),
+            gazeState.isGazing,
+            currentRoomType,
+            gazeState.isGazing && flowerIntensity < 0.3
+        );
+
+        // Update run stats
+        this.runStats.update(
+            delta,
+            flowerIntensity,
+            gazeState.isGazing,
+            this.gazeMechanic.getPitch(),
+            currentRoomType,
+            this.camera.position.x,
+            overrideState.isActive,
+            overrideState.isTriggered
+        );
 
         // Day/night cycle
         const dayNightContext: DayNightContext = {
@@ -225,6 +347,20 @@ class ChimeraVoid {
         this.shaderQuad.material.uniforms.weatherType.value = weatherState.weatherType;
         this.shaderQuad.material.uniforms.weatherIntensity.value = weatherState.weatherIntensity;
         this.shaderQuad.material.uniforms.weatherTime.value = weatherState.weatherTime;
+
+        // Update room-specific shader uniforms
+        this.shaderQuad.material.uniforms.uNoiseDensity.value = shaderConfig.uNoiseDensity;
+        this.shaderQuad.material.uniforms.uThresholdBias.value = shaderConfig.uThresholdBias;
+        this.shaderQuad.material.uniforms.uTemporalJitter.value = shaderConfig.uTemporalJitter;
+        this.shaderQuad.material.uniforms.uContrast.value = shaderConfig.uContrast;
+        this.shaderQuad.material.uniforms.uGlitchAmount.value = shaderConfig.uGlitchAmount;
+        this.shaderQuad.material.uniforms.uGlitchSpeed.value = shaderConfig.uGlitchSpeed;
+        this.shaderQuad.material.uniforms.uTime.value = t;
+        this.shaderQuad.material.uniforms.uFlowerIntensity.value = flowerIntensity;
+
+        // Override color inversion effect
+        this.shaderQuad.material.uniforms.uColorInversion.value =
+            this.overrideMechanic.getColorInversionValue();
 
         // Update hands
         this.handsModel.animate(delta, isMoving, time);
@@ -246,11 +382,10 @@ class ChimeraVoid {
             this.scannerLight.target.updateMatrixWorld();
         }
 
-        // Update coordinates display
-        const pos = this.controls.getPosition();
+        // Update coordinates display with room type
         const coordsEl = document.getElementById('coords');
         if (coordsEl) {
-            coordsEl.innerText = `POS: ${pos.x}, ${pos.z}`;
+            coordsEl.innerText = `POS: ${pos.x}, ${pos.z} | ${currentRoomType}`;
         }
 
         // Render
