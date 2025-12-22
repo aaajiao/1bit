@@ -166,6 +166,7 @@ export interface ControlsConfig {
     bobSpeed: number;
     bobAmount: number;
     mouseSensitivity: number;
+    maxJumps: number;
 }
 
 export interface PlayerPosition {

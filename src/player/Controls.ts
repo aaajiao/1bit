@@ -24,6 +24,9 @@ export class Controls {
     private targetFlowerIntensity: number = 0.5;
     private onFlowerIntensityChange: ((intensity: number) => void) | null = null;
 
+    // Jump state
+    private jumpCount: number = 0;
+
     // Physics
     private velocity: THREE.Vector3 = new THREE.Vector3();
     private direction: THREE.Vector3 = new THREE.Vector3();
@@ -39,6 +42,7 @@ export class Controls {
         bobSpeed: 0.012,
         bobAmount: 0.15,
         mouseSensitivity: 0.002,
+        maxJumps: 2,
     };
 
     private isLocked: boolean = false;
@@ -91,9 +95,15 @@ export class Controls {
                 this.adjustFlowerIntensity(0.1);
                 break;
             case 'Space':
-                if (this.canJump) {
+                if (this.canJump || this.jumpCount < this.config.maxJumps) {
+                    // Reset vertical velocity for consistent air jumps
+                    if (!this.canJump) {
+                        this.velocity.y = 0;
+                    }
+
                     this.velocity.y += this.config.jumpForce;
                     this.canJump = false;
+                    this.jumpCount++;
                 }
                 break;
         }
@@ -202,6 +212,7 @@ export class Controls {
             velocity.y = 0;
             camera.position.y = config.groundHeight;
             this.canJump = true;
+            this.jumpCount = 0;
         }
 
         // Head bob
