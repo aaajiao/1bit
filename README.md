@@ -52,29 +52,34 @@ npm run serve
 ├── index.html              # 入口 HTML（ES6 模块版本）
 ├── 1-bit.html              # 原始单文件版本
 ├── package.json            # 项目配置
+├── tsconfig.json           # TypeScript 配置
 ├── README.md               # 本文档
 ├── styles/
 │   └── main.css            # 样式表（扫描线效果等）
 └── src/
-    ├── main.js             # 主程序入口
+    ├── main.ts             # 主程序入口
+    ├── types.ts            # 类型定义
     ├── audio/
-    │   └── AudioSystem.js  # 程序化音效系统
+    │   └── AudioSystem.ts  # 程序化音效系统
     ├── shaders/
-    │   └── DitherShader.js # 1-bit 抖动着色器 + 线缆脉冲着色器
+    │   └── DitherShader.ts # 1-bit 抖动着色器 + 线缆脉冲着色器
     ├── player/
-    │   ├── Controls.js     # 第一人称移动控制
-    │   ├── HandsModel.js   # 解剖学精确的手部模型
-    │   └── FlowerProp.js   # 手持发光花朵
+    │   ├── Controls.ts     # 第一人称移动控制
+    │   ├── HandsModel.ts   # 解剖学精确的手部模型
+    │   └── FlowerProp.ts   # 手持发光花朵
     ├── world/
-    │   ├── ChunkManager.js # 无限地形区块管理
-    │   ├── SharedAssets.js # 共享材质和几何体
-    │   ├── BuildingFactory.js # 建筑生成器
-    │   ├── FloraFactory.js # 树木/植物生成器
-    │   ├── FloorTile.js    # 地板纹理生成
-    │   └── CableSystem.js  # 动态线缆系统
+    │   ├── ChunkManager.ts # 无限地形区块管理
+    │   ├── SharedAssets.ts # 共享材质和几何体
+    │   ├── BuildingFactory.ts # 建筑生成器
+    │   ├── FloraFactory.ts # 树木/植物生成器
+    │   ├── FloorTile.ts    # 地板纹理生成
+    │   ├── CableSystem.ts  # 动态线缆系统
+    │   ├── WeatherSystem.ts # 天气效果系统
+    │   ├── DayNightCycle.ts # 昼夜循环系统
+    │   └── SkyEye.ts       # 天空之眼
     └── utils/
-        ├── hash.js         # 确定性伪随机哈希
-        └── ObjectPool.js   # 对象池（性能优化）
+        ├── hash.ts         # 确定性伪随机哈希
+        └── ObjectPool.ts   # 对象池（性能优化）
 ```
 
 ---
@@ -83,8 +88,18 @@ npm run serve
 
 | 组件 | 版本 | 说明 |
 |------|------|------|
+| **TypeScript** | ^5.9.3 | 类型安全的 JavaScript 超集 |
 | **Three.js** | 0.160.0 | 3D 渲染引擎（ES6 模块版本） |
+| **@types/three** | ^0.182.0 | Three.js 类型定义 |
+| **Vite** | ^5.0.0 | 现代前端构建工具 |
 | **模块系统** | ES6 Import Map | 浏览器原生模块支持 |
+
+### 类型检查
+
+```bash
+npm run typecheck   # 运行 TypeScript 类型检查
+npm run build       # 类型检查 + 生产构建
+```
 
 ### 与原版 (r128) 的兼容性处理
 
@@ -160,8 +175,8 @@ vec3 finalColor = mix(color, pulseColor, pulse);
 
 当玩家向上看时，手部会自动下降以避免遮挡视野（特别是天空之眼）：
 
-```javascript
-// HandsModel.js - animate() 方法
+```typescript
+// HandsModel.ts - animate() 方法
 const pitch = this.camera.rotation.x;
 
 // 关键发现：向上看时 pitch > 0（不是负值！）
@@ -184,8 +199,8 @@ this.handsGroup.position.y = Math.sin(this.time * 2) * 0.02 - pitchOffset;
 
 天空之眼必须始终可见，不受任何遮挡：
 
-```javascript
-// main.js - createSkyEye() 方法
+```typescript
+// SkyEye.ts - createGeometry() 方法
 const mat = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     side: THREE.DoubleSide,
@@ -331,14 +346,15 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 
 ---
 
-##  技术亮点
+## 技术亮点
 
-1. **ES6 模块化架构**: 代码按功能拆分，易于维护
-2. **无限世界**: 程序化生成，无边界限制
-3. **极简美学**: 1-bit 渲染创造独特视觉风格
-4. **有机生成**: 多层级随机参数创造多样性
-5. **实时物理**: 动态线缆与移动建筑
-6. **性能优化**: 对象池、共享材质、预分配缓存
+1. **TypeScript 全栈**: 完整的类型定义，提供类型安全和更好的开发体验
+2. **ES6 模块化架构**: 代码按功能拆分，易于维护
+3. **无限世界**: 程序化生成，无边界限制
+4. **极简美学**: 1-bit 渲染创造独特视觉风格
+5. **有机生成**: 多层级随机参数创造多样性
+6. **实时物理**: 动态线缆与移动建筑
+7. **性能优化**: 对象池、共享材质、预分配缓存
 
 ---
 
