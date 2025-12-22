@@ -10,10 +10,17 @@ interface FlowerPartUserData {
     axis?: THREE.Vector3;
 }
 
+interface FlowerGroupUserData {
+    bloom?: THREE.Group;
+    coreLight?: THREE.PointLight;
+    intensity: number;
+    targetIntensity: number;
+    isBeingForced: boolean;     // True when gaze is forcing intensity down
+    forcedIntensity: number;    // The intensity to force to when gazing
+}
+
 interface FlowerGroup extends THREE.Group {
-    userData: {
-        bloom?: THREE.Group;
-    };
+    userData: FlowerGroupUserData;
 }
 
 /**
@@ -128,9 +135,57 @@ export function createFlowerProp(): FlowerGroup {
     }
 
     flowerGroup.add(bloom);
-    flowerGroup.userData = { bloom: bloom };
+    flowerGroup.userData = {
+        bloom: bloom,
+        coreLight: coreLight,
+        intensity: 0.5,           // Default intensity
+        targetIntensity: 0.5,     // Target for smooth interpolation
+        isBeingForced: false,     // Not being forced by gaze
+        forcedIntensity: 0.1,     // Default forced intensity when gazing
+    };
 
     return flowerGroup;
+}
+
+/**
+ * Set the flower intensity (0-1)
+ * Higher intensity = brighter light, more visible
+ * @param flowerGroup - The flower group
+ * @param intensity - Target intensity (0-1)
+ */
+export function setFlowerIntensity(flowerGroup: FlowerGroup, intensity: number): void {
+    flowerGroup.userData.targetIntensity = Math.max(0, Math.min(1, intensity));
+}
+
+/**
+ * Get current flower intensity
+ */
+export function getFlowerIntensity(flowerGroup: FlowerGroup): number {
+    return flowerGroup.userData.intensity;
+}
+
+/**
+ * Force flower intensity down (used by gaze mechanic)
+ * @param flowerGroup - The flower group
+ * @param isForced - Whether intensity is being forced
+ * @param forcedValue - The value to force to (default 0.1)
+ */
+export function forceFlowerIntensity(
+    flowerGroup: FlowerGroup,
+    isForced: boolean,
+    forcedValue: number = 0.1
+): void {
+    flowerGroup.userData.isBeingForced = isForced;
+    flowerGroup.userData.forcedIntensity = forcedValue;
+}
+
+/**
+ * Override flower intensity to maximum (used by resistance mechanic)
+ * @param flowerGroup - The flower group
+ */
+export function overrideFlowerIntensity(flowerGroup: FlowerGroup): void {
+    flowerGroup.userData.intensity = 1.0;
+    flowerGroup.userData.targetIntensity = 1.0;
 }
 
 /**
@@ -142,24 +197,55 @@ export function createFlowerProp(): FlowerGroup {
 export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: number): void {
     if (!flowerGroup.userData.bloom) return;
 
-    const bloom = flowerGroup.userData.bloom;
-    bloom.rotation.y += delta * 0.2;
+    const ud = flowerGroup.userData;
+    const bloom = ud.bloom;
+
+    // Determine target intensity based on gaze forcing
+    let effectiveTarget = ud.targetIntensity;
+    if (ud.isBeingForced) {
+        effectiveTarget = ud.forcedIntensity;
+    }
+
+    // Smooth interpolation of intensity
+    const lerpSpeed = 3.0;
+    ud.intensity += (effectiveTarget - ud.intensity) * lerpSpeed * delta;
+    ud.intensity = Math.max(0, Math.min(1, ud.intensity));
+
+    // Apply intensity to core light
+    if (ud.coreLight) {
+        // Light intensity scales from 0.5 (dim) to 5.0 (bright)
+        ud.coreLight.intensity = 0.5 + ud.intensity * 4.5;
+        // Light distance also scales with intensity
+        ud.coreLight.distance = 4.0 + ud.intensity * 6.0;
+    }
+
+    // Bloom rotation (slower when dim, faster when bright)
+    bloom.rotation.y += delta * (0.1 + ud.intensity * 0.2);
+
+    // Scale bloom slightly based on intensity
+    const bloomScale = 0.8 + ud.intensity * 0.4;
+    bloom.scale.setScalar(bloomScale);
 
     bloom.children.forEach(part => {
-        const ud = part.userData as FlowerPartUserData;
-        if (!ud || !ud.animType) return;
+        const partData = part.userData as FlowerPartUserData;
+        if (!partData || !partData.animType) return;
 
-        if (ud.animType === 'PETAL_BREATHE' && ud.baseRotX !== undefined && ud.phase !== undefined) {
-            const openAmount = Math.sin(time * 2.0 + ud.phase) * 0.2;
-            part.rotation.x = ud.baseRotX + openAmount;
+        if (partData.animType === 'PETAL_BREATHE' && partData.baseRotX !== undefined && partData.phase !== undefined) {
+            // Petals open more when intensity is high
+            const openAmount = Math.sin(time * 2.0 + partData.phase) * 0.2 * (0.5 + ud.intensity * 0.5);
+            const baseOpen = (ud.intensity - 0.5) * 0.3; // More open when brighter
+            part.rotation.x = partData.baseRotX + openAmount + baseOpen;
         }
-        if (ud.animType === 'SEPAL_FLOAT' && ud.phase !== undefined) {
-            part.rotation.x += delta * 0.5;
-            part.rotation.z += delta * 0.3;
-            part.position.y = 0.1 + Math.sin(time * 1.5 + ud.phase) * 0.05;
+        if (partData.animType === 'SEPAL_FLOAT' && partData.phase !== undefined) {
+            const floatSpeed = 0.3 + ud.intensity * 0.4;
+            part.rotation.x += delta * floatSpeed;
+            part.rotation.z += delta * floatSpeed * 0.6;
+            part.position.y = 0.1 + Math.sin(time * 1.5 + partData.phase) * 0.05;
         }
-        if (ud.animType === 'DUST_ORBIT' && ud.axis && ud.speed !== undefined) {
-            part.position.applyAxisAngle(ud.axis, ud.speed * delta);
+        if (partData.animType === 'DUST_ORBIT' && partData.axis && partData.speed !== undefined) {
+            // Dust orbits faster when intensity is high
+            const orbitSpeed = partData.speed * (0.5 + ud.intensity * 0.5);
+            part.position.applyAxisAngle(partData.axis, orbitSpeed * delta);
         }
     });
 }

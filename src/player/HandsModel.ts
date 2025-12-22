@@ -6,6 +6,11 @@ import type { FingerStructure, ThumbStructure } from '../types';
 interface FlowerGroup extends THREE.Group {
     userData: {
         bloom?: THREE.Group;
+        coreLight?: THREE.PointLight;
+        intensity: number;
+        targetIntensity: number;
+        isBeingForced: boolean;
+        forcedIntensity: number;
     };
 }
 
@@ -18,6 +23,7 @@ export class HandsModel {
     private time: number = 0;
     private leftHand!: THREE.Group;
     private rightHand!: THREE.Group;
+    private flower: FlowerGroup | null = null;
 
     // Materials
     private handMat: THREE.MeshLambertMaterial;
@@ -255,8 +261,10 @@ export class HandsModel {
             fThumb.s2.rotation.x = -0.7;
 
             // Add flower
-            const flower = createFlowerProp();
+            const flower = createFlowerProp() as FlowerGroup;
             g.add(flower);
+            // Store reference for external access
+            g.userData.flower = flower;
         } else {
             // Left hand - relaxed pose
             fIndex.root.rotation.x = 0.2;
@@ -310,5 +318,19 @@ export class HandsModel {
                 animateFlower(flowerChild, timeMs * 0.001, delta);
             }
         });
+    }
+
+    /**
+     * Get reference to the flower prop
+     */
+    getFlower(): FlowerGroup | null {
+        // Find flower in right hand
+        for (const child of this.rightHand.children) {
+            const flowerChild = child as FlowerGroup;
+            if (flowerChild.userData?.bloom) {
+                return flowerChild;
+            }
+        }
+        return null;
     }
 }

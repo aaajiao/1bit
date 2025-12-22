@@ -6,6 +6,7 @@ import { createFloorMaterial, createFloorMesh } from './FloorTile';
 import { createBlocksBuilding, createSpikesBuilding, createFluidBuilding } from './BuildingFactory';
 import { createTree } from './FloraFactory';
 import { createDynamicCable, updateCableGeometry } from './CableSystem';
+import { RoomType, getRoomTypeFromPosition, ROOM_CONFIGS, RoomShaderConfig, lerpRoomShaderConfig } from './RoomConfig';
 import type {
     Chunk,
     ChunkUserData,
@@ -20,6 +21,13 @@ export const CHUNK_SIZE = 80;
 export const RENDER_DISTANCE = 2;
 
 /**
+ * Extended chunk user data with room type
+ */
+interface ExtendedChunkUserData extends ChunkUserData {
+    roomType: RoomType;
+}
+
+/**
  * Manages chunk lifecycle and procedural generation
  */
 export class ChunkManager {
@@ -28,9 +36,19 @@ export class ChunkManager {
     private floorMaterial: THREE.MeshLambertMaterial;
     private assets: SharedAssets;
 
+    // Current room state
+    private currentRoomType: RoomType = RoomType.INFO_OVERFLOW;
+    private previousRoomType: RoomType = RoomType.INFO_OVERFLOW;
+    private roomTransitionProgress: number = 1.0; // 1.0 = fully transitioned
+    private roomTransitionSpeed: number = 2.0; // Transition over 0.5 seconds
+
+    // Shader config for current room (interpolated during transitions)
+    private currentShaderConfig: RoomShaderConfig;
+
     constructor(scene: THREE.Scene) {
         this.floorMaterial = createFloorMaterial();
         this.assets = getSharedAssets();
+        this.currentShaderConfig = { ...ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader };
 
         scene.add(this.chunkGroup);
     }
@@ -68,11 +86,16 @@ export class ChunkManager {
     private createChunk(cx: number, cz: number): void {
         const chunk = new THREE.Group() as Chunk;
         chunk.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
+
+        // Assign room type based on position
+        const roomType = getRoomTypeFromPosition(cx, cz);
+
         chunk.userData = {
             cables: [],
             buildings: [],
             animatedObjects: [],  // Pre-collected animated objects for optimization
-        } as ChunkUserData;
+            roomType: roomType,
+        } as ExtendedChunkUserData;
 
         // Floor
         const floor = createFloorMesh(CHUNK_SIZE, this.floorMaterial);
@@ -298,5 +321,73 @@ export class ChunkManager {
                 });
             }
         }
+
+        // Update room transition
+        if (this.roomTransitionProgress < 1.0) {
+            this.roomTransitionProgress += delta * this.roomTransitionSpeed;
+            if (this.roomTransitionProgress >= 1.0) {
+                this.roomTransitionProgress = 1.0;
+            }
+
+            // Interpolate shader config
+            const fromConfig = ROOM_CONFIGS[this.previousRoomType].shader;
+            const toConfig = ROOM_CONFIGS[this.currentRoomType].shader;
+            this.currentShaderConfig = lerpRoomShaderConfig(
+                fromConfig,
+                toConfig,
+                this.roomTransitionProgress
+            );
+        }
+    }
+
+    /**
+     * Get the room type at the player's current position
+     */
+    getCurrentRoomType(): RoomType {
+        return this.currentRoomType;
+    }
+
+    /**
+     * Get the current shader configuration (interpolated during transitions)
+     */
+    getCurrentShaderConfig(): RoomShaderConfig {
+        return { ...this.currentShaderConfig };
+    }
+
+    /**
+     * Update current room based on player position
+     * Should be called from main update loop
+     */
+    updatePlayerRoom(playerX: number, playerZ: number): void {
+        const cx = Math.floor(playerX / CHUNK_SIZE);
+        const cz = Math.floor(playerZ / CHUNK_SIZE);
+        const key = `${cx},${cz}`;
+
+        const chunk = this.activeChunks[key];
+        if (chunk) {
+            const chunkData = chunk.userData as ExtendedChunkUserData;
+            const newRoomType = chunkData.roomType;
+
+            if (newRoomType !== this.currentRoomType) {
+                // Start room transition
+                this.previousRoomType = this.currentRoomType;
+                this.currentRoomType = newRoomType;
+                this.roomTransitionProgress = 0.0;
+            }
+        }
+    }
+
+    /**
+     * Check if currently in a room transition
+     */
+    isInTransition(): boolean {
+        return this.roomTransitionProgress < 1.0;
+    }
+
+    /**
+     * Get room config for current room
+     */
+    getCurrentRoomConfig() {
+        return ROOM_CONFIGS[this.currentRoomType];
     }
 }
