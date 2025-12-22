@@ -268,6 +268,29 @@ class ChimeraVoid {
             this.audio.playInfoChirp();
         }
 
+        // CABLE AUDIO: Check proximity
+        const cableDist = this.chunkManager.getDistanceToNearestCable(this.camera.position);
+
+        // Hysteresis: Start if close (8m), Stop if far (12m)
+        // Check if we should be playing
+        if (cableDist < 8.0) {
+            this.audio.startCableHum();
+        } else if (cableDist > 12.0) {
+            this.audio.stopCableHum();
+        }
+
+        // Update if playing
+        if (cableDist < 12.0) {
+            // Intensity: 1.0 at 1m, 0.0 at 12m
+            const humIntensity = Math.max(0, 1 - Math.max(0, cableDist - 1) / 11.0);
+            this.audio.updateCableHum(humIntensity);
+
+            // Random sparks if very close (< 2.5m)
+            if (cableDist < 2.5 && Math.random() < 0.01) {
+                this.audio.playCablePulse();
+            }
+        }
+
         // Update controls
         const isMoving = this.controls.update(time);
 

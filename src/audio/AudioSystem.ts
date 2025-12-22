@@ -154,7 +154,7 @@ export class AudioSystem implements AudioSystemInterface {
     }
 
     /**
-     * Cable pulse sound - high frequency blip
+     * Cable pulse sound - high frequency blip (Sparking sound)
      */
     playCablePulse(): void {
         if (!this.enabled || !this.audioContext || !this.masterGain) return;
@@ -165,17 +165,90 @@ export class AudioSystem implements AudioSystemInterface {
 
         // High pitched square wave
         osc.type = 'square';
-        osc.frequency.value = 1200;
+        osc.frequency.value = 1200 + Math.random() * 500; // Vary pitch slightly
         osc.frequency.setTargetAtTime(600, now, 0.02);
 
-        gain.gain.setValueAtTime(0.05, now);
-        gain.gain.setTargetAtTime(0.001, now, 0.03);
+        // Boosted gain (was 0.05)
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.setTargetAtTime(0.001, now, 0.05);
 
         osc.connect(gain);
         gain.connect(this.masterGain);
 
         osc.start(now);
-        osc.stop(now + 0.06);
+        osc.stop(now + 0.1);
+    }
+
+    // Cable Hum State
+    private cableHumNode: { osc: OscillatorNode, gain: GainNode, lfo: OscillatorNode } | null = null;
+
+    /**
+     * Start cable hum - 60Hz electrical buzz
+     */
+    startCableHum(): void {
+        if (!this.enabled || !this.audioContext || !this.masterGain || this.cableHumNode) return;
+
+        const now = this.audioContext.currentTime;
+
+        const osc = this.audioContext.createOscillator();
+        osc.type = 'sawtooth'; // Buzzy
+        osc.frequency.value = 100; // Grid hum (Higher pitch for visibility)
+
+        // Amplitude modulation for "unstable" electricity
+        const lfo = this.audioContext.createOscillator();
+        lfo.type = 'sine'; // Smoother undulation
+        lfo.frequency.value = 0.5; // Slow drift
+
+        // Modulation gain (pitch instability)
+        const lfoGain = this.audioContext.createGain();
+        lfoGain.gain.value = 2; // Modulate pitch by +/- 2Hz
+
+        lfo.connect(lfoGain);
+        lfoGain.connect(osc.frequency);
+
+        const humGain = this.audioContext.createGain();
+        humGain.gain.value = 0;
+
+        osc.connect(humGain);
+        humGain.connect(this.masterGain);
+
+        osc.start(now);
+        lfo.start(now); // IMPORTANT: Must start LFO
+
+        this.cableHumNode = { osc, gain: humGain, lfo };
+    }
+
+    /**
+     * Update cable hum intensity
+     * @param intensity 0-1
+     */
+    updateCableHum(intensity: number): void {
+        if (!this.cableHumNode || !this.audioContext) return;
+
+        // Target volume max 0.15 (it's annoying if too loud)
+        const vol = Math.max(0, Math.min(1, intensity)) * 0.15;
+        this.cableHumNode.gain.gain.setTargetAtTime(vol, this.audioContext.currentTime, 0.1);
+    }
+
+    /**
+     * Stop cable hum
+     */
+    stopCableHum(): void {
+        if (!this.cableHumNode) return;
+
+        const { osc, gain, lfo } = this.cableHumNode;
+        const now = this.audioContext?.currentTime || 0;
+
+        try {
+            gain.gain.setTargetAtTime(0, now, 0.2);
+        } catch (e) { /* ignore */ }
+
+        setTimeout(() => {
+            try { osc.stop(); } catch (e) { /* ignore */ }
+            try { lfo.stop(); } catch (e) { /* ignore */ }
+        }, 250);
+
+        this.cableHumNode = null;
     }
 
     /**

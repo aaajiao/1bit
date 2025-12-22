@@ -156,7 +156,19 @@ export interface AudioSystemInterface {
     playGlitchBurst(): void;
     updateFlowerAudio(intensity: number): void;
     playFlowerStateChange(ascending: boolean): void;
+
     stopFlowerAudio(): void;
+    // Rift Audio
+    startRiftFog(): void;
+    updateRiftFog(intensity: number): void;
+    stopRiftFog(): void;
+    playRiftFall(): void;
+    stopRiftFall(): void;
+    playRiftRespawn(): void;
+    // Cable Audio
+    startCableHum(): void;
+    updateCableHum(intensity: number): void;
+    stopCableHum(): void;
 }
 
 export interface WeatherSystemInterface {

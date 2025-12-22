@@ -65,6 +65,13 @@ graph LR
 *   **技术**: 随机触发高频方波脉冲 (2000-10000Hz)。
 *   **效果**: 模拟数据过载、老式调制解调器或大型机的噪声。
 
+
+#### 裂缝 (The Rift) - 虚空迷雾
+*   **房间**: `FORCED_ALIGNMENT`
+*   **技术**: 白噪声 (White Noise) + LFO 低通滤波器扫描 + 距离衰减。
+*   **心理声学效果**: 类似于巨大的风洞或呼吸的迷雾，只有在靠近危险边缘时才会被听到。
+*   **交互**: 掉入裂缝时触发 Shepard Tone 风格的无限下坠音效，重生时播放反向吸入声。
+
 ### 4. 天气音效 (Weather Audio)
 
 根据程序生成的天气状态播放对应的环境音。每种天气占据**完全不同的频率范围**以确保可辨识性：
@@ -139,6 +146,11 @@ graph LR
 | 信号故障音 | 天气为 GLITCH 时触发 |
 | 花强度音 | 花强度变化时播放微音（稳定时静音） |
 | 花状态确认 | 花强度跨越 0.3 或 0.7 边界时播放纯五度/四度音程 |
+| 裂缝迷雾 | 在 `FORCED_ALIGNMENT` 房间靠近裂缝时 |
+| 裂缝坠落 | 掉入裂缝时触发 (Shepard 下坠音) |
+| 裂缝重生 | 坠落重置时触发 (反向吸入音) |
+| 电缆嗡嗡 | 靠近电缆 (8m内) 时触发 (100Hz Sawtooth + LFO) |
+| 电缆火花 | 极近距离 (<2.5m) 随机触发 (High Pitch Pulse) |
 
 ---
 
@@ -149,18 +161,18 @@ graph LR
 window.app.audio?.init();
 
 // === 一次性音效测试 ===
-window.app.audio?.playFootstep();
-window.app.audio?.playCablePulse();
-window.app.audio?.playEyeBlink();
-window.app.audio?.playDayNightTransition(true);   // 日落
-window.app.audio?.playDayNightTransition(false);  // 日出
-window.app.audio?.playOverrideTear();
-window.app.audio?.playInfoChirp();
-window.app.audio?.playGazeStartPulse();
-window.app.audio?.playRoomTransition();
-window.app.audio?.playJump();
-window.app.audio?.playDoubleJump();
-window.app.audio?.playGlitchBurst();
+window.app.audio?.playFootstep();         // 脚步声 (80-120Hz 方波)
+window.app.audio?.playCablePulse();       // 电缆脉冲 (1200->600Hz)
+window.app.audio?.playEyeBlink();         // 天眼眨眼 (400->100Hz)
+window.app.audio?.playDayNightTransition(true);   // 日落 (扫描音)
+window.app.audio?.playDayNightTransition(false);  // 日出 (扫描音)
+window.app.audio?.playOverrideTear();     // 覆盖撕裂 (白噪声爆发)
+window.app.audio?.playInfoChirp();        // 信息溢出 (高频数据音)
+window.app.audio?.playGazeStartPulse();   // 凝视开始 (低频脉冲)
+window.app.audio?.playRoomTransition();   // 房间切换 (噪声+扫描)
+window.app.audio?.playJump();             // 跳跃 (150->300Hz)
+window.app.audio?.playDoubleJump();       // 二段跳 (双音连奏)
+window.app.audio?.playGlitchBurst();      // 信号故障 (随机跳变)
 
 // === 音量控制 ===
 window.app.audio?.setVolume(0.5);   // 设置音量 50%

@@ -435,4 +435,59 @@ export class ChunkManager {
     getCurrentRoomConfig() {
         return ROOM_CONFIGS[this.currentRoomType];
     }
+
+    /**
+     * Get distance to nearest cable for audio proximity
+     * Returns distance in meters (Infinity if no cables)
+     */
+    getDistanceToNearestCable(playerPos: THREE.Vector3): number {
+        let minDistance = Infinity;
+
+        // Optimization: only check chunks near the player
+        const cx = Math.floor(playerPos.x / CHUNK_SIZE);
+        const cz = Math.floor(playerPos.z / CHUNK_SIZE);
+
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                const key = `${cx + x},${cz + z}`;
+                const chunk = this.activeChunks[key];
+                if (!chunk || !chunk.userData.cables) continue;
+
+                // Check cables in this chunk
+                for (const cable of chunk.userData.cables) {
+                    if (!cable.line) continue;
+
+                    // Approximate distance to the line segment
+                    // Simple check against midpoint first
+                    const start = cable.startNode.obj.position.clone().add(cable.startNode.topOffset);
+                    const end = cable.endNode.obj.position.clone().add(cable.endNode.topOffset);
+                    const mid = start.clone().lerp(end, 0.5);
+
+                    if (playerPos.distanceToSquared(mid) > 2500) continue; // Skip far cables (>50m)
+
+                    // Accurate distance to segment
+                    const line = new THREE.Line3(start, end);
+                    const closestPoint = new THREE.Vector3();
+                    line.closestPointToPoint(playerPos, false, closestPoint);
+                    const dist = playerPos.distanceTo(closestPoint);
+
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                    }
+
+                    // Also check dynamic points? (Too expensive, the straight line approximation is usually good enough for "audio hum")
+                    // If heavy sag, maybe check the sag point
+                    if (cable.options.heavySag) {
+                        // Very rough approximation of sag point height (usually much lower)
+                        const sagPoint = mid.clone();
+                        sagPoint.y -= cable.options.droop;
+                        const sagDist = playerPos.distanceTo(sagPoint);
+                        if (sagDist < minDistance) minDistance = sagDist;
+                    }
+                }
+            }
+        }
+
+        return minDistance;
+    }
 }
