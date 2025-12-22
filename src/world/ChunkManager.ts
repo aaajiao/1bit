@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { hash } from '../utils/hash';
 import { getSharedAssets, SharedAssets } from './SharedAssets';
-import { createFloorMaterial, createFloorMesh } from './FloorTile';
+import { createFloorMaterial, createFloorMesh, createCrackedFloorMesh, createMoireFloorMesh } from './FloorTile';
 import { createBlocksBuilding, createSpikesBuilding, createFluidBuilding } from './BuildingFactory';
 import { createTree } from './FloraFactory';
 import { createDynamicCable, updateCableGeometry } from './CableSystem';
@@ -97,8 +97,15 @@ export class ChunkManager {
             roomType: roomType,
         } as ExtendedChunkUserData;
 
-        // Floor
-        const floor = createFloorMesh(CHUNK_SIZE, this.floorMaterial);
+        // Floor - select type based on room
+        let floor: THREE.Object3D;
+        if (roomType === RoomType.FORCED_ALIGNMENT) {
+            floor = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial);
+        } else if (roomType === RoomType.IN_BETWEEN) {
+            floor = createMoireFloorMesh(CHUNK_SIZE, this.floorMaterial);
+        } else {
+            floor = createFloorMesh(CHUNK_SIZE, this.floorMaterial);
+        }
         chunk.add(floor);
 
         // Buildings and nodes for cables

@@ -201,6 +201,24 @@ class ChimeraVoid {
         // Update binaural beat position (for FORCED_ALIGNMENT)
         if (currentRoomType === RoomType.FORCED_ALIGNMENT) {
             this.audio.updateBinauralPosition(this.camera.position.x, 20);
+
+            // Crack detection: check if player is above the crack
+            // Crack is centered in each chunk, 4 meters wide
+            const chunkX = Math.floor(this.camera.position.x / CHUNK_SIZE);
+            const chunkCenterX = chunkX * CHUNK_SIZE + CHUNK_SIZE / 2;
+            const distFromCenter = Math.abs(this.camera.position.x - chunkCenterX);
+
+            // Crack half-width is 2m
+            if (distFromCenter < 2) {
+                // Player is above the crack - set ground to abyss bottom
+                this.controls.setGroundLevel(-8);
+            } else {
+                // Player is on solid ground
+                this.controls.setGroundLevel(2.0);
+            }
+        } else {
+            // Reset ground level for other room types
+            this.controls.setGroundLevel(2.0);
         }
 
         // Play random info chirps (for INFO_OVERFLOW room)

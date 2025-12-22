@@ -46,6 +46,9 @@ export class Controls {
         maxJumps: 2,
     };
 
+    // Dynamic ground level (can be changed per-frame for crack detection)
+    private currentGroundLevel: number = 2.0;
+
     private isLocked: boolean = false;
 
     // Bound event handlers for cleanup
@@ -216,10 +219,10 @@ export class Controls {
         camera.translateZ(velocity.z * delta);
         camera.position.y += velocity.y * delta;
 
-        // Ground collision
-        if (camera.position.y < config.groundHeight) {
+        // Ground collision - use dynamic ground level
+        if (camera.position.y < this.currentGroundLevel) {
             velocity.y = 0;
-            camera.position.y = config.groundHeight;
+            camera.position.y = this.currentGroundLevel;
             this.canJump = true;
             this.jumpCount = 0;
         }
@@ -296,5 +299,20 @@ export class Controls {
      */
     setOnJump(callback: (isDoubleJump: boolean) => void): void {
         this.onJump = callback;
+    }
+
+    /**
+     * Set dynamic ground level for crack detection
+     * @param y - Ground height (use negative for abyss)
+     */
+    setGroundLevel(y: number): void {
+        this.currentGroundLevel = y;
+    }
+
+    /**
+     * Get current ground level
+     */
+    getGroundLevel(): number {
+        return this.currentGroundLevel;
     }
 }
