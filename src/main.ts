@@ -1,6 +1,5 @@
 // 1-bit Chimera Void - Main Entry Point
 import * as THREE from 'three';
-import { DitherShader } from './shaders/DitherShader';
 import { ChunkManager, CHUNK_SIZE } from './world/ChunkManager';
 import { updateCableTime } from './world/CableSystem';
 import { Controls } from './player/Controls';
@@ -16,6 +15,8 @@ import { RunStatsCollector } from './stats/RunStatsCollector';
 import { StateSnapshotGenerator } from './stats/StateSnapshotGenerator';
 import { SnapshotOverlay } from './stats/SnapshotOverlay';
 import { RoomType } from './world/RoomConfig';
+import { createScene } from './core/SceneSetup';
+import { createPostProcessing, updatePostProcessingSize, type PostProcessingComponents } from './core/PostProcessing';
 import type { AppConfig, DayNightContext } from './types';
 
 // Extend Window interface for app reference
@@ -32,9 +33,7 @@ class ChimeraVoid {
     private camera: THREE.PerspectiveCamera;
     private scene: THREE.Scene;
     private renderer: THREE.WebGLRenderer;
-    private composerScene: THREE.Scene;
-    private composerCamera: THREE.OrthographicCamera;
-    private renderTarget: THREE.WebGLRenderTarget;
+    private postProcessing: PostProcessingComponents;
     private chunkManager: ChunkManager;
     private controls: Controls;
     private handsModel: HandsModel;
@@ -44,7 +43,6 @@ class ChimeraVoid {
     private weather: WeatherSystem;
     private dayNight: DayNightCycle;
     private prevTime: number = performance.now();
-    private shaderQuad: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
 
     // New systems
     private gazeMechanic: GazeMechanic;
@@ -66,96 +64,15 @@ class ChimeraVoid {
             throw new Error('Canvas container not found');
         }
 
-        // Scene
-        this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x888888);
-        this.scene.fog = new THREE.Fog(0x888888, this.config.fogNear, this.config.fogFar);
+        // Initialize scene, camera, renderer, and lighting
+        const sceneComponents = createScene(container, this.config);
+        this.scene = sceneComponents.scene;
+        this.camera = sceneComponents.camera;
+        this.renderer = sceneComponents.renderer;
+        this.scannerLight = sceneComponents.scannerLight;
 
-        // Camera
-        this.camera = new THREE.PerspectiveCamera(
-            80,
-            window.innerWidth / window.innerHeight,
-            0.1,
-            1000
-        );
-        this.camera.rotation.order = 'YXZ';
-
-        // Renderer
-        this.renderer = new THREE.WebGLRenderer({ antialias: false });
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(1);
-        this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.BasicShadowMap;
-        container.appendChild(this.renderer.domElement);
-
-        // Disable new color management to match r128 behavior
-        THREE.ColorManagement.enabled = false;
-        this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-
-        // Render target for post-processing
-        const scale = this.config.renderScale;
-        this.renderTarget = new THREE.WebGLRenderTarget(
-            window.innerWidth * scale,
-            window.innerHeight * scale,
-            {
-                minFilter: THREE.NearestFilter,
-                magFilter: THREE.NearestFilter,
-            }
-        );
-
-        // Post-processing quad
-        this.composerScene = new THREE.Scene();
-        this.composerCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-        this.shaderQuad = new THREE.Mesh(
-            new THREE.PlaneGeometry(2, 2),
-            new THREE.ShaderMaterial({
-                uniforms: {
-                    tDiffuse: { value: this.renderTarget.texture },
-                    resolution: {
-                        value: new THREE.Vector2(
-                            window.innerWidth * scale,
-                            window.innerHeight * scale
-                        ),
-                    },
-                    enableOutline: { value: true },
-                    outlineStrength: { value: 0.3 },
-                    enableDepthDither: { value: false },
-                    ditherTransition: { value: 0.7 },
-                    invertColors: { value: false },
-                    // Weather
-                    weatherType: { value: 0 },
-                    weatherIntensity: { value: 0.0 },
-                    weatherTime: { value: 0.0 },
-                    // Room-specific uniforms
-                    uNoiseDensity: { value: 0.5 },
-                    uThresholdBias: { value: 0.0 },
-                    uTemporalJitter: { value: 0.0 },
-                    uContrast: { value: 1.0 },
-                    uGlitchAmount: { value: 0.0 },
-                    uGlitchSpeed: { value: 0.0 },
-                    uColorInversion: { value: 0.0 },
-                    uOverrideProgress: { value: 0.0 },
-                    uTime: { value: 0.0 },
-                    uFlowerIntensity: { value: 0.5 },
-                },
-                vertexShader: DitherShader.vertexShader,
-                fragmentShader: DitherShader.fragmentShader,
-            })
-        );
-        this.composerScene.add(this.shaderQuad);
-
-        // Lighting (intensity increased to compensate for r155+ decay changes)
-        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x111111, 1.2);
-        this.scene.add(hemiLight);
-
-        this.scannerLight = new THREE.SpotLight(0xffffff, 4.0);
-        this.scannerLight.position.set(0, 80, 0);
-        this.scannerLight.angle = Math.PI / 4;
-        this.scannerLight.penumbra = 0.5;
-        this.scannerLight.decay = 1; // Reduced from 2 to compensate
-        this.scannerLight.distance = 250;
-        this.scannerLight.castShadow = true;
-        this.camera.add(this.scannerLight);
+        // Initialize post-processing
+        this.postProcessing = createPostProcessing(this.config.renderScale);
 
         // Sky Eye
         this.skyEye = new SkyEye(this.scene);
@@ -166,9 +83,6 @@ class ChimeraVoid {
 
         // World
         this.chunkManager = new ChunkManager(this.scene);
-
-        // Add camera to scene
-        this.scene.add(this.camera);
 
         // Audio system (initialized on first click)
         this.audio = new AudioSystem();
@@ -227,16 +141,7 @@ class ChimeraVoid {
             this.camera.aspect = window.innerWidth / window.innerHeight;
             this.camera.updateProjectionMatrix();
             this.renderer.setSize(window.innerWidth, window.innerHeight);
-
-            const s = this.config.renderScale;
-            this.renderTarget.setSize(
-                window.innerWidth * s,
-                window.innerHeight * s
-            );
-            (this.shaderQuad.material.uniforms.resolution.value as THREE.Vector2).set(
-                window.innerWidth * s,
-                window.innerHeight * s
-            );
+            updatePostProcessingSize(this.postProcessing, this.config.renderScale);
         });
     }
 
@@ -343,7 +248,7 @@ class ChimeraVoid {
         // Day/night cycle
         const dayNightContext: DayNightContext = {
             scene: this.scene,
-            shaderQuad: this.shaderQuad,
+            shaderQuad: this.postProcessing.shaderQuad,
             audio: this.audio,
             weather: this.weather,
             onSunset: () => {
@@ -357,27 +262,26 @@ class ChimeraVoid {
 
         // Weather system
         const weatherState = this.weather.update(delta, t);
-        this.shaderQuad.material.uniforms.weatherType.value = weatherState.weatherType;
-        this.shaderQuad.material.uniforms.weatherIntensity.value = weatherState.weatherIntensity;
-        this.shaderQuad.material.uniforms.weatherTime.value = weatherState.weatherTime;
+        const uniforms = this.postProcessing.shaderQuad.material.uniforms;
+        uniforms.weatherType.value = weatherState.weatherType;
+        uniforms.weatherIntensity.value = weatherState.weatherIntensity;
+        uniforms.weatherTime.value = weatherState.weatherTime;
 
         // Update room-specific shader uniforms
-        this.shaderQuad.material.uniforms.uNoiseDensity.value = shaderConfig.uNoiseDensity;
-        this.shaderQuad.material.uniforms.uThresholdBias.value = shaderConfig.uThresholdBias;
-        this.shaderQuad.material.uniforms.uTemporalJitter.value = shaderConfig.uTemporalJitter;
-        this.shaderQuad.material.uniforms.uContrast.value = shaderConfig.uContrast;
-        this.shaderQuad.material.uniforms.uGlitchAmount.value = shaderConfig.uGlitchAmount;
-        this.shaderQuad.material.uniforms.uGlitchSpeed.value = shaderConfig.uGlitchSpeed;
-        this.shaderQuad.material.uniforms.uTime.value = t;
-        this.shaderQuad.material.uniforms.uFlowerIntensity.value = flowerIntensity;
+        uniforms.uNoiseDensity.value = shaderConfig.uNoiseDensity;
+        uniforms.uThresholdBias.value = shaderConfig.uThresholdBias;
+        uniforms.uTemporalJitter.value = shaderConfig.uTemporalJitter;
+        uniforms.uContrast.value = shaderConfig.uContrast;
+        uniforms.uGlitchAmount.value = shaderConfig.uGlitchAmount;
+        uniforms.uGlitchSpeed.value = shaderConfig.uGlitchSpeed;
+        uniforms.uTime.value = t;
+        uniforms.uFlowerIntensity.value = flowerIntensity;
 
         // Override color inversion effect
-        this.shaderQuad.material.uniforms.uColorInversion.value =
-            this.overrideMechanic.getColorInversionValue();
+        uniforms.uColorInversion.value = this.overrideMechanic.getColorInversionValue();
 
         // Override hold progress (for visual feedback while holding)
-        this.shaderQuad.material.uniforms.uOverrideProgress.value =
-            this.overrideMechanic.getHoldProgress();
+        uniforms.uOverrideProgress.value = this.overrideMechanic.getHoldProgress();
 
         // Update hands
         this.handsModel.animate(delta, isMoving, time);
@@ -411,10 +315,10 @@ class ChimeraVoid {
         }
 
         // Render
-        this.renderer.setRenderTarget(this.renderTarget);
+        this.renderer.setRenderTarget(this.postProcessing.renderTarget);
         this.renderer.render(this.scene, this.camera);
         this.renderer.setRenderTarget(null);
-        this.renderer.render(this.composerScene, this.composerCamera);
+        this.renderer.render(this.postProcessing.composerScene, this.postProcessing.composerCamera);
     }
 }
 
