@@ -694,11 +694,367 @@ uniform float uSaturation;      // 0–1, 0=grayscale, 1=full color
 
 ---
 
+## 📍 Current Status Assessment
+
+Before implementing the roadmap, here is an assessment of the existing codebase:
+
+### Existing Modules
+
+| Module | Status | Notes |
+|--------|--------|-------|
+| `DitherShader.ts` | **Partial** | Has basic Bayer dithering, edge detection, weather effects. Missing: `uNoiseDensity`, `uThresholdBias`, `uTemporalJitter`, `uContrast` per-room uniforms. Has `invertColors` for day/night. |
+| `ChunkManager.ts` | **Needs Extension** | Generates procedural chunks with buildings/cables. No `roomType` enum or Mental State Room configuration. |
+| `FlowerProp.ts` | **Needs Extension** | Visual flower with petal/sepal/dust animations. No `setIntensity()` method or intensity control. |
+| `AudioSystem.ts` | **Partial** | Web Audio API with footsteps, ambient drone, cable pulse, eye blink, day/night sounds. Missing: low-pass filter for Gaze, per-room audio layers, binaural beats. |
+| `Controls.ts` | **Needs Extension** | Basic FPS controls (WASD + mouse look). No Gaze detection (pitch > 45°), no Override key handling. |
+| `SkyEye.ts` | **Exists** | Sky Eye visual exists. Needs integration with Gaze mechanic. |
+| `RunStats` | **Not Started** | No runtime metrics collection infrastructure. |
+| `StateSnapshot` | **Not Started** | No end-of-run summary generation. |
+
+### Required New Modules
+
+- `RunStatsCollector.ts` - Runtime behavior sampling
+- `StateSnapshotGenerator.ts` - Tag generation and pattern rendering
+- `RoomConfig.ts` - Per-room shader/audio configuration
+- `GazeMechanic.ts` - Gaze detection and response system
+
+---
+
+## 🎓 Player Discovery Design
+
+Mechanics must be discoverable without explicit tutorials. The following environmental hints guide player learning:
+
+### 1. Flower Intensity Discovery
+
+**Environmental Hint:**
+- On first load, the flower pulses gently between 0.3–0.5 intensity for 10 seconds
+- A subtle audio cue (rising tone) plays when intensity increases
+- The world's dithering density visibly responds to flower brightness
+
+**Control Mapping:**
+```typescript
+// Scroll wheel controls flower intensity
+window.addEventListener('wheel', (e) => {
+  const delta = -Math.sign(e.deltaY) * 0.1;
+  flower.setIntensity(flower.intensity + delta);
+});
+```
+
+**Fallback:** After 60 seconds without interaction, a minimal text prompt appears: `[scroll]`
+
+### 2. Gaze Mechanic Discovery
+
+**Environmental Hint:**
+- The Sky Eye is positioned at the horizon on first spawn, impossible to ignore
+- When the player naturally looks around, crossing the 45° pitch threshold triggers immediate visual/audio feedback
+- The feedback is dramatic enough to be noticed but not punishing
+
+**Visual Cue:**
+- A thin white line appears at the 45° pitch angle on screen edges (like a horizon marker)
+- This line pulses briefly when the player first crosses the threshold
+
+### 3. Override Key Discovery
+
+**Environmental Hint:**
+- In the POLARIZED room, the Override prompt appears only after:
+  1. Player has gazed at the Eye for > 5 cumulative seconds
+  2. Player's flower intensity has been forced low (< 0.2) at least twice
+- The prompt is diegetic: a flickering text appears on a nearby building surface: `[HOLD TO RESIST]`
+
+**Timing:**
+- First playthrough: prompt appears after conditions met
+- Subsequent runs: prompt timing randomizes (30s–120s) to maintain surprise
+
+### 4. Room Transition Awareness
+
+**Environmental Hint:**
+- Room boundaries are marked by subtle visual changes:
+  - INFO_OVERFLOW: Distant buildings begin flickering before entry
+  - FORCED_ALIGNMENT: The crack becomes visible 20m before reaching it
+  - IN_BETWEEN: Z-fighting artifacts appear at boundary edges
+  - POLARIZED: Dithering abruptly disappears at entry
+
+**Audio Cue:**
+- A 0.5s crossfade between room audio signatures
+- The transition is smooth but perceptible
+
+---
+
+## 🔊 Audio System Technical Specification
+
+The audio system uses the Web Audio API with the following architecture:
+
+### Audio Graph Structure
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      AudioContext                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─────────────┐    ┌─────────────┐    ┌──────────────┐    │
+│  │ Ambient     │    │ Room Layer  │    │ Event Layer  │    │
+│  │ Drone       │    │ (per-room)  │    │ (one-shots)  │    │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬───────┘    │
+│         │                  │                  │             │
+│         ▼                  ▼                  ▼             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │                    MasterGain                        │   │
+│  └───────────────────────────┬─────────────────────────┘   │
+│                              │                              │
+│                              ▼                              │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              GazeLowPassFilter                       │   │
+│  │         (BiquadFilter, dynamically controlled)       │   │
+│  └───────────────────────────┬─────────────────────────┘   │
+│                              │                              │
+│                              ▼                              │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │                    Destination                       │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Gaze Low-Pass Filter Implementation
+
+```typescript
+class GazeAudioController {
+  private lowPassFilter: BiquadFilterNode;
+  private targetFrequency: number = 20000; // Full range when not gazing
+  private currentFrequency: number = 20000;
+
+  constructor(audioContext: AudioContext) {
+    this.lowPassFilter = audioContext.createBiquadFilter();
+    this.lowPassFilter.type = 'lowpass';
+    this.lowPassFilter.frequency.value = 20000;
+    this.lowPassFilter.Q.value = 0.7;
+  }
+
+  /**
+   * Update filter based on gaze state
+   * @param isGazing - Whether player is looking at Sky Eye
+   * @param gazeIntensity - 0–1, how directly player is looking (based on pitch)
+   */
+  updateGaze(isGazing: boolean, gazeIntensity: number): void {
+    // Target: 20000Hz (open) → 400Hz (fully gazing)
+    this.targetFrequency = isGazing
+      ? 400 + (1 - gazeIntensity) * 19600
+      : 20000;
+  }
+
+  /**
+   * Smooth interpolation (call in animation loop)
+   */
+  tick(deltaTime: number): void {
+    const lerpSpeed = 3.0; // Transition speed
+    this.currentFrequency += (this.targetFrequency - this.currentFrequency) * lerpSpeed * deltaTime;
+    this.lowPassFilter.frequency.setValueAtTime(
+      this.currentFrequency,
+      this.lowPassFilter.context.currentTime
+    );
+  }
+}
+```
+
+### Per-Room Audio Configuration
+
+```typescript
+interface RoomAudioConfig {
+  baseFrequency: number;      // Ambient drone base frequency (Hz)
+  harmonic: 'consonant' | 'dissonant' | 'binaural';
+  noiseLayer: boolean;        // Whether to add high-frequency noise
+  noiseGain: number;          // 0–1
+  beatFrequency?: number;     // For binaural beats (Hz difference L/R)
+}
+
+const ROOM_AUDIO_CONFIGS: Record<string, RoomAudioConfig> = {
+  INFO_OVERFLOW: {
+    baseFrequency: 60,
+    harmonic: 'dissonant',
+    noiseLayer: true,
+    noiseGain: 0.15,
+  },
+  FORCED_ALIGNMENT: {
+    baseFrequency: 55,
+    harmonic: 'binaural',
+    noiseLayer: false,
+    noiseGain: 0,
+    beatFrequency: 20, // 20Hz binaural beat
+  },
+  IN_BETWEEN: {
+    baseFrequency: 50,
+    harmonic: 'dissonant',
+    noiseLayer: true,
+    noiseGain: 0.08,
+  },
+  POLARIZED: {
+    baseFrequency: 40,
+    harmonic: 'consonant', // Ironically "clean" sound for oppressive room
+    noiseLayer: false,
+    noiseGain: 0,
+  },
+};
+```
+
+### Binaural Beat Implementation (FORCED_ALIGNMENT)
+
+```typescript
+class BinauralBeatGenerator {
+  private leftOsc: OscillatorNode;
+  private rightOsc: OscillatorNode;
+  private merger: ChannelMergerNode;
+
+  constructor(audioContext: AudioContext, baseFreq: number, beatFreq: number) {
+    // Create stereo merger
+    this.merger = audioContext.createChannelMerger(2);
+
+    // Left ear oscillator
+    this.leftOsc = audioContext.createOscillator();
+    this.leftOsc.type = 'sine';
+    this.leftOsc.frequency.value = baseFreq;
+
+    // Right ear oscillator (detuned)
+    this.rightOsc = audioContext.createOscillator();
+    this.rightOsc.type = 'sine';
+    this.rightOsc.frequency.value = baseFreq + beatFreq;
+
+    // Route to separate channels
+    const leftGain = audioContext.createGain();
+    const rightGain = audioContext.createGain();
+    leftGain.gain.value = 0.1;
+    rightGain.gain.value = 0.1;
+
+    this.leftOsc.connect(leftGain);
+    this.rightOsc.connect(rightGain);
+    leftGain.connect(this.merger, 0, 0);  // Left channel
+    rightGain.connect(this.merger, 0, 1); // Right channel
+  }
+
+  /**
+   * Adjust beat intensity based on player X position (crack proximity)
+   * @param xPosition - Player X coordinate
+   * @param crackWidth - Width of neutral zone
+   */
+  updatePosition(xPosition: number, crackWidth: number): void {
+    const distanceFromCrack = Math.abs(xPosition);
+    const intensity = Math.max(0, 1 - distanceFromCrack / crackWidth);
+
+    // Closer to crack = stronger binaural effect
+    const leftGain = this.leftOsc.context.createGain();
+    // ... adjust gains based on intensity
+  }
+
+  connect(destination: AudioNode): void {
+    this.merger.connect(destination);
+  }
+
+  start(): void {
+    this.leftOsc.start();
+    this.rightOsc.start();
+  }
+
+  stop(): void {
+    this.leftOsc.stop();
+    this.rightOsc.stop();
+  }
+}
+```
+
+### Override Sound Effect
+
+```typescript
+/**
+ * Plays the "tear" sound when Override is activated
+ * White noise burst with dramatic envelope
+ */
+function playOverrideTear(audioContext: AudioContext, masterGain: GainNode): void {
+  const now = audioContext.currentTime;
+
+  // White noise buffer
+  const bufferSize = audioContext.sampleRate * 0.3;
+  const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  const noise = audioContext.createBufferSource();
+  noise.buffer = buffer;
+
+  // Bandpass filter for "digital tear" character
+  const filter = audioContext.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 2000;
+  filter.Q.value = 1.5;
+
+  // Dramatic envelope
+  const gain = audioContext.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.4, now + 0.01); // Sharp attack
+  gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25); // Quick decay
+
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(masterGain);
+
+  noise.start(now);
+  noise.stop(now + 0.3);
+}
+```
+
+---
+
+## ♿ Accessibility Considerations
+
+### Visual Accessibility
+
+| Concern | Mitigation |
+|---------|------------|
+| Photosensitive epilepsy | Add `reducedMotion` setting: disables temporal jitter, slows glitch effects to < 3Hz, removes Override flash |
+| High contrast issues | The 1-bit aesthetic is inherently high-contrast; no mitigation needed |
+| Motion sickness | Add `reducedMotion` setting: reduces head bob, slows room transitions |
+
+**Implementation:**
+
+```typescript
+interface AccessibilitySettings {
+  reducedMotion: boolean;
+  audioDescriptions: boolean; // Future: narrate room transitions
+  disableFlashing: boolean;
+}
+
+// In DitherShader, respect reducedMotion:
+if (settings.reducedMotion) {
+  uniforms.uTemporalJitter.value = 0;
+  uniforms.uGlitchSpeed.value = Math.min(uniforms.uGlitchSpeed.value, 2.0);
+}
+
+// Override visual: skip color invert flash
+if (settings.disableFlashing) {
+  // Skip the 0.1s "break" effect, go directly to intensity boost
+}
+```
+
+### Audio Accessibility
+
+| Concern | Mitigation |
+|---------|------------|
+| Hearing impairment | All audio cues have visual counterparts (Gaze = contrast change, Override = screen flash) |
+| Binaural beats discomfort | Add `disableBinauralBeats` setting: replaces with mono panning effect |
+| Volume sensitivity | Separate volume sliders: Master, Ambient, Events |
+
+### Control Accessibility
+
+| Concern | Mitigation |
+|---------|------------|
+| Limited mobility | Configurable key bindings; mouse-only mode (auto-walk toggle) |
+| Override hold duration | Adjustable hold time (default 1s, range 0.3s–3s) |
+
+---
+
 ## 🛠 Technical Roadmap
 
 ### Phase 1: The Foundation (Shader & State)
-
-**Duration**: 2–3 weeks
 
 **Objectives:**
 
@@ -724,8 +1080,6 @@ uniform float uSaturation;      // 0–1, 0=grayscale, 1=full color
 
 ### Phase 2: The Discipline (Mechanic)
 
-**Duration**: 2–3 weeks
-
 **Objectives:**
 
 - Implement the Gaze mechanic: automatic intensity reduction when gazing at Sky Eye.
@@ -748,4 +1102,7 @@ uniform float uSaturation;      // 0–1, 0=grayscale, 1=full color
 
 ---
 
-*Document Version: 1.0 (English)*
+*Document Version: 1.1 (English)*
+
+**Changelog:**
+- v1.1: Added Current Status Assessment, Player Discovery Design, Audio System Technical Specification, Accessibility Considerations. Removed time estimates from Technical Roadmap.
