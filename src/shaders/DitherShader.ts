@@ -30,6 +30,7 @@ export const DitherShader: ShaderDefinition = {
         uGlitchAmount: { value: 0.0 },    // 0-1, vertex displacement amplitude
         uGlitchSpeed: { value: 0.0 },     // Hz, glitch animation frequency
         uColorInversion: { value: 0.0 },  // 0-1, for override effect
+        uOverrideProgress: { value: 0.0 }, // 0-1, hold progress feedback
         uTime: { value: 0.0 },            // Global time for animations
         // Flower intensity (affects world response)
         uFlowerIntensity: { value: 0.5 }, // 0-1, player's light intensity
@@ -61,6 +62,7 @@ export const DitherShader: ShaderDefinition = {
         uniform float uGlitchAmount;
         uniform float uGlitchSpeed;
         uniform float uColorInversion;
+        uniform float uOverrideProgress;
         uniform float uTime;
         uniform float uFlowerIntensity;
         varying vec2 vUv;
@@ -232,6 +234,16 @@ export const DitherShader: ShaderDefinition = {
             // Day/night inversion
             if (invertColors) {
                 finalColor = vec3(1.0) - finalColor;
+            }
+
+            // Override progress feedback (edge pulse while holding)
+            if (uOverrideProgress > 0.0 && uOverrideProgress < 1.0) {
+                vec2 centered = vUv - 0.5;
+                float edgeDist = max(abs(centered.x), abs(centered.y));
+                float pulse = sin(uTime * 8.0) * 0.5 + 0.5;
+                float edgePulse = smoothstep(0.4, 0.5, edgeDist) * uOverrideProgress;
+                edgePulse *= pulse * 0.5 + 0.5;
+                finalColor = mix(finalColor, vec3(1.0) - finalColor, edgePulse * 0.6);
             }
 
             // Override color inversion effect (for resistance mechanic)

@@ -82,10 +82,10 @@ export class GazeMechanic {
      */
     update(delta: number): GazeState {
         // Get camera pitch (rotation.x in YXZ order)
-        // Negative pitch = looking up, positive = looking down
-        const pitch = -this.camera.rotation.x;
+        // Positive pitch = looking up, negative = looking down
+        const pitch = this.camera.rotation.x;
 
-        // Check if looking above threshold
+        // Check if looking above threshold (positive pitch = looking up)
         const isGazing = pitch > this.config.pitchThreshold;
 
         // Calculate intensity (0 at threshold, 1 at max pitch)
@@ -143,7 +143,7 @@ export class GazeMechanic {
      * Get current pitch angle
      */
     getPitch(): number {
-        return -this.camera.rotation.x;
+        return this.camera.rotation.x;
     }
 
     /**

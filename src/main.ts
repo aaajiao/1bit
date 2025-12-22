@@ -130,6 +130,7 @@ class ChimeraVoid {
                     uGlitchAmount: { value: 0.0 },
                     uGlitchSpeed: { value: 0.0 },
                     uColorInversion: { value: 0.0 },
+                    uOverrideProgress: { value: 0.0 },
                     uTime: { value: 0.0 },
                     uFlowerIntensity: { value: 0.5 },
                 },
@@ -362,6 +363,10 @@ class ChimeraVoid {
         this.shaderQuad.material.uniforms.uColorInversion.value =
             this.overrideMechanic.getColorInversionValue();
 
+        // Override hold progress (for visual feedback while holding)
+        this.shaderQuad.material.uniforms.uOverrideProgress.value =
+            this.overrideMechanic.getHoldProgress();
+
         // Update hands
         this.handsModel.animate(delta, isMoving, time);
 
@@ -382,10 +387,14 @@ class ChimeraVoid {
             this.scannerLight.target.updateMatrixWorld();
         }
 
-        // Update coordinates display with room type
+        // Update coordinates display with room type and debug info
         const coordsEl = document.getElementById('coords');
         if (coordsEl) {
-            coordsEl.innerText = `POS: ${pos.x}, ${pos.z} | ${currentRoomType}`;
+            const pitchDeg = Math.round(this.gazeMechanic.getPitch() * 180 / Math.PI);
+            const shiftKey = this.controls.isOverrideKeyHeld() ? '⬆️SHIFT' : '';
+            const gazing = gazeState.isGazing ? '👁️GAZE' : '';
+            const progress = overrideState.isActive ? `[${Math.round(this.overrideMechanic.getHoldProgress() * 100)}%]` : '';
+            coordsEl.innerText = `POS: ${pos.x}, ${pos.z} | ${currentRoomType} | ↑${pitchDeg}° ${shiftKey} ${gazing} ${progress}`;
         }
 
         // Render
