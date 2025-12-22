@@ -3,10 +3,9 @@ import * as THREE from 'three';
 
 /**
  * Creates a procedural grid texture for the floor
- * @param {number} size - Texture size in pixels
- * @returns {THREE.MeshLambertMaterial}
+ * @param size - Texture size in pixels
  */
-export function createFloorMaterial(size = 64) {
+export function createFloorMaterial(size: number = 64): THREE.MeshLambertMaterial {
     // Use RGBA format since RGBFormat was removed in Three.js r152+
     const data = new Uint8Array(size * size * 4);
 
@@ -37,11 +36,10 @@ export function createFloorMaterial(size = 64) {
 
 /**
  * Creates a floor plane mesh
- * @param {number} chunkSize - Size of the chunk
- * @param {THREE.Material} material - Floor material
- * @returns {THREE.Mesh}
+ * @param chunkSize - Size of the chunk
+ * @param material - Floor material
  */
-export function createFloorMesh(chunkSize, material) {
+export function createFloorMesh(chunkSize: number, material: THREE.Material): THREE.Mesh {
     const floor = new THREE.Mesh(
         new THREE.PlaneGeometry(chunkSize, chunkSize),
         material

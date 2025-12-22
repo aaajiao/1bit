@@ -1,50 +1,55 @@
 // 1-bit Chimera Void - Main Entry Point
 import * as THREE from 'three';
-import { DitherShader } from './shaders/DitherShader.js';
-import { ChunkManager, CHUNK_SIZE } from './world/ChunkManager.js';
-import { updateCableTime } from './world/CableSystem.js';
-import { Controls } from './player/Controls.js';
-import { HandsModel } from './player/HandsModel.js';
-import { AudioSystem } from './audio/AudioSystem.js';
-import { WeatherSystem } from './world/WeatherSystem.js';
-import { DayNightCycle } from './world/DayNightCycle.js';
-import { SkyEye } from './world/SkyEye.js';
+import { DitherShader } from './shaders/DitherShader';
+import { ChunkManager, CHUNK_SIZE } from './world/ChunkManager';
+import { updateCableTime } from './world/CableSystem';
+import { Controls } from './player/Controls';
+import { HandsModel } from './player/HandsModel';
+import { AudioSystem } from './audio/AudioSystem';
+import { WeatherSystem } from './world/WeatherSystem';
+import { DayNightCycle } from './world/DayNightCycle';
+import { SkyEye } from './world/SkyEye';
+import type { AppConfig, DayNightContext } from './types';
+
+// Extend Window interface for app reference
+declare global {
+    interface Window {
+        app: ChimeraVoid;
+    }
+}
 
 /**
  * Main application class
  */
 class ChimeraVoid {
+    private camera: THREE.PerspectiveCamera;
+    private scene: THREE.Scene;
+    private renderer: THREE.WebGLRenderer;
+    private composerScene: THREE.Scene;
+    private composerCamera: THREE.OrthographicCamera;
+    private renderTarget: THREE.WebGLRenderTarget;
+    private chunkManager: ChunkManager;
+    private controls: Controls;
+    private handsModel: HandsModel;
+    private scannerLight: THREE.SpotLight;
+    private skyEye: SkyEye;
+    private audio: AudioSystem;
+    private weather: WeatherSystem;
+    private dayNight: DayNightCycle;
+    private prevTime: number = performance.now();
+    private shaderQuad: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
+
+    private config: AppConfig = {
+        renderScale: 0.5,
+        fogNear: 20,
+        fogFar: 110,
+    };
+
     constructor() {
-        this.camera = null;
-        this.scene = null;
-        this.renderer = null;
-        this.composerScene = null;
-        this.composerCamera = null;
-        this.renderTarget = null;
-        this.chunkManager = null;
-        this.controls = null;
-        this.handsModel = null;
-        this.scannerLight = null;
-        this.skyEye = null;
-        this.audio = null;
-        this.weather = null;
-        this.dayNight = null;
-        this.prevTime = performance.now();
-
-        this.config = {
-            renderScale: 0.5,
-            fogNear: 20,
-            fogFar: 110,
-        };
-
-        this.init();
-    }
-
-    /**
-     * Initialize the application
-     */
-    init() {
         const container = document.getElementById('canvas-container');
+        if (!container) {
+            throw new Error('Canvas container not found');
+        }
 
         // Scene
         this.scene = new THREE.Scene();
@@ -86,7 +91,7 @@ class ChimeraVoid {
         // Post-processing quad
         this.composerScene = new THREE.Scene();
         this.composerCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-        const quad = new THREE.Mesh(
+        this.shaderQuad = new THREE.Mesh(
             new THREE.PlaneGeometry(2, 2),
             new THREE.ShaderMaterial({
                 uniforms: {
@@ -111,7 +116,7 @@ class ChimeraVoid {
                 fragmentShader: DitherShader.fragmentShader,
             })
         );
-        this.composerScene.add(quad);
+        this.composerScene.add(this.shaderQuad);
 
         // Lighting (intensity increased to compensate for r155+ decay changes)
         const hemiLight = new THREE.HemisphereLight(0xffffff, 0x111111, 1.2);
@@ -161,7 +166,7 @@ class ChimeraVoid {
     /**
      * Setup window resize handler
      */
-    setupWindowEvents() {
+    private setupWindowEvents(): void {
         window.addEventListener('resize', () => {
             this.camera.aspect = window.innerWidth / window.innerHeight;
             this.camera.updateProjectionMatrix();
@@ -172,7 +177,7 @@ class ChimeraVoid {
                 window.innerWidth * s,
                 window.innerHeight * s
             );
-            this.composerScene.children[0].material.uniforms.resolution.value.set(
+            (this.shaderQuad.material.uniforms.resolution.value as THREE.Vector2).set(
                 window.innerWidth * s,
                 window.innerHeight * s
             );
@@ -182,7 +187,7 @@ class ChimeraVoid {
     /**
      * Main animation loop
      */
-    animate() {
+    private animate(): void {
         requestAnimationFrame(() => this.animate());
 
         const time = performance.now();
@@ -207,19 +212,19 @@ class ChimeraVoid {
         }
 
         // Day/night cycle
-        const shaderQuad = this.composerScene.children[0];
-        this.dayNight.update(t, {
+        const dayNightContext: DayNightContext = {
             scene: this.scene,
-            shaderQuad: shaderQuad,
+            shaderQuad: this.shaderQuad,
             audio: this.audio,
             weather: this.weather,
-        });
+        };
+        this.dayNight.update(t, dayNightContext);
 
         // Weather system
         const weatherState = this.weather.update(delta, t);
-        shaderQuad.material.uniforms.weatherType.value = weatherState.weatherType;
-        shaderQuad.material.uniforms.weatherIntensity.value = weatherState.weatherIntensity;
-        shaderQuad.material.uniforms.weatherTime.value = weatherState.weatherTime;
+        this.shaderQuad.material.uniforms.weatherType.value = weatherState.weatherType;
+        this.shaderQuad.material.uniforms.weatherIntensity.value = weatherState.weatherIntensity;
+        this.shaderQuad.material.uniforms.weatherTime.value = weatherState.weatherTime;
 
         // Update hands
         this.handsModel.animate(delta, isMoving, time);
@@ -243,7 +248,10 @@ class ChimeraVoid {
 
         // Update coordinates display
         const pos = this.controls.getPosition();
-        document.getElementById('coords').innerText = `POS: ${pos.x}, ${pos.z}`;
+        const coordsEl = document.getElementById('coords');
+        if (coordsEl) {
+            coordsEl.innerText = `POS: ${pos.x}, ${pos.z}`;
+        }
 
         // Render
         this.renderer.setRenderTarget(this.renderTarget);
@@ -256,3 +264,5 @@ class ChimeraVoid {
 // Start application
 window.app = new ChimeraVoid();
 
+// Export CHUNK_SIZE for potential external use
+export { CHUNK_SIZE };

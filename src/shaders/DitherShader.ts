@@ -1,5 +1,6 @@
 // 1-bit Chimera Void - Dither Shader
 import * as THREE from 'three';
+import type { ShaderDefinition } from '../types';
 
 /**
  * 1-BIT BAYER DITHER POST-PROCESSING SHADER (Enhanced)
@@ -8,7 +9,7 @@ import * as THREE from 'three';
  * - Multi-scale dithering (8x8 near, 2x2 far)
  * - Depth-aware dither transitions
  */
-export const DitherShader = {
+export const DitherShader: ShaderDefinition = {
     uniforms: {
         tDiffuse: { value: null },
         resolution: { value: new THREE.Vector2() },
@@ -44,7 +45,7 @@ export const DitherShader = {
         varying vec2 vUv;
 
         // ===== BAYER MATRICES =====
-        
+
         // Original 4x4 Bayer matrix
         float bayer4x4(vec2 uv) {
             int x = int(mod(uv.x, 4.0));
@@ -60,7 +61,7 @@ export const DitherShader = {
         float bayer8x8(vec2 uv) {
             int x = int(mod(uv.x, 8.0));
             int y = int(mod(uv.y, 8.0));
-            
+
             // 8x8 Bayer matrix (normalized to 0-1)
             if (x==0){ if(y==0)return 0.015625; if(y==1)return 0.515625; if(y==2)return 0.140625; if(y==3)return 0.640625; if(y==4)return 0.046875; if(y==5)return 0.546875; if(y==6)return 0.171875; if(y==7)return 0.671875; }
             if (x==1){ if(y==0)return 0.765625; if(y==1)return 0.265625; if(y==2)return 0.890625; if(y==3)return 0.390625; if(y==4)return 0.796875; if(y==5)return 0.296875; if(y==6)return 0.921875; if(y==7)return 0.421875; }
@@ -83,7 +84,7 @@ export const DitherShader = {
         }
 
         // ===== EDGE DETECTION =====
-        
+
         // Luminance helper
         float getLuminance(vec3 color) {
             return dot(color, vec3(0.299, 0.587, 0.114));
@@ -92,33 +93,33 @@ export const DitherShader = {
         // Sobel edge detection
         float sobelEdge(sampler2D tex, vec2 uv, vec2 res) {
             vec2 texel = 1.0 / res;
-            
+
             // Sample 3x3 neighborhood
             float tl = getLuminance(texture2D(tex, uv + vec2(-texel.x, -texel.y)).rgb);
             float tm = getLuminance(texture2D(tex, uv + vec2(0.0, -texel.y)).rgb);
             float tr = getLuminance(texture2D(tex, uv + vec2(texel.x, -texel.y)).rgb);
-            
+
             float ml = getLuminance(texture2D(tex, uv + vec2(-texel.x, 0.0)).rgb);
             float mr = getLuminance(texture2D(tex, uv + vec2(texel.x, 0.0)).rgb);
-            
+
             float bl = getLuminance(texture2D(tex, uv + vec2(-texel.x, texel.y)).rgb);
             float bm = getLuminance(texture2D(tex, uv + vec2(0.0, texel.y)).rgb);
             float br = getLuminance(texture2D(tex, uv + vec2(texel.x, texel.y)).rgb);
-            
+
             // Sobel kernels
             float gx = -tl + tr - 2.0*ml + 2.0*mr - bl + br;
             float gy = -tl - 2.0*tm - tr + bl + 2.0*bm + br;
-            
+
             return length(vec2(gx, gy));
         }
 
         // ===== WEATHER EFFECTS =====
-        
+
         // Static noise (TV snow)
         float staticNoise(vec2 coord, float t) {
             return fract(sin(dot(coord + t, vec2(12.9898, 78.233))) * 43758.5453);
         }
-        
+
         // Digital rain effect
         float digitalRain(vec2 uv, float t) {
             float column = floor(uv.x * 50.0);
@@ -130,7 +131,7 @@ export const DitherShader = {
             float columnMask = step(0.85, fract(sin(column * 234.0) * 567.0));
             return drop * columnMask;
         }
-        
+
         // Glitch effect (horizontal bars + offset)
         float glitchEffect(vec2 uv, float t) {
             float bar = step(0.92, fract(uv.y * 30.0 + t * 100.0));
@@ -139,30 +140,30 @@ export const DitherShader = {
         }
 
         // ===== MAIN SHADER =====
-        
+
         void main() {
             vec4 color = texture2D(tDiffuse, vUv);
             float gray = getLuminance(color.rgb);
-            
+
             // Gamma correction and brightness boost
             gray = pow(gray, 0.8) * 2.0;
-            
+
             // Edge detection
             float edge = 0.0;
             if (enableOutline) {
                 edge = sobelEdge(tDiffuse, vUv, resolution);
             }
-            
+
             // Dithering threshold
             vec2 pixelCoord = gl_FragCoord.xy;
             float threshold;
-            
+
             if (enableDepthDither) {
                 // Depth-aware dithering (requires depth buffer - currently disabled)
                 // For now, use distance from center as pseudo-depth
                 float pseudoDepth = length(vUv - 0.5) * 2.0;
                 pseudoDepth = smoothstep(0.0, 1.0, pseudoDepth);
-                
+
                 // Mix fine (8x8) and coarse (2x2) dithering based on depth
                 float fineThreshold = bayer8x8(pixelCoord);
                 float coarseThreshold = bayer2x2(pixelCoord);
@@ -171,24 +172,24 @@ export const DitherShader = {
                 // Standard 4x4 Bayer
                 threshold = bayer4x4(pixelCoord);
             }
-            
+
             // Dither to black/white
             vec3 finalColor = (gray < threshold) ? vec3(0.0) : vec3(1.0);
-            
+
             // Apply edge as black outline
             if (enableOutline && edge > outlineStrength) {
                 finalColor = vec3(0.0);
             }
-            
+
             // Day/night inversion
             if (invertColors) {
                 finalColor = vec3(1.0) - finalColor;
             }
-            
+
             // Weather effects
             if (weatherType > 0 && weatherIntensity > 0.0) {
                 vec2 pixelUV = gl_FragCoord.xy / resolution;
-                
+
                 if (weatherType == 1) {
                     // Static snow
                     float noise = staticNoise(gl_FragCoord.xy * 0.15, weatherTime * 15.0);
@@ -209,7 +210,7 @@ export const DitherShader = {
                     }
                 }
             }
-            
+
             gl_FragColor = vec4(finalColor, 1.0);
         }
     `,
@@ -219,7 +220,7 @@ export const DitherShader = {
  * Cable pulse shader for animated cables
  * Enhanced with smooth pulses and per-cable random timing
  */
-export const CableShader = {
+export const CableShader: ShaderDefinition = {
     uniforms: {
         time: { value: 0 },
         color: { value: new THREE.Color(0x000000) },
@@ -243,24 +244,24 @@ export const CableShader = {
         uniform vec3 pulseColor;
         varying float vLineDistance;
         varying float vRandomSeed;
-        
+
         void main() {
             // Random parameters derived from seed (reduced ranges for subtler effect)
             float speedMult = 0.4 + vRandomSeed * 0.6;        // Speed: 0.4x to 1.0x
             float freqMult = 0.03 + vRandomSeed * 0.04;       // Frequency variation
             float phaseOffset = vRandomSeed * 6.28318;         // Random phase 0 to 2π
-            
+
             // Multi-layered pulse for organic feel
             float wave1 = fract(vLineDistance * freqMult - time * speedMult + phaseOffset);
             float wave2 = fract(vLineDistance * freqMult * 0.5 - time * speedMult * 0.7 + phaseOffset * 0.5);
-            
+
             // Smooth pulse with gradual fade (instead of harsh step)
             float pulse1 = smoothstep(0.7, 0.85, wave1) * smoothstep(1.0, 0.9, wave1);
             float pulse2 = smoothstep(0.75, 0.88, wave2) * smoothstep(1.0, 0.92, wave2) * 0.6;
-            
+
             // Combine pulses
             float pulse = clamp(pulse1 + pulse2, 0.0, 1.0);
-            
+
             vec3 finalColor = mix(color, pulseColor, pulse);
             gl_FragColor = vec4(finalColor, 1.0);
         }

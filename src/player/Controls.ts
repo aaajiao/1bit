@@ -1,56 +1,73 @@
 // 1-bit Chimera Void - Player Controls
 import * as THREE from 'three';
+import type { ControlsConfig, PlayerPosition } from '../types';
 
 /**
  * First-person keyboard + mouse controls
  */
 export class Controls {
-    constructor(camera, domElement) {
+    private camera: THREE.PerspectiveCamera;
+    private domElement: HTMLElement;
+
+    // Movement state
+    private moveForward: boolean = false;
+    private moveBackward: boolean = false;
+    private moveLeft: boolean = false;
+    private moveRight: boolean = false;
+    public canJump: boolean = false;
+
+    // Physics
+    private velocity: THREE.Vector3 = new THREE.Vector3();
+    private direction: THREE.Vector3 = new THREE.Vector3();
+    private prevTime: number = performance.now();
+
+    // Configuration
+    private config: ControlsConfig = {
+        speed: 60.0,
+        jumpForce: 15,
+        gravity: 9.8 * 3.0,
+        friction: 10.0,
+        groundHeight: 2.0,
+        bobSpeed: 0.012,
+        bobAmount: 0.15,
+        mouseSensitivity: 0.002,
+    };
+
+    private isLocked: boolean = false;
+
+    // Bound event handlers for cleanup
+    private boundOnKeyDown: (e: KeyboardEvent) => void;
+    private boundOnKeyUp: (e: KeyboardEvent) => void;
+    private boundOnMouseMove: (e: MouseEvent) => void;
+    private boundOnClick: () => void;
+    private boundOnPointerLockChange: () => void;
+
+    constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
         this.camera = camera;
         this.domElement = domElement;
 
-        // Movement state
-        this.moveForward = false;
-        this.moveBackward = false;
-        this.moveLeft = false;
-        this.moveRight = false;
-        this.canJump = false;
+        // Bind handlers
+        this.boundOnKeyDown = this.onKeyDown.bind(this);
+        this.boundOnKeyUp = this.onKeyUp.bind(this);
+        this.boundOnMouseMove = this.onMouseMove.bind(this);
+        this.boundOnClick = this.onClick.bind(this);
+        this.boundOnPointerLockChange = this.onPointerLockChange.bind(this);
 
-        // Physics
-        this.velocity = new THREE.Vector3();
-        this.direction = new THREE.Vector3();
-        this.prevTime = performance.now();
-
-        // Configuration
-        this.config = {
-            speed: 60.0,
-            jumpForce: 15,
-            gravity: 9.8 * 3.0,
-            friction: 10.0,
-            groundHeight: 2.0,
-            bobSpeed: 0.012,
-            bobAmount: 0.15,
-            mouseSensitivity: 0.002,
-        };
-
-        this.isLocked = false;
-
-        this._bindEvents();
+        this.bindEvents();
     }
 
     /**
      * Bind keyboard and mouse events
-     * @private
      */
-    _bindEvents() {
-        document.addEventListener('keydown', this._onKeyDown.bind(this));
-        document.addEventListener('keyup', this._onKeyUp.bind(this));
-        document.addEventListener('mousemove', this._onMouseMove.bind(this));
-        document.addEventListener('click', this._onClick.bind(this));
-        document.addEventListener('pointerlockchange', this._onPointerLockChange.bind(this));
+    private bindEvents(): void {
+        document.addEventListener('keydown', this.boundOnKeyDown);
+        document.addEventListener('keyup', this.boundOnKeyUp);
+        document.addEventListener('mousemove', this.boundOnMouseMove);
+        document.addEventListener('click', this.boundOnClick);
+        document.addEventListener('pointerlockchange', this.boundOnPointerLockChange);
     }
 
-    _onKeyDown(e) {
+    private onKeyDown(e: KeyboardEvent): void {
         switch (e.code) {
             case 'KeyW': this.moveForward = true; break;
             case 'KeyA': this.moveLeft = true; break;
@@ -65,7 +82,7 @@ export class Controls {
         }
     }
 
-    _onKeyUp(e) {
+    private onKeyUp(e: KeyboardEvent): void {
         switch (e.code) {
             case 'KeyW': this.moveForward = false; break;
             case 'KeyA': this.moveLeft = false; break;
@@ -74,7 +91,7 @@ export class Controls {
         }
     }
 
-    _onMouseMove(e) {
+    private onMouseMove(e: MouseEvent): void {
         if (!this.isLocked) return;
 
         this.camera.rotation.y -= e.movementX * this.config.mouseSensitivity;
@@ -85,11 +102,11 @@ export class Controls {
         );
     }
 
-    _onClick() {
+    private onClick(): void {
         this.domElement.requestPointerLock();
     }
 
-    _onPointerLockChange() {
+    private onPointerLockChange(): void {
         this.isLocked = document.pointerLockElement === this.domElement;
 
         // Toggle UI
@@ -101,10 +118,10 @@ export class Controls {
 
     /**
      * Update controls and apply movement
-     * @param {number} time - Current time in ms
-     * @returns {boolean} Whether player is moving
+     * @param time - Current time in ms
+     * @returns Whether player is moving
      */
-    update(time) {
+    update(time: number): boolean {
         const delta = (time - this.prevTime) / 1000;
         this.prevTime = time;
 
@@ -150,9 +167,8 @@ export class Controls {
 
     /**
      * Get current position for display
-     * @returns {{x: number, z: number}}
      */
-    getPosition() {
+    getPosition(): PlayerPosition {
         return {
             x: Math.round(this.camera.position.x),
             z: Math.round(this.camera.position.z),
@@ -162,11 +178,11 @@ export class Controls {
     /**
      * Cleanup event listeners
      */
-    dispose() {
-        document.removeEventListener('keydown', this._onKeyDown);
-        document.removeEventListener('keyup', this._onKeyUp);
-        document.removeEventListener('mousemove', this._onMouseMove);
-        document.removeEventListener('click', this._onClick);
-        document.removeEventListener('pointerlockchange', this._onPointerLockChange);
+    dispose(): void {
+        document.removeEventListener('keydown', this.boundOnKeyDown);
+        document.removeEventListener('keyup', this.boundOnKeyUp);
+        document.removeEventListener('mousemove', this.boundOnMouseMove);
+        document.removeEventListener('click', this.boundOnClick);
+        document.removeEventListener('pointerlockchange', this.boundOnPointerLockChange);
     }
 }

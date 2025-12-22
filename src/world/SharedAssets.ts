@@ -1,10 +1,31 @@
 // 1-bit Chimera Void - Shared Assets (Geometries & Materials)
 import * as THREE from 'three';
+import type { SharedAssets as ISharedAssets } from '../types';
 
 /**
  * Shared assets container - initialized once, reused everywhere
  */
-export class SharedAssets {
+export class SharedAssets implements ISharedAssets {
+    // Materials
+    matSolid: THREE.MeshLambertMaterial;
+    matDark: THREE.MeshLambertMaterial;
+    matWire: THREE.MeshBasicMaterial;
+    matPlasma: THREE.MeshLambertMaterial;
+    matTreeBark: THREE.MeshLambertMaterial;
+    matFlowerStem: THREE.MeshLambertMaterial;
+    matFlowerPetal: THREE.MeshPhongMaterial;
+    matFlowerCore: THREE.MeshBasicMaterial;
+    matLiquid: THREE.MeshPhongMaterial;
+
+    // Geometries
+    boxGeo: THREE.BoxGeometry;
+    blobGeo: THREE.IcosahedronGeometry;
+    sphereGeo: THREE.SphereGeometry;
+    knotGeo: THREE.TorusKnotGeometry;
+    coneGeo: THREE.ConeGeometry;
+    tetraGeo: THREE.TetrahedronGeometry;
+    cylinderGeo: THREE.CylinderGeometry;
+
     constructor() {
         // Materials
         this.matSolid = new THREE.MeshLambertMaterial({ color: 0x333333 });
@@ -56,24 +77,24 @@ export class SharedAssets {
     /**
      * Dispose all assets when no longer needed
      */
-    dispose() {
+    dispose(): void {
         // Dispose materials
-        Object.values(this).forEach(value => {
-            if (value && typeof value.dispose === 'function') {
-                value.dispose();
+        const values = Object.values(this) as unknown[];
+        values.forEach(value => {
+            if (value && typeof (value as { dispose?: () => void }).dispose === 'function') {
+                (value as { dispose: () => void }).dispose();
             }
         });
     }
 }
 
 // Singleton instance
-let sharedAssetsInstance = null;
+let sharedAssetsInstance: SharedAssets | null = null;
 
 /**
  * Get or create shared assets instance
- * @returns {SharedAssets}
  */
-export function getSharedAssets() {
+export function getSharedAssets(): SharedAssets {
     if (!sharedAssetsInstance) {
         sharedAssetsInstance = new SharedAssets();
     }

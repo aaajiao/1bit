@@ -1,31 +1,30 @@
 // 1-bit Chimera Void - Day/Night Cycle System
 import * as THREE from 'three';
+import type { DayNightContext } from '../types';
 
 /**
  * Manages day/night cycle with randomization
  */
 export class DayNightCycle {
-    constructor() {
-        this.cycleDuration = 300;     // Current cycle duration (randomized 4-6 min)
-        this.isDay = true;
-        this.nightIntensity = 0.5;    // 0.3-1.0, affects background darkness
-        this.inEclipse = false;
-        this.eclipseEndTime = 0;
-    }
+    private cycleDuration: number = 300;     // Current cycle duration (randomized 4-6 min)
+    private isDay: boolean = true;
+    private nightIntensity: number = 0.5;    // 0.3-1.0, affects background darkness
+    private inEclipse: boolean = false;
+    private eclipseEndTime: number = 0;
 
     /**
      * Update the day/night cycle
-     * @param {number} t - Time in seconds
-     * @param {Object} context - { scene, shaderQuad, audio, weather }
+     * @param t - Time in seconds
+     * @param context - { scene, shaderQuad, audio, weather }
      */
-    update(t, context) {
+    update(t: number, context: DayNightContext): void {
         const halfCycle = this.cycleDuration / 2;
 
         // Check for eclipse end
         if (this.inEclipse && t > this.eclipseEndTime) {
             this.inEclipse = false;
             context.shaderQuad.material.uniforms.invertColors.value = !this.isDay;
-            console.log('Eclipse ended 🌞');
+            console.log('Eclipse ended');
         }
 
         // Random eclipse chance during day (0.05% per frame)
@@ -64,24 +63,24 @@ export class DayNightCycle {
             const nightColor = (nightGray << 16) | (nightGray << 8) | nightGray;
             const bgColor = newIsDay ? dayColor : nightColor;
 
-            context.scene.background.setHex(bgColor);
-            context.scene.fog.color.setHex(bgColor);
+            (context.scene.background as THREE.Color).setHex(bgColor);
+            context.scene.fog!.color.setHex(bgColor);
 
             // Toggle shader inversion (unless in eclipse)
             if (!this.inEclipse) {
                 context.shaderQuad.material.uniforms.invertColors.value = !newIsDay;
             }
 
-            console.log(`Day/Night: ${newIsDay ? 'DAY ☀️' : 'NIGHT 🌙'}`);
+            console.log(`Day/Night: ${newIsDay ? 'DAY' : 'NIGHT'}`);
         }
     }
 
     /**
      * Trigger a rare solar eclipse event
-     * @param {number} t - Current time
-     * @param {Object} context - { shaderQuad, weather, audio }
+     * @param t - Current time
+     * @param context - { shaderQuad, weather, audio }
      */
-    triggerSolarEclipse(t, context) {
+    private triggerSolarEclipse(t: number, context: DayNightContext): void {
         const duration = 10 + Math.random() * 20; // 10-30 seconds
         this.inEclipse = true;
         this.eclipseEndTime = t + duration;
@@ -90,6 +89,6 @@ export class DayNightCycle {
         context.weather.forceWeather('glitch', 0.5);
         context.audio.playEyeBlink();
 
-        console.log(`☀️🌑 SOLAR ECLIPSE for ${Math.round(duration)}s!`);
+        console.log(`SOLAR ECLIPSE for ${Math.round(duration)}s!`);
     }
 }

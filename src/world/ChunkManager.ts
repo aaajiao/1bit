@@ -1,11 +1,19 @@
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
-import { hash } from '../utils/hash.js';
-import { getSharedAssets } from './SharedAssets.js';
-import { createFloorMaterial, createFloorMesh } from './FloorTile.js';
-import { createBlocksBuilding, createSpikesBuilding, createFluidBuilding } from './BuildingFactory.js';
-import { createTree } from './FloraFactory.js';
-import { createDynamicCable, updateCableGeometry } from './CableSystem.js';
+import { hash } from '../utils/hash';
+import { getSharedAssets, SharedAssets } from './SharedAssets';
+import { createFloorMaterial, createFloorMesh } from './FloorTile';
+import { createBlocksBuilding, createSpikesBuilding, createFluidBuilding } from './BuildingFactory';
+import { createTree } from './FloraFactory';
+import { createDynamicCable, updateCableGeometry } from './CableSystem';
+import type {
+    Chunk,
+    ChunkUserData,
+    CableNode,
+    DynamicCable,
+    AnimatedObject,
+    BuildingUserData,
+} from '../types';
 
 // Configuration
 export const CHUNK_SIZE = 80;
@@ -15,10 +23,12 @@ export const RENDER_DISTANCE = 2;
  * Manages chunk lifecycle and procedural generation
  */
 export class ChunkManager {
-    constructor(scene) {
-        this.scene = scene;
-        this.activeChunks = {};
-        this.chunkGroup = new THREE.Group();
+    private activeChunks: Record<string, Chunk> = {};
+    private chunkGroup: THREE.Group = new THREE.Group();
+    private floorMaterial: THREE.MeshLambertMaterial;
+    private assets: SharedAssets;
+
+    constructor(scene: THREE.Scene) {
         this.floorMaterial = createFloorMaterial();
         this.assets = getSharedAssets();
 
@@ -27,12 +37,11 @@ export class ChunkManager {
 
     /**
      * Update chunks based on camera position
-     * @param {THREE.Camera} camera
      */
-    update(camera) {
+    update(camera: THREE.Camera): void {
         const cx = Math.floor(camera.position.x / CHUNK_SIZE);
         const cz = Math.floor(camera.position.z / CHUNK_SIZE);
-        const activeKeys = new Set();
+        const activeKeys = new Set<string>();
 
         // Create new chunks within render distance
         for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
@@ -55,17 +64,15 @@ export class ChunkManager {
 
     /**
      * Create a new chunk at grid position
-     * @param {number} cx - Chunk X coordinate
-     * @param {number} cz - Chunk Z coordinate
      */
-    createChunk(cx, cz) {
-        const chunk = new THREE.Group();
+    private createChunk(cx: number, cz: number): void {
+        const chunk = new THREE.Group() as Chunk;
         chunk.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
         chunk.userData = {
             cables: [],
             buildings: [],
             animatedObjects: [],  // Pre-collected animated objects for optimization
-        };
+        } as ChunkUserData;
 
         // Floor
         const floor = createFloorMesh(CHUNK_SIZE, this.floorMaterial);
@@ -73,7 +80,7 @@ export class ChunkManager {
 
         // Buildings and nodes for cables
         const numBuildings = 3 + Math.floor(hash(cx, cz + 1) * 5);
-        const nodes = [];
+        const nodes: CableNode[] = [];
 
         for (let i = 0; i < numBuildings; i++) {
             const bx = (hash(cx + i, cz) - 0.5) * (CHUNK_SIZE - 20);
@@ -95,7 +102,7 @@ export class ChunkManager {
                 isMobile = hash(i, i) > 0.3;
             }
 
-            buildGroup.userData = {
+            (buildGroup.userData as BuildingUserData) = {
                 initialPos: buildGroup.position.clone(),
                 wanderSpeed: 0.2 + hash(i, i) * 0.3,
                 wanderRange: 2.0 + hash(i, cx) * 5.0,
@@ -137,12 +144,8 @@ export class ChunkManager {
 
     /**
      * Create cables for a chunk
-     * @param {THREE.Group} chunk
-     * @param {Array} nodes
-     * @param {number} cx
-     * @param {number} cz
      */
-    createCables(chunk, nodes, cx, cz) {
+    private createCables(chunk: Chunk, nodes: CableNode[], cx: number, cz: number): void {
         if (nodes.length < 1) return;
 
         // Cables between buildings
@@ -191,7 +194,7 @@ export class ChunkManager {
                     );
                     groundPos.y = 0.1;
 
-                    const groundNode = {
+                    const groundNode: CableNode = {
                         obj: { position: groundPos },
                         topOffset: new THREE.Vector3(0, 0, 0),
                         isGround: true,
@@ -216,12 +219,11 @@ export class ChunkManager {
 
     /**
      * Remove a chunk and clean up resources
-     * @param {string} key - Chunk key
      */
-    removeChunk(key) {
+    private removeChunk(key: string): void {
         const chunk = this.activeChunks[key];
         if (chunk.userData.cables) {
-            chunk.userData.cables.forEach(c => {
+            chunk.userData.cables.forEach((c: DynamicCable) => {
                 if (c.line && c.line.geometry) {
                     c.line.geometry.dispose();
                 }
@@ -233,17 +235,17 @@ export class ChunkManager {
 
     /**
      * Animate all chunks (buildings, cables)
-     * @param {number} time - Current time in seconds
-     * @param {number} delta - Delta time in seconds
+     * @param time - Current time in seconds
+     * @param delta - Delta time in seconds
      */
-    animate(time, delta) {
+    animate(time: number, delta: number): void {
         for (const key in this.activeChunks) {
             const chunk = this.activeChunks[key];
 
             // Animate buildings (mobile wandering)
             if (chunk.userData.buildings) {
                 chunk.userData.buildings.forEach(group => {
-                    const ud = group.userData;
+                    const ud = group.userData as BuildingUserData;
                     if (ud.isMobile) {
                         const driftTime = time * ud.wanderSpeed + ud.offset;
                         group.position.x = ud.initialPos.x + Math.sin(driftTime) * ud.wanderRange;
@@ -255,15 +257,15 @@ export class ChunkManager {
 
             // Animate pre-collected objects (P0 optimization)
             if (chunk.userData.animatedObjects) {
-                chunk.userData.animatedObjects.forEach(obj => {
+                chunk.userData.animatedObjects.forEach((obj: AnimatedObject) => {
                     const ud = obj.userData;
                     if (!ud) return;
 
-                    if (ud.animType === 'ROTATE_FLOAT') {
+                    if (ud.animType === 'ROTATE_FLOAT' && ud.speed !== undefined) {
                         obj.rotation.x += ud.speed * delta;
                         obj.rotation.z += ud.speed * delta;
                     }
-                    if (ud.animType === 'LIQUID_WOBBLE' && ud.baseScale) {
+                    if (ud.animType === 'LIQUID_WOBBLE' && ud.baseScale && ud.speed !== undefined && ud.phase !== undefined) {
                         const s = Math.sin(time * ud.speed + ud.phase);
                         const sy = 1.0 + s * 0.15;
                         const sxz = 1.0 - s * 0.07;
@@ -273,16 +275,16 @@ export class ChunkManager {
                             ud.baseScale.z * sxz
                         );
                     }
-                    if (ud.animType === 'BRANCH_SWAY') {
+                    if (ud.animType === 'BRANCH_SWAY' && ud.initialRotZ !== undefined && ud.speed !== undefined && ud.phase !== undefined && ud.rigidity !== undefined) {
                         const sway = Math.sin(time * ud.speed + ud.phase) * 0.05 * (1.0 / ud.rigidity);
                         obj.rotation.z = ud.initialRotZ + sway;
                         obj.rotation.y += Math.cos(time * 0.5 + ud.phase) * 0.002;
                     }
-                    if (ud.animType === 'LEAF_FLUTTER') {
+                    if (ud.animType === 'LEAF_FLUTTER' && ud.phase !== undefined) {
                         obj.rotation.x += Math.sin(time * 5.0 + ud.phase) * 0.05;
                         obj.rotation.z += Math.cos(time * 3.0 + ud.phase) * 0.05;
                     }
-                    if (ud.isPlasma && obj.material && obj.material.emissive) {
+                    if (ud.isPlasma && obj.material?.emissive) {
                         const pulse = 0.5 + Math.sin(time * 2 + obj.position.x) * 0.5;
                         obj.material.emissive.setHSL(0, 0, pulse * 0.2);
                     }
@@ -291,7 +293,7 @@ export class ChunkManager {
 
             // Update cables
             if (chunk.userData.cables) {
-                chunk.userData.cables.forEach(cable => {
+                chunk.userData.cables.forEach((cable: DynamicCable) => {
                     updateCableGeometry(cable);
                 });
             }

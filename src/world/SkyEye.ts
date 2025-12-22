@@ -1,16 +1,21 @@
 // 1-bit Chimera Void - Sky Eye System
 import * as THREE from 'three';
+import type { AudioSystemInterface } from '../types';
+
+interface RingUserData {
+    speed?: number;
+}
 
 /**
  * Giant eye floating in the sky, tracks player, blinks randomly
  */
 export class SkyEye {
-    constructor(scene) {
-        this.group = new THREE.Group();
-        this.pupil = null;
-        this.isBlinking = false;
+    private group: THREE.Group = new THREE.Group();
+    private pupil: THREE.Mesh | null = null;
+    private isBlinking: boolean = false;
 
-        this._createGeometry();
+    constructor(scene: THREE.Scene) {
+        this.createGeometry();
 
         // Position high in the sky, facing down
         this.group.position.set(0, 120, 0);
@@ -22,9 +27,8 @@ export class SkyEye {
 
     /**
      * Create the eye geometry
-     * @private
      */
-    _createGeometry() {
+    private createGeometry(): void {
         const mat = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             side: THREE.DoubleSide,
@@ -39,7 +43,7 @@ export class SkyEye {
                 new THREE.RingGeometry(i * 8, i * 8 + 1, 64),
                 mat
             );
-            ring.userData = { speed: (Math.random() - 0.5) * 0.3 };
+            (ring.userData as RingUserData) = { speed: (Math.random() - 0.5) * 0.3 };
             this.group.add(ring);
         }
 
@@ -53,11 +57,11 @@ export class SkyEye {
 
     /**
      * Update eye animation
-     * @param {number} delta - Delta time
-     * @param {THREE.Vector3} playerPosition - Camera/player position
-     * @param {AudioSystem} audio - Audio system for blink sound
+     * @param delta - Delta time
+     * @param playerPosition - Camera/player position
+     * @param audio - Audio system for blink sound
      */
-    update(delta, playerPosition, audio) {
+    update(delta: number, playerPosition: THREE.Vector3, audio: AudioSystemInterface): void {
         // Pupil tracking
         if (this.pupil) {
             const eyePos = this.group.position;
@@ -78,18 +82,19 @@ export class SkyEye {
 
         // Ring rotation
         this.group.children.forEach(ring => {
-            if (ring.userData.speed) {
-                ring.rotation.z += ring.userData.speed * delta;
-                ring.rotation.x += ring.userData.speed * 0.5 * delta;
+            const userData = ring.userData as RingUserData;
+            if (userData.speed) {
+                ring.rotation.z += userData.speed * delta;
+                ring.rotation.x += userData.speed * 0.5 * delta;
             }
         });
     }
 
     /**
      * Trigger blink animation
-     * @param {AudioSystem} audio - Audio system for sound
+     * @param audio - Audio system for sound
      */
-    triggerBlink(audio) {
+    triggerBlink(audio: AudioSystemInterface): void {
         if (this.isBlinking) return;
 
         this.isBlinking = true;

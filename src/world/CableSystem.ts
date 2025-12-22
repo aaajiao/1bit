@@ -1,15 +1,15 @@
 // 1-bit Chimera Void - Cable System
 import * as THREE from 'three';
-import { CableShader } from '../shaders/DitherShader.js';
+import { CableShader } from '../shaders/DitherShader';
+import type { CableNode, CableOptions, DynamicCable } from '../types';
 
 // Shared shader material for all cables
-let cableShaderMat = null;
+let cableShaderMat: THREE.ShaderMaterial | null = null;
 
 /**
  * Get or create the cable shader material
- * @returns {THREE.ShaderMaterial}
  */
-export function getCableMaterial() {
+export function getCableMaterial(): THREE.ShaderMaterial {
     if (!cableShaderMat) {
         cableShaderMat = new THREE.ShaderMaterial({
             uniforms: {
@@ -27,9 +27,9 @@ export function getCableMaterial() {
 
 /**
  * Update cable shader time uniform
- * @param {number} time - Current time in seconds
+ * @param time - Current time in seconds
  */
-export function updateCableTime(time) {
+export function updateCableTime(time: number): void {
     if (cableShaderMat) {
         cableShaderMat.uniforms.time.value = time;
     }
@@ -37,12 +37,15 @@ export function updateCableTime(time) {
 
 /**
  * Creates a dynamic cable between two nodes
- * @param {Object} startNode - Start node with position
- * @param {Object} endNode - End node with position
- * @param {Object} options - Cable options (droop, heavySag, offsets)
- * @returns {Object} Cable object with line, nodes, options, and cache
+ * @param startNode - Start node with position
+ * @param endNode - End node with position
+ * @param options - Cable options (droop, heavySag, offsets)
  */
-export function createDynamicCable(startNode, endNode, options) {
+export function createDynamicCable(
+    startNode: CableNode,
+    endNode: CableNode,
+    options: CableOptions
+): DynamicCable {
     const segments = 12;
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array((segments + 1) * 3);
@@ -88,9 +91,9 @@ export function createDynamicCable(startNode, endNode, options) {
 
 /**
  * Update cable geometry based on node positions
- * @param {Object} cable - Cable object
+ * @param cable - Cable object
  */
-export function updateCableGeometry(cable) {
+export function updateCableGeometry(cable: DynamicCable): void {
     const { startNode, endNode, options, segments, _cache } = cable;
 
     // Use cached vectors instead of creating new ones
@@ -124,8 +127,8 @@ export function updateCableGeometry(cable) {
     mid.y -= currentDroop;
 
     // Update positions and lineDistance arrays
-    const positions = cable.line.geometry.attributes.position.array;
-    const distances = cable.line.geometry.attributes.lineDistance.array;
+    const positions = (cable.line.geometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
+    const distances = (cable.line.geometry.attributes.lineDistance as THREE.BufferAttribute).array as Float32Array;
     let idx = 0;
     let totalDist = 0;
 
