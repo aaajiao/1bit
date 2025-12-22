@@ -13,6 +13,8 @@ import { GazeMechanic } from './player/GazeMechanic';
 import { OverrideMechanic } from './player/OverrideMechanic';
 import { setFlowerIntensity, getFlowerIntensity, forceFlowerIntensity, overrideFlowerIntensity } from './player/FlowerProp';
 import { RunStatsCollector } from './stats/RunStatsCollector';
+import { StateSnapshotGenerator } from './stats/StateSnapshotGenerator';
+import { SnapshotOverlay } from './stats/SnapshotOverlay';
 import { RoomType } from './world/RoomConfig';
 import type { AppConfig, DayNightContext } from './types';
 
@@ -48,6 +50,8 @@ class ChimeraVoid {
     private gazeMechanic: GazeMechanic;
     private overrideMechanic: OverrideMechanic;
     private runStats: RunStatsCollector;
+    private snapshotGenerator: StateSnapshotGenerator;
+    private snapshotOverlay: SnapshotOverlay;
     private previousRoomType: RoomType | null = null;
 
     private config: AppConfig = {
@@ -182,6 +186,8 @@ class ChimeraVoid {
         this.gazeMechanic = new GazeMechanic(this.camera);
         this.overrideMechanic = new OverrideMechanic();
         this.runStats = new RunStatsCollector();
+        this.snapshotGenerator = new StateSnapshotGenerator();
+        this.snapshotOverlay = new SnapshotOverlay();
 
         // Setup gaze mechanic callbacks
         this.gazeMechanic.setOnGazeStart(() => {
@@ -340,6 +346,12 @@ class ChimeraVoid {
             shaderQuad: this.shaderQuad,
             audio: this.audio,
             weather: this.weather,
+            onSunset: () => {
+                // Generate and display state snapshot on sunset
+                const tags = this.runStats.generateTags();
+                const snapshot = this.snapshotGenerator.generate(tags);
+                this.snapshotOverlay.show(snapshot);
+            },
         };
         this.dayNight.update(t, dayNightContext);
 
@@ -394,7 +406,8 @@ class ChimeraVoid {
             const shiftKey = this.controls.isOverrideKeyHeld() ? '⬆️SHIFT' : '';
             const gazing = gazeState.isGazing ? '👁️GAZE' : '';
             const progress = overrideState.isActive ? `[${Math.round(this.overrideMechanic.getHoldProgress() * 100)}%]` : '';
-            coordsEl.innerText = `POS: ${pos.x}, ${pos.z} | ${currentRoomType} | ↑${pitchDeg}° ${shiftKey} ${gazing} ${progress}`;
+            const tags = this.runStats.generateTags().join(', ');
+            coordsEl.innerText = `POS: ${pos.x}, ${pos.z} | ${currentRoomType} | ↑${pitchDeg}° ${shiftKey} ${gazing} ${progress}\n${tags}`;
         }
 
         // Render

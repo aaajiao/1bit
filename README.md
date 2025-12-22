@@ -77,6 +77,28 @@ if (isGazingUp) {
 | `0.3 - 0.7` | 柔和发光 | 开始被天空之眼关注 |
 | `0.7 - 1.0` | 强烈光芒 | 吸引全部注视，可能触发溢出 |
 
+**状态触发说明:**
+
+花朵强度由玩家通过**鼠标滚轮**控制，范围是 `0.0` 到 `1.0`。不同的强度范围会触发不同的系统反应：
+
+| 强度范围 | 触发方式 | 设计意图 |
+|---------|---------|---------|
+| **0.0 - 0.3** | 滚轮向下（降低） | 隐藏自己的欲望，躲避监视 |
+| **0.3 - 0.7** | 滚轮调至中间范围 | 中等风险，开始被系统"看见" |
+| **0.7 - 1.0** | 滚轮向上（提高） | 高度暴露，系统压力最大 |
+
+**与其他机制的联动:**
+
+| 联动机制 | 效果 |
+|---------|------|
+| 凝视系统 | 向上凝视天空之眼时（pitch > 45°），花朵强度被**压制**到 0.1-0.5 |
+| 反抗系统 | 成功触发反抗后，花朵强度被**强制拉满**到 1.0 |
+| 行为记录 | `avgIntensity < 0.3` 会被标记为 `QUIET_LIGHT`（顺从者） |
+
+**隐喻含义:**
+
+> 花朵代表你的**内在欲望**——保持低强度 = 压抑自我，换取安全；提升高强度 = 表达欲望，承受被注视的压力。这是游戏核心心理系统的一部分：**你愿意为了安全牺牲多少自我表达？**
+
 **核心联动:**
 
 ```typescript
@@ -232,25 +254,75 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
 
 ### 阶段四：解决 (Resolution)
 
-**场景:** 基于玩家的行为模式，系统生成一份"状态快照"。
+**场景:** 每次日落时，系统基于玩家的行为模式生成一份"状态快照"并短暂展示。
 
-**三种玩家原型:**
+**触发时机:** 昼夜循环从白天切换到夜晚时自动触发（约每 4-6 分钟一次）
 
-| 原型 | 行为特征 | 生成标签 |
-|------|---------|---------|
-| **顺从的倾听者** | 保持低强度，避免凝视 | `QUIET_LIGHT`, `OBEDIENT` |
-| **边界测试者** | 在不同房间间徘徊，频繁调节强度 | `EXPLORER`, `WANDERER` |
-| **反抗者** | 高强度，频繁使用反抗机制 | `RESISTER`, `OVERFLOW_SEEKER` |
+**展示方式:**
+- 屏幕出现 1-bit 风格图案覆盖层（渐入 1.5 秒）
+- 中央显示一句观察性文字
+- 约 8 秒后自动消散
+
+---
+
+#### 行为标签触发条件
+
+| 标签 | 触发条件 | 含义 |
+|------|---------|------|
+| `QUIET_LIGHT` | `avgFlower < 0.25` | 平均花朵强度低于 25% |
+| `MEDIUM_LIGHT` | `0.25 ≤ avgFlower < 0.6` | 中等强度 |
+| `LOUD_LIGHT` | `avgFlower ≥ 0.6` | 高强度，完全暴露 |
+| `HIGH_GAZE` | `gazeRatio > 0.5` | 凝视天空之眼时间超过 50% |
+| `LOW_GAZE` | `gazeRatio < 0.15` | 凝视时间少于 15% |
+| `INFO_MAZE` | 在 `INFO_OVERFLOW` 房间待得最久 | 信息过载偏好 |
+| `CRACK_WALKER` | 在 `FORCED_ALIGNMENT` 房间待得最久 | 裂缝行走者 |
+| `INBETWEENER` | 在 `IN_BETWEEN` 房间待得最久 | 中间地带偏好 |
+| `BINARY_EDGE` | 在 `POLARIZED` 房间待得最久 | 二元边界偏好 |
+| `NEUTRAL_SEEKER` | `crackRatio > 0.3` | 在中性区域停留超过 30% 时间 |
+| `RESISTER` | `overrideRatio > 0.05` | 使用反抗机制超过 5% 时间 |
+
+> **注意:** 玩家可以同时获得多个标签，但显示文字时按优先级选择最高的一条。
+
+#### 标签维度分组
+
+标签系统按不同维度分组，每个维度独立评估：
+
+| 维度 | 可能的标签 | 规则 |
+|------|-----------|------|
+| **光强** | `QUIET_LIGHT` / `MEDIUM_LIGHT` / `LOUD_LIGHT` | 三选一（互斥） |
+| **凝视** | `HIGH_GAZE` / `LOW_GAZE` / 无 | 只有极端时才标记 |
+| **主导房间** | `INFO_MAZE` / `CRACK_WALKER` / `INBETWEENER` / `BINARY_EDGE` | 选待得最久的一个 |
+| **特殊行为** | `NEUTRAL_SEEKER` / `RESISTER` | 满足条件就添加（可叠加） |
+
+典型玩家会获得 **2-4 个标签**，从多个角度描述行为模式。
+
+---
+
+#### 三种玩家原型
+
+| 原型 | 行为特征 | 典型标签组合 |
+|------|---------|-------------|
+| **顺从的倾听者** | 保持低强度，避免凝视 | `QUIET_LIGHT`, `LOW_GAZE` |
+| **边界测试者** | 在不同房间间徘徊，中等强度 | `MEDIUM_LIGHT`, `INBETWEENER` |
+| **反抗者** | 高强度，频繁使用反抗机制 | `LOUD_LIGHT`, `RESISTER`, `HIGH_GAZE` |
 
 ```typescript
-// RunStatsCollector.ts - 行为标签生成
-generateTags(): string[] {
-    const tags: string[] = [];
+// RunStatsCollector.ts - 行为标签生成核心逻辑
+generateTags(): BehaviorTag[] {
+    const metrics = this.normalize();
+    const tags: BehaviorTag[] = [];
 
-    if (this.avgIntensity < 0.3) tags.push('QUIET_LIGHT');
-    if (this.gazeTimeRatio > 0.4) tags.push('WATCHER');
-    if (this.overrideCount > 5) tags.push('RESISTER');
-    if (this.roomTransitions > 20) tags.push('WANDERER');
+    // 光强标签
+    if (metrics.avgFlower < 0.25) tags.push('QUIET_LIGHT');
+    else if (metrics.avgFlower < 0.6) tags.push('MEDIUM_LIGHT');
+    else tags.push('LOUD_LIGHT');
+
+    // 凝视标签
+    if (metrics.gazeRatio > 0.5) tags.push('HIGH_GAZE');
+    else if (metrics.gazeRatio < 0.15) tags.push('LOW_GAZE');
+
+    // 反抗标签
+    if (metrics.overrideRatio > 0.05) tags.push('RESISTER');
 
     return tags;
 }

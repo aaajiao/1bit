@@ -134,6 +134,7 @@ export interface DayNightContext {
     shaderQuad: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
     audio: AudioSystemInterface;
     weather: WeatherSystemInterface;
+    onSunset?: () => void;  // Callback for state snapshot on day->night transition
 }
 
 // ===== Audio System Interface =====

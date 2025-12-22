@@ -40,6 +40,11 @@ export class DayNightCycle {
         if (newIsDay !== this.isDay) {
             this.isDay = newIsDay;
 
+            // Trigger snapshot on sunset (day -> night)
+            if (!newIsDay && context.onSunset) {
+                context.onSunset();
+            }
+
             // Randomize for next cycle
             if (newIsDay) {
                 this.cycleDuration = 240 + Math.random() * 120; // 4-6 minutes
