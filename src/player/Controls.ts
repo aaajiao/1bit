@@ -84,6 +84,12 @@ export class Controls {
             case 'KeyA': this.moveLeft = true; break;
             case 'KeyS': this.moveBackward = true; break;
             case 'KeyD': this.moveRight = true; break;
+            case 'KeyQ':
+                this.adjustFlowerIntensity(-0.1);
+                break;
+            case 'KeyE':
+                this.adjustFlowerIntensity(0.1);
+                break;
             case 'Space':
                 if (this.canJump) {
                     this.velocity.y += this.config.jumpForce;
@@ -111,6 +117,16 @@ export class Controls {
     }
 
     /**
+     * Helper to adjust flower intensity
+     */
+    private adjustFlowerIntensity(delta: number): void {
+        this.targetFlowerIntensity = Math.max(0, Math.min(1, this.targetFlowerIntensity + delta));
+        if (this.onFlowerIntensityChange) {
+            this.onFlowerIntensityChange(this.targetFlowerIntensity);
+        }
+    }
+
+    /**
      * Handle scroll wheel for flower intensity control
      */
     private onWheel(e: WheelEvent): void {
@@ -120,11 +136,7 @@ export class Controls {
 
         // Scroll up = increase intensity, scroll down = decrease
         const delta = -Math.sign(e.deltaY) * 0.1;
-        this.targetFlowerIntensity = Math.max(0, Math.min(1, this.targetFlowerIntensity + delta));
-
-        if (this.onFlowerIntensityChange) {
-            this.onFlowerIntensityChange(this.targetFlowerIntensity);
-        }
+        this.adjustFlowerIntensity(delta);
     }
 
     private onMouseMove(e: MouseEvent): void {

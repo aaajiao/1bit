@@ -27,6 +27,7 @@
 | `W / A / S / D` | 移动 | 穿行于精神状态之间 |
 | `空格键` | 跳跃 | 短暂的超越 |
 | `鼠标` | 视角控制 | 选择凝视的方向 |
+| `Q / E` | 调节花朵亮度 | 降低 / 增强内在欲望 |
 | `滚轮` | 调节花朵亮度 | 控制欲望的强度 |
 | `Shift` | 反抗/覆盖 | 对抗系统的规训 |
 | `P` | 截图保存 | 记录这个世界的瞬间 |
@@ -74,9 +75,9 @@ if (isGazingUp) {
 
 | 强度范围 | 视觉效果 | 系统反应 |
 |---------|---------|---------|
-| `0.0 - 0.3` | 微弱光芒 | 安全，不被注意 |
-| `0.3 - 0.7` | 柔和发光 | 开始被天空之眼关注 |
-| `0.7 - 1.0` | 强烈光芒 | 吸引全部注视，可能触发溢出 |
+| `0.0 - 0.3` | **微弱光芒**：尘埃收敛，花苞紧闭，体积微小 | 安全，不被注意 |
+| `0.3 - 0.7` | **柔和发光**：粒子浮动，花瓣微开，呼吸节奏平缓 | 开始被天空之眼关注 |
+| `0.7 - 1.0` | **强烈光芒**：粒子疾驰，完全盛开，**屏幕边缘脉冲溢出** | 吸引全部注视，触发高压反馈 |
 
 **状态触发说明:**
 
@@ -103,15 +104,19 @@ if (isGazingUp) {
 **核心联动:**
 
 ```typescript
-// FlowerProp.ts - 强度与视觉噪声的关系
-setIntensity(value: number) {
-    this.intensity = clamp(value, 0, 1);
+// FlowerProp.ts - 三态视觉系统
+animateFlower(...) {
+    // 0.0-0.3: Dim State
+    // 0.3-0.7: Soft State
+    // 0.7-1.0: Intense State
 
-    // 强度越高 → 时间抖动越剧烈
-    this.ditherShader.uniforms.uTemporalJitter.value = this.intensity * 0.8;
-
-    // 强度越高 → 花瓣发光越亮
-    this.petalMaterial.emissiveIntensity = this.intensity * 2.0;
+    // 状态驱动的自发光材质联动
+    assets.matFlowerCore.emissiveIntensity = emissiveParams[state];
+    
+    // 高强度触发 Shader 边缘溢出
+    if (intensity > 0.7) {
+        // DitherShader 渲染屏幕边缘脉冲
+    }
 }
 ```
 

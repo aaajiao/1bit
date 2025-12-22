@@ -23,7 +23,6 @@ export class HandsModel {
     private time: number = 0;
     private leftHand!: THREE.Group;
     private rightHand!: THREE.Group;
-    private flower: FlowerGroup | null = null;
 
     // Materials
     private handMat: THREE.MeshLambertMaterial;

@@ -19,7 +19,7 @@ export interface SharedAssets {
     matTreeBark: THREE.MeshLambertMaterial;
     matFlowerStem: THREE.MeshLambertMaterial;
     matFlowerPetal: THREE.MeshPhongMaterial;
-    matFlowerCore: THREE.MeshBasicMaterial;
+    matFlowerCore: THREE.MeshStandardMaterial;
     matLiquid: THREE.MeshPhongMaterial;
     // Geometries
     boxGeo: THREE.BoxGeometry;

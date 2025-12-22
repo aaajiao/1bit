@@ -14,7 +14,7 @@ export class SharedAssets implements ISharedAssets {
     matTreeBark: THREE.MeshLambertMaterial;
     matFlowerStem: THREE.MeshLambertMaterial;
     matFlowerPetal: THREE.MeshPhongMaterial;
-    matFlowerCore: THREE.MeshBasicMaterial;
+    matFlowerCore: THREE.MeshStandardMaterial;
     matLiquid: THREE.MeshPhongMaterial;
 
     // Geometries
@@ -55,8 +55,12 @@ export class SharedAssets implements ISharedAssets {
             opacity: 0.9,
             side: THREE.DoubleSide,
         });
-        this.matFlowerCore = new THREE.MeshBasicMaterial({
+        this.matFlowerCore = new THREE.MeshStandardMaterial({
             color: 0xffffff,
+            emissive: 0xffffff,
+            emissiveIntensity: 1.0,
+            roughness: 0.3,
+            metalness: 0.0,
         });
         this.matLiquid = new THREE.MeshPhongMaterial({
             color: 0x111111,

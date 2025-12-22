@@ -189,16 +189,20 @@ export function overrideFlowerIntensity(flowerGroup: FlowerGroup): void {
 }
 
 /**
- * Animate flower components
+ * Animate flower components with three distinct intensity states:
+ * - 0.0-0.3: Dim (微弱光芒) - subtle, safe
+ * - 0.3-0.7: Soft (柔和发光) - moderate, starts attracting attention
+ * - 0.7-1.0: Intense (强烈光芒) - bright, fully exposed
  * @param flowerGroup - The flower group to animate
  * @param time - Current time in seconds
  * @param delta - Delta time in seconds
  */
 export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: number): void {
-    if (!flowerGroup.userData.bloom) return;
+    const bloom = flowerGroup.userData.bloom;
+    if (!bloom) return;
 
     const ud = flowerGroup.userData;
-    const bloom = ud.bloom;
+    const assets = getSharedAssets();
 
     // Determine target intensity based on gaze forcing
     let effectiveTarget = ud.targetIntensity;
@@ -211,41 +215,95 @@ export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: num
     ud.intensity += (effectiveTarget - ud.intensity) * lerpSpeed * delta;
     ud.intensity = Math.max(0, Math.min(1, ud.intensity));
 
-    // Apply intensity to core light
-    if (ud.coreLight) {
-        // Light intensity scales from 0.5 (dim) to 5.0 (bright)
-        ud.coreLight.intensity = 0.5 + ud.intensity * 4.5;
-        // Light distance also scales with intensity
-        ud.coreLight.distance = 4.0 + ud.intensity * 6.0;
+    // ===== THREE-STATE VISUAL SYSTEM =====
+    const intensity = ud.intensity;
+
+    // Determine state: 0=dim, 1=soft, 2=intense
+    let state: 0 | 1 | 2;
+    let stateProgress: number; // 0-1 within current state
+    if (intensity < 0.3) {
+        state = 0; // Dim
+        stateProgress = intensity / 0.3;
+    } else if (intensity < 0.7) {
+        state = 1; // Soft
+        stateProgress = (intensity - 0.3) / 0.4;
+    } else {
+        state = 2; // Intense
+        stateProgress = (intensity - 0.7) / 0.3;
     }
 
-    // Bloom rotation (slower when dim, faster when bright)
-    bloom.rotation.y += delta * (0.1 + ud.intensity * 0.2);
+    // ----- 1. CORE LIGHT (PointLight) -----
+    // State-based light intensity and distance
+    if (ud.coreLight) {
+        const lightParams = [
+            { intensity: 0.3 + stateProgress * 0.5, distance: 2.0 + stateProgress * 1.0 },  // Dim: 0.3-0.8, 2-3m
+            { intensity: 1.0 + stateProgress * 2.0, distance: 4.0 + stateProgress * 2.0 },  // Soft: 1.0-3.0, 4-6m
+            { intensity: 4.0 + stateProgress * 4.0, distance: 8.0 + stateProgress * 4.0 },  // Intense: 4.0-8.0, 8-12m
+        ];
+        const params = lightParams[state];
+        ud.coreLight.intensity = params.intensity;
+        ud.coreLight.distance = params.distance;
+    }
 
-    // Scale bloom slightly based on intensity
-    const bloomScale = 0.8 + ud.intensity * 0.4;
-    bloom.scale.setScalar(bloomScale);
+    // ----- 2. MATERIAL EMISSIVE (Core glow) -----
+    // Update core material emissive intensity based on state
+    const emissiveParams = [0.2 + stateProgress * 0.3, 0.6 + stateProgress * 0.6, 1.5 + stateProgress * 1.5];
+    assets.matFlowerCore.emissiveIntensity = emissiveParams[state];
 
-    bloom.children.forEach(part => {
+    // ----- 3. PETAL EMISSIVE -----
+    // Petals glow more in higher states
+    const petalEmissive = [0.05, 0.15 + stateProgress * 0.15, 0.4 + stateProgress * 0.3];
+    if (assets.matFlowerPetal.emissive) {
+        assets.matFlowerPetal.emissiveIntensity = petalEmissive[state];
+    }
+
+    // ----- 4. BLOOM SCALE -----
+    // More dramatic scaling between states
+    const scaleParams = [
+        0.6 + stateProgress * 0.15,  // Dim: 0.6 - 0.75
+        0.8 + stateProgress * 0.15,  // Soft: 0.8 - 0.95
+        1.0 + stateProgress * 0.3,   // Intense: 1.0 - 1.3
+    ];
+    bloom.scale.setScalar(scaleParams[state]);
+
+    // ----- 5. BLOOM ROTATION -----
+    // Rotation speed increases with state
+    const rotationSpeeds = [0.05, 0.15, 0.35 + stateProgress * 0.2];
+    bloom.rotation.y += delta * rotationSpeeds[state];
+
+    // ----- 6. PETAL/SEPAL/DUST ANIMATIONS -----
+    bloom.children.forEach((part) => {
         const partData = part.userData as FlowerPartUserData;
         if (!partData || !partData.animType) return;
 
         if (partData.animType === 'PETAL_BREATHE' && partData.baseRotX !== undefined && partData.phase !== undefined) {
-            // Petals open more when intensity is high
-            const openAmount = Math.sin(time * 2.0 + partData.phase) * 0.2 * (0.5 + ud.intensity * 0.5);
-            const baseOpen = (ud.intensity - 0.5) * 0.3; // More open when brighter
+            // Petal opening based on state
+            const breatheAmplitude = [0.1, 0.2, 0.35][state];
+            const openAmount = Math.sin(time * 2.0 + partData.phase) * breatheAmplitude;
+            const baseOpen = [0, 0.1 * stateProgress, 0.2 + stateProgress * 0.15][state];
             part.rotation.x = partData.baseRotX + openAmount + baseOpen;
         }
+
         if (partData.animType === 'SEPAL_FLOAT' && partData.phase !== undefined) {
-            const floatSpeed = 0.3 + ud.intensity * 0.4;
+            // Sepals float more actively in higher states
+            const floatSpeed = [0.15, 0.3, 0.5 + stateProgress * 0.3][state];
             part.rotation.x += delta * floatSpeed;
             part.rotation.z += delta * floatSpeed * 0.6;
-            part.position.y = 0.1 + Math.sin(time * 1.5 + partData.phase) * 0.05;
+            const floatAmplitude = [0.02, 0.04, 0.07][state];
+            part.position.y = 0.1 + Math.sin(time * 1.5 + partData.phase) * floatAmplitude;
         }
+
         if (partData.animType === 'DUST_ORBIT' && partData.axis && partData.speed !== undefined) {
-            // Dust orbits faster when intensity is high
-            const orbitSpeed = partData.speed * (0.5 + ud.intensity * 0.5);
-            part.position.applyAxisAngle(partData.axis, orbitSpeed * delta);
+            // Dust visibility and speed based on state
+            // In dim state, dust is barely visible; in intense state, dust orbits fast
+            const dustVisible = state === 0 ? stateProgress > 0.5 : true;
+            (part as THREE.Mesh).visible = dustVisible;
+
+            if (dustVisible) {
+                const orbitMultiplier = [0.3, 0.6, 1.0 + stateProgress * 0.5][state];
+                const orbitSpeed = partData.speed * orbitMultiplier;
+                part.position.applyAxisAngle(partData.axis, orbitSpeed * delta);
+            }
         }
     });
 }

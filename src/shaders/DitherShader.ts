@@ -277,6 +277,21 @@ export const DitherShader: ShaderDefinition = {
                 }
             }
 
+            // ===== FLOWER INTENSITY VISUAL FEEDBACK =====
+            // At high intensity (>0.7), add a subtle radial vignette/glow effect
+            if (uFlowerIntensity > 0.7) {
+                float highIntensity = (uFlowerIntensity - 0.7) / 0.3; // 0-1 in intense range
+                vec2 centered = vUv - 0.5;
+                float radialDist = length(centered) * 2.0;
+
+                // Pulsing edge glow at high intensity
+                float pulse = sin(uTime * 4.0) * 0.3 + 0.7;
+                float edgeGlow = smoothstep(0.8, 1.2, radialDist) * highIntensity * pulse;
+
+                // Invert edges slightly to create "bloom overflow" effect
+                finalColor = mix(finalColor, vec3(1.0) - finalColor, edgeGlow * 0.4);
+            }
+
             gl_FragColor = vec4(finalColor, 1.0);
         }
     `,
