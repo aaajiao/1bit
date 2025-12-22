@@ -82,6 +82,9 @@ class ChimeraVoid {
 
         // Controls and Hands
         this.controls = new Controls(this.camera, document.body);
+        // Set initial spawn position (safe from rift at x=0)
+        this.controls.teleport({ x: 8, y: 2, z: 8 });
+
         this.handsModel = new HandsModel(this.camera);
 
         // World
