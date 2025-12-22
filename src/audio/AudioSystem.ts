@@ -2,6 +2,7 @@
 // Minimalist 8-bit style audio to match 1-bit aesthetics
 
 import type { AmbientNode, AudioSystemInterface } from '../types';
+import { RoomType, RoomAudioConfig } from '../world/RoomConfig';
 
 // Extend Window interface for webkit prefix
 declare global {
@@ -943,6 +944,39 @@ export class AudioSystem implements AudioSystemInterface {
         this.lastFlowerIntensity = -1;
         this.lastFlowerState = -1;
         this.flowerSilenceTimer = 0;
+    }
+    /**
+     * Handle audio changes when switching rooms
+     * @param prevType - Previous room type
+     * @param newType - New room type
+     * @param audioConfig - Audio configuration for the new room
+     */
+    onRoomChange(prevType: RoomType | null, newType: RoomType, audioConfig: RoomAudioConfig): void {
+        if (!this.enabled) return;
+
+        // Play transition sound (skip initial load)
+        if (prevType !== null) {
+            this.playRoomTransition();
+        }
+
+        // Stop previous effects
+        if (prevType === RoomType.FORCED_ALIGNMENT) {
+            console.log('[Audio] Stopping binaural beat');
+            this.stopBinauralBeat();
+        }
+
+        // Start new effects
+        if (newType === RoomType.FORCED_ALIGNMENT) {
+            if (audioConfig.beatFrequency) {
+                console.log(`[Audio] Starting binaural beat: ${audioConfig.baseFrequency}Hz + ${audioConfig.beatFrequency}Hz`);
+                this.startBinauralBeat(
+                    audioConfig.baseFrequency,
+                    audioConfig.beatFrequency
+                );
+            } else {
+                console.warn('[Audio] No beatFrequency in config!');
+            }
+        }
     }
 }
 

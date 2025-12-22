@@ -17,6 +17,8 @@ import { SnapshotOverlay } from './stats/SnapshotOverlay';
 import { RoomType } from './world/RoomConfig';
 import { createScene } from './core/SceneSetup';
 import { createPostProcessing, updatePostProcessingSize, type PostProcessingComponents } from './core/PostProcessing';
+import { HUD } from './ui/HUD';
+import { ScreenshotManager } from './utils/ScreenshotManager';
 import type { AppConfig, DayNightContext } from './types';
 
 // Extend Window interface for app reference
@@ -50,6 +52,7 @@ class ChimeraVoid {
     private runStats: RunStatsCollector;
     private snapshotGenerator: StateSnapshotGenerator;
     private snapshotOverlay: SnapshotOverlay;
+    private hud: HUD;
     private previousRoomType: RoomType | null = null;
 
     private config: AppConfig = {
@@ -101,7 +104,10 @@ class ChimeraVoid {
         this.overrideMechanic = new OverrideMechanic();
         this.runStats = new RunStatsCollector();
         this.snapshotGenerator = new StateSnapshotGenerator();
+        this.snapshotGenerator = new StateSnapshotGenerator();
         this.snapshotOverlay = new SnapshotOverlay();
+        this.hud = new HUD();
+        new ScreenshotManager(this.renderer);
 
         // Setup gaze mechanic callbacks
         this.gazeMechanic.setOnGazeStart(() => {
@@ -137,7 +143,6 @@ class ChimeraVoid {
 
         // Events
         this.setupWindowEvents();
-        this.setupScreenshotKey();
 
         // Start loop
         this.animate();
@@ -155,34 +160,7 @@ class ChimeraVoid {
         });
     }
 
-    /**
-     * Setup screenshot keyboard shortcut
-     */
-    private setupScreenshotKey(): void {
-        document.addEventListener('keydown', (e: KeyboardEvent) => {
-            if (e.code === 'KeyP') {
-                this.takeScreenshot();
-            }
-        });
-    }
 
-    /**
-     * Capture and download a screenshot of the current frame
-     */
-    private takeScreenshot(): void {
-        // Get canvas data URL
-        const canvas = this.renderer.domElement;
-        const dataURL = canvas.toDataURL('image/png');
-
-        // Create download link
-        const link = document.createElement('a');
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        link.download = `1bit-chimera-${timestamp}.png`;
-        link.href = dataURL;
-        link.click();
-
-        console.log('[Screenshot] Saved:', link.download);
-    }
 
     /**
      * Main animation loop
@@ -213,32 +191,10 @@ class ChimeraVoid {
 
         // Handle room transitions (audio)
         if (currentRoomType !== this.previousRoomType) {
+            // Handle audio transitions
             console.log(`[Room Transition] ${this.previousRoomType} -> ${currentRoomType}`);
-
-            // Play room transition sound (skip initial load)
-            if (this.previousRoomType !== null) {
-                this.audio.playRoomTransition();
-            }
-
-            // Stop previous room's audio effects
-            if (this.previousRoomType === RoomType.FORCED_ALIGNMENT) {
-                console.log('[Audio] Stopping binaural beat');
-                this.audio.stopBinauralBeat();
-            }
-            // Start new room's audio effects
-            if (currentRoomType === RoomType.FORCED_ALIGNMENT) {
-                const roomConfig = this.chunkManager.getCurrentRoomConfig();
-                console.log('[Audio] Room config:', roomConfig.audio);
-                if (roomConfig.audio.beatFrequency) {
-                    console.log(`[Audio] Starting binaural beat: ${roomConfig.audio.baseFrequency}Hz + ${roomConfig.audio.beatFrequency}Hz`);
-                    this.audio.startBinauralBeat(
-                        roomConfig.audio.baseFrequency,
-                        roomConfig.audio.beatFrequency
-                    );
-                } else {
-                    console.warn('[Audio] No beatFrequency in config!');
-                }
-            }
+            const roomConfig = this.chunkManager.getCurrentRoomConfig();
+            this.audio.onRoomChange(this.previousRoomType, currentRoomType, roomConfig.audio);
             this.previousRoomType = currentRoomType;
         }
 
@@ -366,15 +322,18 @@ class ChimeraVoid {
         }
 
         // Update coordinates display with room type and debug info
-        const coordsEl = document.getElementById('coords');
-        if (coordsEl) {
-            const pitchDeg = Math.round(this.gazeMechanic.getPitch() * 180 / Math.PI);
-            const shiftKey = this.controls.isOverrideKeyHeld() ? '⬆️SHIFT' : '';
-            const gazing = gazeState.isGazing ? '👁️GAZE' : '';
-            const progress = overrideState.isActive ? `[${Math.round(this.overrideMechanic.getHoldProgress() * 100)}%]` : '';
-            const tags = this.runStats.generateTags().join(', ');
-            coordsEl.innerText = `POS: ${pos.x}, ${pos.z} | ${currentRoomType} | ↑${pitchDeg}° ${shiftKey} ${gazing} ${progress}\n${tags}`;
-        }
+        // Update HUD (coordinates and debug info)
+        this.hud.update({
+            posX: pos.x,
+            posZ: pos.z,
+            roomType: currentRoomType,
+            pitch: this.gazeMechanic.getPitch(),
+            isShiftHeld: this.controls.isOverrideKeyHeld(),
+            isGazing: gazeState.isGazing,
+            overrideActive: overrideState.isActive,
+            overrideProgress: this.overrideMechanic.getHoldProgress(),
+            tags: this.runStats.generateTags()
+        });
 
         // Render
         this.renderer.setRenderTarget(this.postProcessing.renderTarget);

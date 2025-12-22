@@ -11,36 +11,39 @@ src/
 ├── main.ts          # 仅负责：初始化、组装系统、运行主循环
 ├── types.ts         # TypeScript 类型定义
 ├── audio/           # 音效系统
-│   └── AudioSystem.ts
+│   └── AudioSystem.ts # 音效管理（背景音、音效、Binaural Beats 等）
 ├── core/            # 核心初始化模块
-│   ├── PostProcessing.ts
-│   └── SceneSetup.ts
+│   ├── PostProcessing.ts # 后处理效果（Dither、Pixelation）
+│   └── SceneSetup.ts     # 场景与相机初始化
 ├── player/          # 玩家相关（控制、手部、道具、机制）
-│   ├── Controls.ts
-│   ├── FlowerProp.ts
-│   ├── GazeMechanic.ts
-│   ├── HandsModel.ts
-│   └── OverrideMechanic.ts
+│   ├── Controls.ts       # 玩家移动与输入控制
+│   ├── FlowerProp.ts     # 手持花朵道具及其状态/动画
+│   ├── GazeMechanic.ts   # 注视机制（检测玩家看向 Sky Eye）
+│   ├── HandsModel.ts     # 玩家手部模型管理
+│   └── OverrideMechanic.ts # “Override”机制逻辑（Shift 键触发）
 ├── shaders/         # 着色器
-│   └── DitherShader.ts
+│   └── DitherShader.ts   # 1-bit 抖动着色器定义
 ├── stats/           # 游戏统计与快照系统
-│   ├── RunStatsCollector.ts
-│   ├── SnapshotOverlay.ts
-│   └── StateSnapshotGenerator.ts
+│   ├── RunStatsCollector.ts     # 收集本轮游戏的数据（注视时间、移动等）
+│   ├── SnapshotOverlay.ts       # 生成并在日落时显示的统计快照 UI
+│   └── StateSnapshotGenerator.ts # 将统计数据转化为视觉快照的逻辑
+├── ui/              # 用户界面与HUD
+│   └── HUD.ts            # 抬头显示器（坐标、状态调试信息）
 ├── world/           # 世界系统（区块、建筑、天气、昼夜...）
-│   ├── BuildingFactory.ts
-│   ├── CableSystem.ts
-│   ├── ChunkManager.ts
-│   ├── DayNightCycle.ts
-│   ├── FloorTile.ts
-│   ├── FloraFactory.ts
-│   ├── RoomConfig.ts
-│   ├── SharedAssets.ts
-│   ├── SkyEye.ts
-│   └── WeatherSystem.ts
+│   ├── BuildingFactory.ts # 程序化建筑生成
+│   ├── CableSystem.ts     # 程序化电缆生成与动画
+│   ├── ChunkManager.ts    # 无限世界区块管理系统
+│   ├── DayNightCycle.ts   # 昼夜循环控制
+│   ├── FloorTile.ts       # 地面瓦片与网格生成
+│   ├── FloraFactory.ts    # 程序化植物生成
+│   ├── RoomConfig.ts      # 不同“心智房间”的配置（Info Overflow, Forced Alignment 等）
+│   ├── SharedAssets.ts    # 共享材质与几何体资源
+│   ├── SkyEye.ts          # 空中“Sky Eye”对象的行为与视觉
+│   └── WeatherSystem.ts   # 天气系统（雨、雪、故障效果）
 └── utils/           # 工具函数
-    ├── hash.ts
-    └── ObjectPool.ts
+    ├── hash.ts             # 字符串哈希工具
+    ├── ObjectPool.ts       # 对象池（用于优化性能）
+    └── ScreenshotManager.ts # 截图功能管理
 
 styles/
 └── main.css         # 全局样式
@@ -97,9 +100,10 @@ this.newSystem.update(delta, { /* 依赖 */ });
 | 玩家相关 | `player/` | Controls, HandsModel, FlowerProp |
 | 玩家机制 | `player/` | GazeMechanic, OverrideMechanic |
 | 统计/快照 | `stats/` | RunStatsCollector, SnapshotOverlay |
+| UI/HUD | `ui/` | HUD |
 | 渲染效果 | `shaders/` | DitherShader |
 | 音效 | `audio/` | AudioSystem |
-| 工具 | `utils/` | hash, ObjectPool |
+| 工具 | `utils/` | hash, ObjectPool, ScreenshotManager |
 | 样式 | `styles/` | main.css |
 
 ---
@@ -107,7 +111,7 @@ this.newSystem.update(delta, { /* 依赖 */ });
 ## 🔄 重构信号
 
 如果发现以下情况，应该重构：
-- `main.ts` 超过 300 行 ✅ *（当前约 329 行，已通过模块化改善）*
+- `main.ts` 超过 300 行 ✅ *（当前约 350 行，已提取 HUD、截图和音频逻辑）*
 - 同一功能的代码分散在多处
 - 需要复制粘贴代码
 
