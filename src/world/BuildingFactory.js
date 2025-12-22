@@ -80,6 +80,129 @@ export function createSpikesBuilding(buildGroup, params) {
 }
 
 /**
+ * Selects geometry and material for a solid building asset
+ * @param {number} assetType - Random value for asset selection
+ * @param {number} materialOverride - Random value for material override
+ * @param {Object} assets - Shared assets object
+ * @returns {{geometry: THREE.BufferGeometry, material: THREE.Material}}
+ */
+function selectSolidAsset(assetType, materialOverride, assets) {
+    let geometry, material;
+
+    if (assetType > 0.8) {
+        geometry = assets.knotGeo;
+        material = assets.matSolid;
+    } else if (assetType > 0.6) {
+        geometry = assets.coneGeo;
+        material = assets.matDark;
+    } else if (assetType > 0.4) {
+        geometry = assets.tetraGeo;
+        material = assets.matWire;
+    } else if (assetType > 0.2) {
+        geometry = assets.cylinderGeo;
+        material = assets.matTreeBark;
+    } else {
+        geometry = assets.boxGeo;
+        material = assets.matSolid;
+    }
+
+    // Override with plasma material for rare cases
+    if (materialOverride > 0.9) {
+        material = assets.matPlasma.clone();
+    }
+
+    return { geometry, material };
+}
+
+/**
+ * Calculates scale for an asset based on its geometry type
+ * @param {THREE.BufferGeometry} geometry - The geometry to scale
+ * @param {number} baseScale - Base scale modifier
+ * @param {Object} assets - Shared assets object
+ * @returns {THREE.Vector3}
+ */
+function calculateAssetScale(geometry, baseScale, assets) {
+    const scaleMod = 1.0 + baseScale * 1.5;
+
+    if (geometry === assets.coneGeo) {
+        return new THREE.Vector3(scaleMod, scaleMod * 3, scaleMod);
+    } else if (geometry === assets.tetraGeo) {
+        return new THREE.Vector3(scaleMod * 2, scaleMod * 2, scaleMod * 2);
+    } else {
+        return new THREE.Vector3(scaleMod * 2, scaleMod * 1.5, scaleMod * 2);
+    }
+}
+
+/**
+ * Creates a solid building mesh
+ * @param {Object} params - Creation parameters
+ * @param {Array} animatedObjects - Array to collect animated objects
+ * @returns {THREE.Mesh}
+ */
+function createSolidMesh(params, animatedObjects) {
+    const { assets, assetType, materialOverride, r1, r2, r3 } = params;
+
+    const { geometry, material } = selectSolidAsset(assetType, materialOverride, assets);
+    const mesh = new THREE.Mesh(geometry, material);
+
+    mesh.scale.copy(calculateAssetScale(geometry, r2, assets));
+    mesh.rotation.set(r1 * Math.PI * 2, r2 * Math.PI * 2, r3 * Math.PI * 2);
+    mesh.userData.baseScale = mesh.scale.clone();
+
+    // Add rotation animation for special assets
+    if (assetType > 0.7) {
+        mesh.userData.animType = 'ROTATE_FLOAT';
+        mesh.userData.speed = 0.2;
+        animatedObjects.push(mesh);
+    }
+
+    return mesh;
+}
+
+/**
+ * Creates a liquid building mesh
+ * @param {Object} params - Creation parameters
+ * @param {Array} animatedObjects - Array to collect animated objects
+ * @returns {THREE.Mesh}
+ */
+function createLiquidMesh(params, animatedObjects) {
+    const { assets, f, r1, r2, r3 } = params;
+
+    const mesh = new THREE.Mesh(assets.sphereGeo, assets.matLiquid);
+    const stretch = 1.0 + r1 * 2.0;
+    mesh.scale.set(2.0 + r2, 2.0 * stretch, 2.0 + r3);
+
+    mesh.userData = {
+        animType: 'LIQUID_WOBBLE',
+        speed: 0.8 + r2,
+        phase: f + r1 * 5,
+        baseScale: mesh.scale.clone(),
+    };
+    animatedObjects.push(mesh);
+
+    mesh.rotation.z = (r1 - 0.5) * 0.5;
+
+    return mesh;
+}
+
+/**
+ * Calculates position based on fragment type
+ * @param {boolean} isLiquid - Whether the fragment is liquid
+ * @param {number} f - Fragment index
+ * @param {number} r1 - Random value 1
+ * @param {number} r2 - Random value 2
+ * @param {number} r3 - Random value 3
+ * @returns {{yPos: number, xOffset: number, zOffset: number}}
+ */
+function calculateFragmentPosition(isLiquid, f, r1, r2, r3) {
+    const yPos = isLiquid ? f * 2.5 + (r1 - 0.5) * 2 : f * 2.5;
+    const xOffset = isLiquid ? (r2 - 0.5) * 6 : (r2 - 0.5) * 5;
+    const zOffset = isLiquid ? (r3 - 0.5) * 6 : (r3 - 0.5) * 5;
+
+    return { yPos, xOffset, zOffset };
+}
+
+/**
  * Creates FLUID style building with mixed assets
  * @param {THREE.Group} buildGroup - Parent group
  * @param {Object} params - Generation parameters
@@ -96,83 +219,17 @@ export function createFluidBuilding(buildGroup, params, animatedObjects) {
         const r2 = hash(cx, cz + f);
         const r3 = hash(f, i);
 
-        let mesh;
-        let yPos, xOffset, zOffset;
-
         const isLiquid = hash(f, i) > 0.5;
+        const mesh = isLiquid
+            ? createLiquidMesh({ assets, f, r1, r2, r3 }, animatedObjects)
+            : createSolidMesh({
+                assets,
+                assetType: hash(f, cx),
+                materialOverride: hash(f, cz),
+                r1, r2, r3
+            }, animatedObjects);
 
-        if (!isLiquid) {
-            // Solid asset selection
-            const assetType = hash(f, cx);
-            let chosenGeo, chosenMat;
-
-            if (assetType > 0.8) {
-                chosenGeo = assets.knotGeo;
-                chosenMat = assets.matSolid;
-            } else if (assetType > 0.6) {
-                chosenGeo = assets.coneGeo;
-                chosenMat = assets.matDark;
-            } else if (assetType > 0.4) {
-                chosenGeo = assets.tetraGeo;
-                chosenMat = assets.matWire;
-            } else if (assetType > 0.2) {
-                chosenGeo = assets.cylinderGeo;
-                chosenMat = assets.matTreeBark;
-            } else {
-                chosenGeo = assets.boxGeo;
-                chosenMat = assets.matSolid;
-            }
-
-            if (hash(f, cz) > 0.9) {
-                chosenMat = assets.matPlasma.clone();
-            }
-
-            mesh = new THREE.Mesh(chosenGeo, chosenMat);
-            const scaleMod = 1.0 + r2 * 1.5;
-
-            if (chosenGeo === assets.coneGeo) {
-                mesh.scale.set(scaleMod, scaleMod * 3, scaleMod);
-            } else if (chosenGeo === assets.tetraGeo) {
-                mesh.scale.set(scaleMod * 2, scaleMod * 2, scaleMod * 2);
-            } else {
-                mesh.scale.set(scaleMod * 2, scaleMod * 1.5, scaleMod * 2);
-            }
-
-            mesh.rotation.set(
-                r1 * Math.PI * 2,
-                r2 * Math.PI * 2,
-                r3 * Math.PI * 2
-            );
-
-            yPos = f * 2.5;
-            xOffset = (r2 - 0.5) * 5;
-            zOffset = (r3 - 0.5) * 5;
-            mesh.userData.baseScale = mesh.scale.clone();
-
-            if (assetType > 0.7) {
-                mesh.userData.animType = 'ROTATE_FLOAT';
-                mesh.userData.speed = 0.2;
-                animatedObjects.push(mesh);
-            }
-        } else {
-            // Liquid blob
-            mesh = new THREE.Mesh(assets.sphereGeo, assets.matLiquid);
-            const stretch = 1.0 + r1 * 2.0;
-            mesh.scale.set(2.0 + r2, 2.0 * stretch, 2.0 + r3);
-
-            mesh.userData = {
-                animType: 'LIQUID_WOBBLE',
-                speed: 0.8 + r2,
-                phase: f + r1 * 5,
-                baseScale: mesh.scale.clone(),
-            };
-            animatedObjects.push(mesh);
-
-            yPos = f * 2.5 + (r1 - 0.5) * 2;
-            xOffset = (r2 - 0.5) * 6;
-            zOffset = (r3 - 0.5) * 6;
-            mesh.rotation.z = (r1 - 0.5) * 0.5;
-        }
+        const { yPos, xOffset, zOffset } = calculateFragmentPosition(isLiquid, f, r1, r2, r3);
 
         mesh.castShadow = true;
         mesh.receiveShadow = true;
