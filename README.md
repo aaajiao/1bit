@@ -454,17 +454,6 @@ npm run typecheck   # 运行 TypeScript 类型检查
 npm run build       # 类型检查 + 生产构建
 ```
 
-### 与原版 (r128) 的兼容性处理
-
-重构时从 Three.js r128 升级到 0.160.0，处理了以下兼容性问题：
-
-| 问题 | 解决方案 |
-|------|---------|
-| `THREE.RGBFormat` 移除 | 使用 `THREE.RGBAFormat` + 4通道数据 |
-| 颜色管理变更 (r152+) | 禁用 `ColorManagement` |
-| 光照衰减变更 (r155+) | 增加光照强度，降低衰减值 |
-| `PlaneBufferGeometry` 合并 | 使用 `PlaneGeometry` |
-
 ---
 
 ## 🎨 核心视觉效果
