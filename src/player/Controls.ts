@@ -42,25 +42,17 @@ export class Controls {
 
     private isLocked: boolean = false;
 
-    // Bound event handlers for cleanup
-    private boundOnKeyDown: (e: KeyboardEvent) => void;
-    private boundOnKeyUp: (e: KeyboardEvent) => void;
-    private boundOnMouseMove: (e: MouseEvent) => void;
-    private boundOnClick: () => void;
-    private boundOnPointerLockChange: () => void;
-    private boundOnWheel: (e: WheelEvent) => void;
+    // Bound event handlers (arrow functions for proper 'this' binding)
+    private handleKeyDown = (e: KeyboardEvent): void => this.onKeyDown(e);
+    private handleKeyUp = (e: KeyboardEvent): void => this.onKeyUp(e);
+    private handleMouseMove = (e: MouseEvent): void => this.onMouseMove(e);
+    private handleClick = (): void => this.onClick();
+    private handlePointerLockChange = (): void => this.onPointerLockChange();
+    private handleWheel = (e: WheelEvent): void => this.onWheel(e);
 
     constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
         this.camera = camera;
         this.domElement = domElement;
-
-        // Bind handlers
-        this.boundOnKeyDown = this.onKeyDown.bind(this);
-        this.boundOnKeyUp = this.onKeyUp.bind(this);
-        this.boundOnMouseMove = this.onMouseMove.bind(this);
-        this.boundOnClick = this.onClick.bind(this);
-        this.boundOnPointerLockChange = this.onPointerLockChange.bind(this);
-        this.boundOnWheel = this.onWheel.bind(this);
 
         this.bindEvents();
     }
@@ -69,12 +61,12 @@ export class Controls {
      * Bind keyboard and mouse events
      */
     private bindEvents(): void {
-        document.addEventListener('keydown', this.boundOnKeyDown);
-        document.addEventListener('keyup', this.boundOnKeyUp);
-        document.addEventListener('mousemove', this.boundOnMouseMove);
-        document.addEventListener('click', this.boundOnClick);
-        document.addEventListener('pointerlockchange', this.boundOnPointerLockChange);
-        document.addEventListener('wheel', this.boundOnWheel, { passive: false });
+        document.addEventListener('keydown', this.handleKeyDown);
+        document.addEventListener('keyup', this.handleKeyUp);
+        document.addEventListener('mousemove', this.handleMouseMove);
+        document.addEventListener('click', this.handleClick);
+        document.addEventListener('pointerlockchange', this.handlePointerLockChange);
+        document.addEventListener('wheel', this.handleWheel, { passive: false });
     }
 
     private onKeyDown(e: KeyboardEvent): void {
@@ -243,12 +235,12 @@ export class Controls {
      * Cleanup event listeners
      */
     dispose(): void {
-        document.removeEventListener('keydown', this.boundOnKeyDown);
-        document.removeEventListener('keyup', this.boundOnKeyUp);
-        document.removeEventListener('mousemove', this.boundOnMouseMove);
-        document.removeEventListener('click', this.boundOnClick);
-        document.removeEventListener('pointerlockchange', this.boundOnPointerLockChange);
-        document.removeEventListener('wheel', this.boundOnWheel);
+        document.removeEventListener('keydown', this.handleKeyDown);
+        document.removeEventListener('keyup', this.handleKeyUp);
+        document.removeEventListener('mousemove', this.handleMouseMove);
+        document.removeEventListener('click', this.handleClick);
+        document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
+        document.removeEventListener('wheel', this.handleWheel);
     }
 
     /**
