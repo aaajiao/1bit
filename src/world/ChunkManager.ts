@@ -10,6 +10,7 @@ import type { SharedAssets } from './SharedAssets';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
 import { hash } from '../utils/hash';
+import { disposeObject3D } from '../utils/dispose';
 import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
 import { createDynamicCable } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
@@ -271,13 +272,22 @@ export class ChunkManager {
      */
     private removeChunk(key: string): void {
         const chunk = this.activeChunks[key];
+
+        // Dispose cables (geometry and material)
         if (chunk.userData.cables) {
             chunk.userData.cables.forEach((c: DynamicCable) => {
-                if (c.line && c.line.geometry) {
-                    c.line.geometry.dispose();
+                if (c.line) {
+                    c.line.geometry?.dispose();
+                    if (c.line.material instanceof THREE.Material) {
+                        c.line.material.dispose();
+                    }
                 }
             });
         }
+
+        // Dispose all meshes in chunk (geometries, materials, textures)
+        disposeObject3D(chunk, false, false); // Don't dispose shared materials
+
         this.chunkGroup.remove(chunk);
         delete this.activeChunks[key];
     }
@@ -391,8 +401,10 @@ export class ChunkManager {
                     const end = cable.endNode.obj.position.clone().add(cable.endNode.topOffset);
                     const mid = start.clone().lerp(end, 0.5);
 
-                    if (playerPos.distanceToSquared(mid) > 2500)
-                        continue; // Skip far cables (>50m)
+                    // Skip far cables for performance (>50m)
+                    const CABLE_SKIP_DISTANCE_SQ = 2500;
+                    if (playerPos.distanceToSquared(mid) > CABLE_SKIP_DISTANCE_SQ)
+                        continue;
 
                     // Accurate distance to segment
                     const line = new THREE.Line3(start, end);
@@ -419,5 +431,24 @@ export class ChunkManager {
         }
 
         return minDistance;
+    }
+
+    /**
+     * Dispose all resources and cleanup
+     */
+    dispose(): void {
+        // Remove all active chunks
+        for (const key in this.activeChunks) {
+            this.removeChunk(key);
+        }
+
+        // Dispose floor material
+        this.floorMaterial.dispose();
+
+        // Dispose shared assets
+        this.assets.dispose();
+
+        // Remove chunk group from scene
+        this.chunkGroup.parent?.remove(this.chunkGroup);
     }
 }
