@@ -21,6 +21,7 @@ src/
 │   └── AudioEngine.ts     # 底层 WebAudio 引擎
 ├── config/          # 配置常量
 │   ├── audio.ts     # 音频参数配置
+│   ├── constants.ts # 集中管理的游戏常量（性能、机制阈值等）
 │   ├── physics.ts   # 物理/玩家参数配置
 │   └── index.ts     # 统一导出
 ├── core/            # 核心初始化模块
@@ -60,6 +61,7 @@ src/
 │   ├── SkyEye.ts          # 空中“Sky Eye”对象的行为与视觉
 │   └── WeatherSystem.ts   # 天气系统（雨、雪、故障效果）
 └── utils/           # 工具函数
+    ├── dispose.ts          # Three.js 资源释放工具（几何体、材质、纹理）
     ├── hash.ts             # 字符串哈希工具
     ├── ObjectPool.ts       # 对象池（用于优化性能）
     └── ScreenshotManager.ts # 截图功能管理
@@ -150,6 +152,7 @@ this.newSystem.update(delta, { /* 依赖 */ });
 | `utils/` | `hash.test.ts` | ✅ |
 | `stats/` | `RunStatsCollector.test.ts` | ✅ |
 | `stats/` | `StateSnapshotGenerator.test.ts` | ✅ |
+| `player/` | `GazeMechanic.test.ts` | ✅ (27 测试用例) |
 
-*最后更新: 2025-12-22*
+*最后更新: 2025-12-23*
 
