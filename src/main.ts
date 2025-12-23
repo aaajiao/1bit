@@ -92,8 +92,8 @@ class ChimeraVoid {
                 this.audio.init();
         }, { once: true });
 
-        // Player Manager
-        this.player = new PlayerManager(this.camera, document.body, this.audio);
+        // Player Manager (use renderer canvas for pointer lock)
+        this.player = new PlayerManager(this.camera, this.renderer.domElement, this.audio);
         this.player.setSpawnPosition(8, 2, 8); // Safe spawn
 
         // Mechanics
