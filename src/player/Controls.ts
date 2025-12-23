@@ -5,6 +5,7 @@ import { PHYSICS_CONFIG } from '../config';
 
 /**
  * First-person keyboard + mouse controls
+ * Supports both Pointer Lock (desktop) and touch/trackpad fallback (iPad)
  */
 export class Controls {
     private camera: THREE.PerspectiveCamera;
@@ -42,6 +43,13 @@ export class Controls {
 
     private isLocked: boolean = false;
 
+    // iPad/touch fallback mode
+    private useTouchFallback: boolean = false;
+    private isActive: boolean = false; // For touch mode: game is active
+    private lastTouchX: number = 0;
+    private lastTouchY: number = 0;
+    private isTouching: boolean = false;
+
     // Bound event handlers (arrow functions for proper 'this' binding)
     private handleKeyDown = (e: KeyboardEvent): void => this.onKeyDown(e);
     private handleKeyUp = (e: KeyboardEvent): void => this.onKeyUp(e);
@@ -50,9 +58,20 @@ export class Controls {
     private handlePointerLockChange = (): void => this.onPointerLockChange();
     private handleWheel = (e: WheelEvent): void => this.onWheel(e);
 
+    // Touch/trackpad event handlers
+    private handleTouchStart = (e: TouchEvent): void => this.onTouchStart(e);
+    private handleTouchMove = (e: TouchEvent): void => this.onTouchMove(e);
+    private handleTouchEnd = (): void => this.onTouchEnd();
+    private handlePointerDown = (e: PointerEvent): void => this.onPointerDown(e);
+    private handlePointerMove = (e: PointerEvent): void => this.onPointerMove(e);
+    private handlePointerUp = (): void => this.onPointerUp();
+
     constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
         this.camera = camera;
         this.domElement = domElement;
+
+        // Check if Pointer Lock is supported
+        this.useTouchFallback = !('requestPointerLock' in document.body);
 
         this.bindEvents();
     }
@@ -63,10 +82,24 @@ export class Controls {
     private bindEvents(): void {
         document.addEventListener('keydown', this.handleKeyDown);
         document.addEventListener('keyup', this.handleKeyUp);
-        document.addEventListener('mousemove', this.handleMouseMove);
-        document.addEventListener('click', this.handleClick);
-        document.addEventListener('pointerlockchange', this.handlePointerLockChange);
         document.addEventListener('wheel', this.handleWheel, { passive: false });
+
+        if (this.useTouchFallback) {
+            // iPad/touch mode: use touch and pointer events
+            document.addEventListener('touchstart', this.handleTouchStart, { passive: false });
+            document.addEventListener('touchmove', this.handleTouchMove, { passive: false });
+            document.addEventListener('touchend', this.handleTouchEnd);
+            document.addEventListener('pointerdown', this.handlePointerDown);
+            document.addEventListener('pointermove', this.handlePointerMove);
+            document.addEventListener('pointerup', this.handlePointerUp);
+            document.addEventListener('click', this.handleClick);
+        }
+        else {
+            // Desktop mode: use Pointer Lock
+            document.addEventListener('mousemove', this.handleMouseMove);
+            document.addEventListener('click', this.handleClick);
+            document.addEventListener('pointerlockchange', this.handlePointerLockChange);
+        }
     }
 
     private onKeyDown(e: KeyboardEvent): void {
@@ -158,7 +191,21 @@ export class Controls {
     }
 
     private onClick(): void {
-        this.domElement.requestPointerLock();
+        if (this.useTouchFallback) {
+            // Touch mode: toggle active state on click
+            this.isActive = true;
+            this.isLocked = true;
+
+            // Hide UI
+            const ui = document.getElementById('ui');
+            if (ui) {
+                ui.classList.add('hidden');
+            }
+        }
+        else {
+            // Desktop mode: request pointer lock
+            this.domElement.requestPointerLock();
+        }
     }
 
     private onPointerLockChange(): void {
@@ -169,6 +216,88 @@ export class Controls {
         if (ui) {
             ui.classList.toggle('hidden', this.isLocked);
         }
+    }
+
+    // ========== Touch/Trackpad handlers for iPad ==========
+
+    private onTouchStart(e: TouchEvent): void {
+        if (!this.isActive)
+            return;
+
+        if (e.touches.length === 1) {
+            this.isTouching = true;
+            this.lastTouchX = e.touches[0].clientX;
+            this.lastTouchY = e.touches[0].clientY;
+        }
+    }
+
+    private onTouchMove(e: TouchEvent): void {
+        if (!this.isActive || !this.isTouching)
+            return;
+
+        if (e.touches.length === 1) {
+            e.preventDefault();
+
+            const touch = e.touches[0];
+            const deltaX = touch.clientX - this.lastTouchX;
+            const deltaY = touch.clientY - this.lastTouchY;
+
+            this.applyLookDelta(deltaX, deltaY);
+
+            this.lastTouchX = touch.clientX;
+            this.lastTouchY = touch.clientY;
+        }
+    }
+
+    private onTouchEnd(): void {
+        this.isTouching = false;
+    }
+
+    private onPointerDown(e: PointerEvent): void {
+        if (!this.isActive)
+            return;
+
+        // Handle trackpad/mouse in touch fallback mode
+        if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+            this.isTouching = true;
+            this.lastTouchX = e.clientX;
+            this.lastTouchY = e.clientY;
+        }
+    }
+
+    private onPointerMove(e: PointerEvent): void {
+        if (!this.isActive || !this.isTouching)
+            return;
+
+        // Handle trackpad/mouse movement
+        if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+            const deltaX = e.clientX - this.lastTouchX;
+            const deltaY = e.clientY - this.lastTouchY;
+
+            this.applyLookDelta(deltaX, deltaY);
+
+            this.lastTouchX = e.clientX;
+            this.lastTouchY = e.clientY;
+        }
+    }
+
+    private onPointerUp(): void {
+        this.isTouching = false;
+    }
+
+    /**
+     * Apply camera rotation from delta movement
+     */
+    private applyLookDelta(deltaX: number, deltaY: number): void {
+        // Use a slightly higher sensitivity for touch
+        const sensitivity = this.config.mouseSensitivity * 1.5;
+
+        this.camera.rotation.y -= deltaX * sensitivity;
+        this.camera.rotation.x -= deltaY * sensitivity;
+        this.camera.rotation.x = Math.max(
+            -Math.PI / 2,
+            Math.min(Math.PI / 2, this.camera.rotation.x),
+        );
     }
 
     /**
@@ -237,10 +366,23 @@ export class Controls {
     dispose(): void {
         document.removeEventListener('keydown', this.handleKeyDown);
         document.removeEventListener('keyup', this.handleKeyUp);
-        document.removeEventListener('mousemove', this.handleMouseMove);
-        document.removeEventListener('click', this.handleClick);
-        document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
         document.removeEventListener('wheel', this.handleWheel);
+        document.removeEventListener('click', this.handleClick);
+
+        if (this.useTouchFallback) {
+            // Touch mode cleanup
+            document.removeEventListener('touchstart', this.handleTouchStart);
+            document.removeEventListener('touchmove', this.handleTouchMove);
+            document.removeEventListener('touchend', this.handleTouchEnd);
+            document.removeEventListener('pointerdown', this.handlePointerDown);
+            document.removeEventListener('pointermove', this.handlePointerMove);
+            document.removeEventListener('pointerup', this.handlePointerUp);
+        }
+        else {
+            // Desktop mode cleanup
+            document.removeEventListener('mousemove', this.handleMouseMove);
+            document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
+        }
     }
 
     /**
