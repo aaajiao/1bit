@@ -63,9 +63,6 @@ class ChimeraVoid {
     private isRunning: boolean = true;
     private animationFrameId: number = 0;
 
-    // Bound event handler for cleanup
-    private boundHandleResize: () => void;
-
     private config: AppConfig = {
         renderScale: PERFORMANCE.DEFAULT_RENDER_SCALE,
         fogNear: PERFORMANCE.FOG_NEAR,
@@ -115,8 +112,7 @@ class ChimeraVoid {
         this.hud = new HUD();
         new ScreenshotManager(this.renderer);
 
-        // Events - bind handler for cleanup
-        this.boundHandleResize = this.handleResize.bind(this);
+        // Events
         this.setupWindowEvents();
 
         // Start loop
@@ -124,14 +120,12 @@ class ChimeraVoid {
     }
 
     private setupWindowEvents(): void {
-        window.addEventListener('resize', this.boundHandleResize);
-    }
-
-    private handleResize(): void {
-        this.camera.aspect = window.innerWidth / window.innerHeight;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        updatePostProcessingSize(this.postProcessing, this.config.renderScale);
+        window.addEventListener('resize', () => {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+            updatePostProcessingSize(this.postProcessing, this.config.renderScale);
+        });
     }
 
     private animate(): void {
@@ -312,9 +306,6 @@ class ChimeraVoid {
         if (this.animationFrameId) {
             cancelAnimationFrame(this.animationFrameId);
         }
-
-        // Remove event listeners
-        window.removeEventListener('resize', this.boundHandleResize);
 
         // Dispose subsystems
         this.player.dispose();
