@@ -1,8 +1,8 @@
 # 1-Bit 风格游戏优化建议
 
-> **项目**: Wired Brutalism: Chimera Void  
-> **分析日期**: 2025-12-21  
-> **最后更新**: 2025-12-21
+> **项目**: Wired Brutalism: Chimera Void
+> **分析日期**: 2025-12-21
+> **最后更新**: 2025-12-23
 
 ---
 
@@ -83,4 +83,53 @@
 
 ---
 
-*文档最后更新于 2025-12-21*
+---
+
+## ⚡ 性能优化 (2025-12-23)
+
+### 已完成优化
+
+#### 1. 常量集中管理
+将散落在代码中的魔法数字提取到 `src/config/constants.ts`：
+- 游戏逻辑常量 (GAMEPLAY)
+- 电缆检测参数 (CABLE_PROXIMITY)
+- 世界生成配置 (WORLD)
+- 凝视机制阈值 (GAZE)
+- 反抗机制参数 (OVERRIDE)
+- 房间过渡配置 (ROOM_TRANSITION)
+- 性能调优参数 (PERFORMANCE)
+
+#### 2. Vector3 对象复用
+优化 `PlayerManager.getPosition()` 避免每帧创建新对象：
+- 使用静态 Vector3 实例
+- 减少 GC 压力
+
+#### 3. 电缆音频检测节流
+优化电缆距离检测逻辑：
+- 每 3 帧检测一次（而非每帧）
+- 50m 外提前跳过检测
+- 显著降低 CPU 开销
+
+#### 4. 资源清理工具
+新增 `src/utils/dispose.ts` 工具函数：
+- `disposeObject3D()`: 递归释放 Object3D 层级资源
+- `disposeRenderTarget()`: 释放渲染目标
+- `removeAndDispose()`: 移除并释放对象
+
+#### 5. 生命周期管理
+为核心系统添加 `dispose()` 方法：
+- ChimeraVoid (主应用)
+- ChunkManager (区块管理)
+- AudioController / AudioEngine (音频系统)
+- SkyEye (天空之眼)
+- HandsModel (手部模型)
+- PlayerManager (玩家管理)
+
+#### 6. 区块清理优化
+改进 `ChunkManager.removeChunk()`：
+- 完整释放几何体、材质、纹理
+- 从场景中正确移除对象
+
+---
+
+*文档最后更新于 2025-12-23*

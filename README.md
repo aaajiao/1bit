@@ -431,6 +431,7 @@ npm run serve
     │   ├── DayNightCycle.ts # 昼夜循环系统
     │   └── SkyEye.ts       # 天空之眼
     └── utils/
+        ├── dispose.ts      # Three.js 资源释放工具
         ├── hash.ts         # 确定性伪随机哈希
         └── ObjectPool.ts   # 对象池（性能优化）
 ```
@@ -717,6 +718,10 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 - **共享材质**: 减少 Draw Call，提升渲染效率
 - **LOD 系统**: 远距离区块简化渲染
 - **预分配缓存**: 避免运行时内存分配
+- **常量集中管理**: `constants.ts` 统一管理魔法数字
+- **资源清理工具**: `dispose.ts` 递归释放 Three.js 资源
+- **检测节流**: 电缆音频检测每 3 帧执行一次
+- **生命周期管理**: 核心系统支持 `dispose()` 方法
 
 ---
 
