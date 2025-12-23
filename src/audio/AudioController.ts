@@ -777,4 +777,33 @@ export class AudioController implements AudioSystemInterface {
             this.startBinauralBeat(audioConfig.baseFrequency, audioConfig.beatFrequency);
         }
     }
+
+    // ==================== Cleanup ====================
+
+    /**
+     * Dispose all audio resources
+     */
+    dispose(): void {
+        // Stop all active sounds
+        this.stopStaticAmbient();
+        this.stopRainAmbient();
+        this.stopBinauralBeat();
+        this.stopCableHum();
+        this.stopRiftFog();
+        this.stopRiftFall();
+        this.stopFlowerAudio();
+
+        // Stop ambient drone
+        if (this.ambientNode) {
+            try {
+                this.ambientNode.osc1.stop();
+                this.ambientNode.osc2.stop();
+            }
+            catch { /* Already stopped */ }
+            this.ambientNode = null;
+        }
+
+        // Dispose engine
+        this.engine.dispose();
+    }
 }

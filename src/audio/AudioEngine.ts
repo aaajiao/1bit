@@ -209,4 +209,25 @@ export class AudioEngine {
         noise.start(now);
         noise.stop(now + options.duration);
     }
+
+    /**
+     * Dispose audio context and all resources
+     */
+    dispose(): void {
+        if (this.audioContext) {
+            // Disconnect nodes
+            this.masterGain?.disconnect();
+            this.gazeLowPassFilter?.disconnect();
+
+            // Close audio context
+            this.audioContext.close().catch(() => {
+                // Ignore close errors
+            });
+
+            this.audioContext = null;
+            this.masterGain = null;
+            this.gazeLowPassFilter = null;
+            this.enabled = false;
+        }
+    }
 }

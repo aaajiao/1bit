@@ -333,4 +333,23 @@ export class HandsModel {
         }
         return null;
     }
+
+    /**
+     * Cleanup resources
+     */
+    dispose(): void {
+        // Dispose materials
+        this.handMat.dispose();
+        this.jointMat.dispose();
+
+        // Remove from camera
+        this.camera.remove(this.handsGroup);
+
+        // Dispose all geometries recursively
+        this.handsGroup.traverse((obj) => {
+            if (obj instanceof THREE.Mesh) {
+                obj.geometry?.dispose();
+            }
+        });
+    }
 }

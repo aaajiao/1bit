@@ -33,6 +33,9 @@ export class PlayerManager {
     // Cache for state
     private currentState: PlayerState;
 
+    // Cached position to avoid per-frame allocations
+    private _cachedPosition = new THREE.Vector3();
+
     constructor(
         camera: THREE.PerspectiveCamera,
         domElement: HTMLElement,
@@ -111,10 +114,10 @@ export class PlayerManager {
     }
 
     /**
-     * Get current position
+     * Get current position (returns cached Vector3, do not modify)
      */
     public getPosition(): THREE.Vector3 {
-        return this.controls.getCamera().position.clone();
+        return this._cachedPosition.copy(this.controls.getCamera().position);
     }
 
     /**
@@ -178,19 +181,17 @@ export class PlayerManager {
         // 5. Update Hands
         this.hands.animate(delta, isMoving, time * 1000);
 
-        // Update cached state
-        this.currentState = {
-            position: this.controls.getCamera().position.clone(),
-            isMoving,
-            isGazing: gazeState.isGazing,
-            gazeIntensity: gazeState.gazeIntensity,
-            pitch: this.gaze.getPitch(),
-            overrideActive: overrideState.isActive,
-            overrideTriggered: overrideState.isTriggered,
-            overrideProgress: this.override.getHoldProgress(),
-            flowerIntensity,
-            isShiftHeld,
-        };
+        // Update cached state (reuse position object)
+        this.currentState.position.copy(this.controls.getCamera().position);
+        this.currentState.isMoving = isMoving;
+        this.currentState.isGazing = gazeState.isGazing;
+        this.currentState.gazeIntensity = gazeState.gazeIntensity;
+        this.currentState.pitch = this.gaze.getPitch();
+        this.currentState.overrideActive = overrideState.isActive;
+        this.currentState.overrideTriggered = overrideState.isTriggered;
+        this.currentState.overrideProgress = this.override.getHoldProgress();
+        this.currentState.flowerIntensity = flowerIntensity;
+        this.currentState.isShiftHeld = isShiftHeld;
 
         return this.currentState;
     }
@@ -200,5 +201,13 @@ export class PlayerManager {
      */
     public getColorInversionValue(): number {
         return this.override.getColorInversionValue();
+    }
+
+    /**
+     * Cleanup resources
+     */
+    public dispose(): void {
+        this.controls.dispose();
+        this.hands.dispose();
     }
 }

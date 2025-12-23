@@ -1,8 +1,10 @@
 // 1-bit Chimera Void - Main Entry Point
 import type * as THREE from 'three';
 import type { PostProcessingComponents } from './core/PostProcessing';
-import type { AppConfig } from './types';
+import type { AppConfig, WeatherState } from './types';
+import type { RoomShaderConfig } from './world/RoomConfig';
 import { AudioController } from './audio/AudioController';
+import { CABLE_PROXIMITY, GAMEPLAY, PERFORMANCE } from './config';
 import { createPostProcessing, updatePostProcessingSize } from './core/PostProcessing';
 import { createScene } from './core/SceneSetup';
 // New Managers
@@ -11,6 +13,7 @@ import { RunStatsCollector } from './stats/RunStatsCollector';
 import { SnapshotOverlay } from './stats/SnapshotOverlay';
 import { StateSnapshotGenerator } from './stats/StateSnapshotGenerator';
 import { HUD } from './ui/HUD';
+import { disposeRenderTarget } from './utils/dispose';
 import { ScreenshotManager } from './utils/ScreenshotManager';
 import { updateCableTime } from './world/CableSystem';
 import { CHUNK_SIZE, ChunkManager } from './world/ChunkManager';
@@ -53,10 +56,20 @@ class ChimeraVoid {
     private hud: HUD;
     private previousRoomType: RoomType | null = null;
 
+    // Performance optimization: cable check throttling
+    private cableCheckCounter: number = 0;
+
+    // Animation loop control
+    private isRunning: boolean = true;
+    private animationFrameId: number = 0;
+
+    // Bound event handler for cleanup
+    private boundHandleResize: () => void;
+
     private config: AppConfig = {
-        renderScale: 0.5,
-        fogNear: 20,
-        fogFar: 110,
+        renderScale: PERFORMANCE.DEFAULT_RENDER_SCALE,
+        fogNear: PERFORMANCE.FOG_NEAR,
+        fogFar: PERFORMANCE.FOG_FAR,
     };
 
     constructor() {
@@ -102,7 +115,8 @@ class ChimeraVoid {
         this.hud = new HUD();
         new ScreenshotManager(this.renderer);
 
-        // Events
+        // Events - bind handler for cleanup
+        this.boundHandleResize = this.handleResize.bind(this);
         this.setupWindowEvents();
 
         // Start loop
@@ -110,16 +124,20 @@ class ChimeraVoid {
     }
 
     private setupWindowEvents(): void {
-        window.addEventListener('resize', () => {
-            this.camera.aspect = window.innerWidth / window.innerHeight;
-            this.camera.updateProjectionMatrix();
-            this.renderer.setSize(window.innerWidth, window.innerHeight);
-            updatePostProcessingSize(this.postProcessing, this.config.renderScale);
-        });
+        window.addEventListener('resize', this.boundHandleResize);
+    }
+
+    private handleResize(): void {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        updatePostProcessingSize(this.postProcessing, this.config.renderScale);
     }
 
     private animate(): void {
-        requestAnimationFrame(() => this.animate());
+        if (!this.isRunning)
+            return;
+        this.animationFrameId = requestAnimationFrame(() => this.animate());
 
         const time = performance.now();
         const delta = (time - this.prevTime) / 1000;
@@ -156,12 +174,15 @@ class ChimeraVoid {
         if (currentRoomType === RoomType.FORCED_ALIGNMENT) {
             this.riftMechanic.update(this.player, this.audio, playerPos);
         }
-        else if (currentRoomType === RoomType.INFO_OVERFLOW && Math.random() < 0.02) {
+        else if (currentRoomType === RoomType.INFO_OVERFLOW && Math.random() < GAMEPLAY.INFO_CHIRP_PROBABILITY) {
             this.audio.playInfoChirp();
         }
 
-        // Cable Audio (Simplified for main.ts)
-        this.updateCableAudio(playerPos);
+        // Cable Audio - throttled for performance (every N frames)
+        if (++this.cableCheckCounter >= CABLE_PROXIMITY.CHECK_INTERVAL) {
+            this.cableCheckCounter = 0;
+            this.updateCableAudio(playerPos);
+        }
 
         // 4. Update Player
         const playerState = this.player.update(delta, t, { currentRoomType });
@@ -237,22 +258,22 @@ class ChimeraVoid {
 
     private updateCableAudio(playerPos: THREE.Vector3): void {
         const cableDist = this.chunkManager.getDistanceToNearestCable(playerPos);
-        if (cableDist < 8.0) {
+        if (cableDist < CABLE_PROXIMITY.HUM_START_DISTANCE) {
             this.audio.startCableHum();
         }
-        else if (cableDist > 12.0) {
+        else if (cableDist > CABLE_PROXIMITY.HUM_STOP_DISTANCE) {
             this.audio.stopCableHum();
         }
 
-        if (cableDist < 12.0) {
+        if (cableDist < CABLE_PROXIMITY.MAX_AUDIO_DISTANCE) {
             const humIntensity = Math.max(0, 1 - Math.max(0, cableDist - 1) / 11.0);
             this.audio.updateCableHum(humIntensity);
-            if (cableDist < 2.5 && Math.random() < 0.01)
+            if (cableDist < CABLE_PROXIMITY.PULSE_DISTANCE && Math.random() < CABLE_PROXIMITY.PULSE_PROBABILITY)
                 this.audio.playCablePulse();
         }
     }
 
-    private updateUniforms(t: number, weather: any, shaderConfig: any, flowerIntensity: number, overrideProgress: number): void {
+    private updateUniforms(t: number, weather: WeatherState, shaderConfig: RoomShaderConfig, flowerIntensity: number, overrideProgress: number): void {
         const u = this.postProcessing.shaderQuad.material.uniforms;
 
         // Weather
@@ -280,6 +301,37 @@ class ChimeraVoid {
         this.renderer.render(this.scene, this.camera);
         this.renderer.setRenderTarget(null);
         this.renderer.render(this.postProcessing.composerScene, this.postProcessing.composerCamera);
+    }
+
+    /**
+     * Cleanup all resources and stop the application
+     */
+    dispose(): void {
+        // Stop animation loop
+        this.isRunning = false;
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+        }
+
+        // Remove event listeners
+        window.removeEventListener('resize', this.boundHandleResize);
+
+        // Dispose subsystems
+        this.player.dispose();
+        this.chunkManager.dispose();
+        this.audio.dispose();
+        this.skyEye.dispose();
+
+        // Dispose post-processing
+        disposeRenderTarget(this.postProcessing.renderTarget);
+        this.postProcessing.shaderQuad.geometry.dispose();
+        (this.postProcessing.shaderQuad.material as THREE.ShaderMaterial).dispose();
+
+        // Dispose renderer
+        this.renderer.dispose();
+
+        // Clear scene
+        this.scene.clear();
     }
 }
 

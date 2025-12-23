@@ -116,4 +116,22 @@ export class SkyEye {
             this.isBlinking = false;
         }, 150);
     }
+
+    /**
+     * Cleanup resources
+     */
+    dispose(): void {
+        // Dispose all geometries and materials
+        this.group.traverse((obj) => {
+            if (obj instanceof THREE.Mesh) {
+                obj.geometry?.dispose();
+                if (obj.material instanceof THREE.Material) {
+                    obj.material.dispose();
+                }
+            }
+        });
+
+        // Remove from parent
+        this.group.parent?.remove(this.group);
+    }
 }
