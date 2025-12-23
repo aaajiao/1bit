@@ -103,6 +103,12 @@ export class Controls {
     }
 
     private onKeyDown(e: KeyboardEvent): void {
+        // ESC to exit game mode (for touch fallback)
+        if (e.code === 'Escape' && this.useTouchFallback && this.isActive) {
+            this.exitTouchMode();
+            return;
+        }
+
         switch (e.code) {
             case 'KeyW': this.moveForward = true; break;
             case 'KeyA': this.moveLeft = true; break;
@@ -202,6 +208,9 @@ export class Controls {
                 this.lastPointerY = e.clientY;
             }
 
+            // Hide cursor (iPad supports this)
+            document.body.style.cursor = 'none';
+
             // Hide UI
             const ui = document.getElementById('ui');
             if (ui) {
@@ -211,6 +220,25 @@ export class Controls {
         else {
             // Desktop mode: request pointer lock
             this.domElement.requestPointerLock();
+        }
+    }
+
+    /**
+     * Exit touch/trackpad mode (called on ESC)
+     */
+    private exitTouchMode(): void {
+        this.isActive = false;
+        this.isLocked = false;
+        this.lastPointerX = -1;
+        this.lastPointerY = -1;
+
+        // Show cursor
+        document.body.style.cursor = '';
+
+        // Show UI
+        const ui = document.getElementById('ui');
+        if (ui) {
+            ui.classList.remove('hidden');
         }
     }
 
