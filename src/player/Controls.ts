@@ -46,15 +46,15 @@ export class Controls {
     // iPad/touch fallback mode
     private useTouchFallback: boolean = false;
     private isActive: boolean = false; // For touch mode: game is active
-    private lastTouchX: number = 0;
-    private lastTouchY: number = 0;
-    private isTouching: boolean = false;
+    private lastPointerX: number = -1; // -1 means not initialized
+    private lastPointerY: number = -1;
+    private isTouching: boolean = false; // For touch screen drag
 
     // Bound event handlers (arrow functions for proper 'this' binding)
     private handleKeyDown = (e: KeyboardEvent): void => this.onKeyDown(e);
     private handleKeyUp = (e: KeyboardEvent): void => this.onKeyUp(e);
     private handleMouseMove = (e: MouseEvent): void => this.onMouseMove(e);
-    private handleClick = (): void => this.onClick();
+    private handleClick = (e: MouseEvent): void => this.onClick(e);
     private handlePointerLockChange = (): void => this.onPointerLockChange();
     private handleWheel = (e: WheelEvent): void => this.onWheel(e);
 
@@ -190,11 +190,17 @@ export class Controls {
         );
     }
 
-    private onClick(): void {
+    private onClick(e?: MouseEvent): void {
         if (this.useTouchFallback) {
             // Touch mode: toggle active state on click
             this.isActive = true;
             this.isLocked = true;
+
+            // Initialize pointer position from click to avoid initial jump
+            if (e) {
+                this.lastPointerX = e.clientX;
+                this.lastPointerY = e.clientY;
+            }
 
             // Hide UI
             const ui = document.getElementById('ui');
@@ -224,10 +230,11 @@ export class Controls {
         if (!this.isActive)
             return;
 
+        // Touch screen: require drag
         if (e.touches.length === 1) {
             this.isTouching = true;
-            this.lastTouchX = e.touches[0].clientX;
-            this.lastTouchY = e.touches[0].clientY;
+            this.lastPointerX = e.touches[0].clientX;
+            this.lastPointerY = e.touches[0].clientY;
         }
     }
 
@@ -239,13 +246,13 @@ export class Controls {
             e.preventDefault();
 
             const touch = e.touches[0];
-            const deltaX = touch.clientX - this.lastTouchX;
-            const deltaY = touch.clientY - this.lastTouchY;
+            const deltaX = touch.clientX - this.lastPointerX;
+            const deltaY = touch.clientY - this.lastPointerY;
 
             this.applyLookDelta(deltaX, deltaY);
 
-            this.lastTouchX = touch.clientX;
-            this.lastTouchY = touch.clientY;
+            this.lastPointerX = touch.clientX;
+            this.lastPointerY = touch.clientY;
         }
     }
 
@@ -254,35 +261,38 @@ export class Controls {
     }
 
     private onPointerDown(e: PointerEvent): void {
-        if (!this.isActive)
-            return;
-
-        // Handle trackpad/mouse in touch fallback mode
-        if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
-            this.isTouching = true;
-            this.lastTouchX = e.clientX;
-            this.lastTouchY = e.clientY;
+        // Initialize position on first pointer interaction
+        if (this.lastPointerX < 0) {
+            this.lastPointerX = e.clientX;
+            this.lastPointerY = e.clientY;
         }
     }
 
     private onPointerMove(e: PointerEvent): void {
-        if (!this.isActive || !this.isTouching)
+        if (!this.isActive)
             return;
 
-        // Handle trackpad/mouse movement
+        // Trackpad/mouse: move without clicking (like desktop pointer lock)
         if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
-            const deltaX = e.clientX - this.lastTouchX;
-            const deltaY = e.clientY - this.lastTouchY;
+            // Skip if not initialized
+            if (this.lastPointerX < 0) {
+                this.lastPointerX = e.clientX;
+                this.lastPointerY = e.clientY;
+                return;
+            }
+
+            const deltaX = e.clientX - this.lastPointerX;
+            const deltaY = e.clientY - this.lastPointerY;
 
             this.applyLookDelta(deltaX, deltaY);
 
-            this.lastTouchX = e.clientX;
-            this.lastTouchY = e.clientY;
+            this.lastPointerX = e.clientX;
+            this.lastPointerY = e.clientY;
         }
     }
 
     private onPointerUp(): void {
-        this.isTouching = false;
+        // No-op for trackpad mode
     }
 
     /**
