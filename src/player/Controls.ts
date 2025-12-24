@@ -285,34 +285,7 @@ export class Controls {
             const deltaX = e.clientX - this.lastPointerX;
             const deltaY = e.clientY - this.lastPointerY;
 
-            // Edge detection for continuous rotation
-            const margin = 20;
-            const w = window.innerWidth;
-            const h = window.innerHeight;
-            const edgeSpeed = 0.03; // Rotation speed when at edge
-
-            const atLeftEdge = e.clientX <= margin;
-            const atRightEdge = e.clientX >= w - margin;
-            const atTopEdge = e.clientY <= margin;
-            const atBottomEdge = e.clientY >= h - margin;
-
-            if (atLeftEdge || atRightEdge || atTopEdge || atBottomEdge) {
-                // At edge: apply constant rotation in edge direction
-                if (atLeftEdge) this.camera.rotation.y += edgeSpeed;
-                if (atRightEdge) this.camera.rotation.y -= edgeSpeed;
-                if (atTopEdge) this.camera.rotation.x += edgeSpeed;
-                if (atBottomEdge) this.camera.rotation.x -= edgeSpeed;
-
-                // Clamp vertical rotation
-                this.camera.rotation.x = Math.max(
-                    -Math.PI / 2,
-                    Math.min(Math.PI / 2, this.camera.rotation.x),
-                );
-            }
-            else {
-                // Normal movement: apply delta
-                this.applyLookDelta(deltaX, deltaY);
-            }
+            this.applyLookDelta(deltaX, deltaY);
 
             this.lastPointerX = e.clientX;
             this.lastPointerY = e.clientY;
