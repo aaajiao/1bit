@@ -103,12 +103,6 @@ export class Controls {
     }
 
     private onKeyDown(e: KeyboardEvent): void {
-        // ESC to exit game mode (for touch fallback)
-        if (e.code === 'Escape' && this.useTouchFallback && this.isActive) {
-            this.exitTouchMode();
-            return;
-        }
-
         switch (e.code) {
             case 'KeyW': this.moveForward = true; break;
             case 'KeyA': this.moveLeft = true; break;
@@ -198,7 +192,8 @@ export class Controls {
 
     private onClick(e?: MouseEvent): void {
         if (this.useTouchFallback) {
-            // Touch mode: toggle active state on click
+            // iPad mode: activate controls and hide UI
+            // Note: cursor cannot be hidden on iPadOS (system limitation)
             this.isActive = true;
             this.isLocked = true;
 
@@ -207,9 +202,6 @@ export class Controls {
                 this.lastPointerX = e.clientX;
                 this.lastPointerY = e.clientY;
             }
-
-            // Hide cursor (iPad supports this)
-            document.body.style.cursor = 'none';
 
             // Hide UI
             const ui = document.getElementById('ui');
@@ -220,25 +212,6 @@ export class Controls {
         else {
             // Desktop mode: request pointer lock
             this.domElement.requestPointerLock();
-        }
-    }
-
-    /**
-     * Exit touch/trackpad mode (called on ESC)
-     */
-    private exitTouchMode(): void {
-        this.isActive = false;
-        this.isLocked = false;
-        this.lastPointerX = -1;
-        this.lastPointerY = -1;
-
-        // Show cursor
-        document.body.style.cursor = '';
-
-        // Show UI
-        const ui = document.getElementById('ui');
-        if (ui) {
-            ui.classList.remove('hidden');
         }
     }
 
@@ -314,8 +287,22 @@ export class Controls {
 
             this.applyLookDelta(deltaX, deltaY);
 
-            this.lastPointerX = e.clientX;
-            this.lastPointerY = e.clientY;
+            // Edge wrapping: reset position when cursor reaches screen edge
+            // This allows continuous rotation without getting stuck
+            const margin = 50;
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+
+            if (e.clientX <= margin || e.clientX >= w - margin ||
+                e.clientY <= margin || e.clientY >= h - margin) {
+                // Reset to center for next frame
+                this.lastPointerX = w / 2;
+                this.lastPointerY = h / 2;
+            }
+            else {
+                this.lastPointerX = e.clientX;
+                this.lastPointerY = e.clientY;
+            }
         }
     }
 
