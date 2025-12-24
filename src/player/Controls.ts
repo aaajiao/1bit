@@ -285,24 +285,37 @@ export class Controls {
             const deltaX = e.clientX - this.lastPointerX;
             const deltaY = e.clientY - this.lastPointerY;
 
-            this.applyLookDelta(deltaX, deltaY);
-
-            // Edge wrapping: reset position when cursor reaches screen edge
-            // This allows continuous rotation without getting stuck
-            const margin = 50;
+            // Edge detection for continuous rotation
+            const margin = 20;
             const w = window.innerWidth;
             const h = window.innerHeight;
+            const edgeSpeed = 0.03; // Rotation speed when at edge
 
-            if (e.clientX <= margin || e.clientX >= w - margin ||
-                e.clientY <= margin || e.clientY >= h - margin) {
-                // Reset to center for next frame
-                this.lastPointerX = w / 2;
-                this.lastPointerY = h / 2;
+            const atLeftEdge = e.clientX <= margin;
+            const atRightEdge = e.clientX >= w - margin;
+            const atTopEdge = e.clientY <= margin;
+            const atBottomEdge = e.clientY >= h - margin;
+
+            if (atLeftEdge || atRightEdge || atTopEdge || atBottomEdge) {
+                // At edge: apply constant rotation in edge direction
+                if (atLeftEdge) this.camera.rotation.y += edgeSpeed;
+                if (atRightEdge) this.camera.rotation.y -= edgeSpeed;
+                if (atTopEdge) this.camera.rotation.x += edgeSpeed;
+                if (atBottomEdge) this.camera.rotation.x -= edgeSpeed;
+
+                // Clamp vertical rotation
+                this.camera.rotation.x = Math.max(
+                    -Math.PI / 2,
+                    Math.min(Math.PI / 2, this.camera.rotation.x),
+                );
             }
             else {
-                this.lastPointerX = e.clientX;
-                this.lastPointerY = e.clientY;
+                // Normal movement: apply delta
+                this.applyLookDelta(deltaX, deltaY);
             }
+
+            this.lastPointerX = e.clientX;
+            this.lastPointerY = e.clientY;
         }
     }
 
