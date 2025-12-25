@@ -58,6 +58,8 @@ class ChimeraVoid {
 
     // Performance optimization: cable check throttling
     private cableCheckCounter: number = 0;
+    // Cable pulse cooldown tracking
+    private lastCablePulseTime: number = 0;
 
     // Animation loop control
     private isRunning: boolean = true;
@@ -262,8 +264,16 @@ class ChimeraVoid {
         if (cableDist < CABLE_PROXIMITY.MAX_AUDIO_DISTANCE) {
             const humIntensity = Math.max(0, 1 - Math.max(0, cableDist - 1) / 11.0);
             this.audio.updateCableHum(humIntensity);
-            if (cableDist < CABLE_PROXIMITY.PULSE_DISTANCE && Math.random() < CABLE_PROXIMITY.PULSE_PROBABILITY)
+
+            // Pulse with cooldown: check distance, probability, and cooldown
+            const now = performance.now() / 1000;
+            const cooldownElapsed = now - this.lastCablePulseTime >= CABLE_PROXIMITY.PULSE_COOLDOWN;
+            if (cableDist < CABLE_PROXIMITY.PULSE_DISTANCE
+                && cooldownElapsed
+                && Math.random() < CABLE_PROXIMITY.PULSE_PROBABILITY) {
                 this.audio.playCablePulse();
+                this.lastCablePulseTime = now;
+            }
         }
     }
 

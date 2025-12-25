@@ -391,14 +391,17 @@ export class ChunkManager {
                     continue;
 
                 // Check cables in this chunk
+                // Get chunk world position offset
+                const chunkOffset = chunk.position;
+
                 for (const cable of chunk.userData.cables) {
                     if (!cable.line)
                         continue;
 
                     // Approximate distance to the line segment
-                    // Simple check against midpoint first
-                    const start = cable.startNode.obj.position.clone().add(cable.startNode.topOffset);
-                    const end = cable.endNode.obj.position.clone().add(cable.endNode.topOffset);
+                    // Convert local positions to world positions by adding chunk offset
+                    const start = cable.startNode.obj.position.clone().add(cable.startNode.topOffset).add(chunkOffset);
+                    const end = cable.endNode.obj.position.clone().add(cable.endNode.topOffset).add(chunkOffset);
                     const mid = start.clone().lerp(end, 0.5);
 
                     // Skip far cables for performance (>50m)
@@ -416,15 +419,29 @@ export class ChunkManager {
                         minDistance = dist;
                     }
 
-                    // Also check dynamic points? (Too expensive, the straight line approximation is usually good enough for "audio hum")
-                    // If heavy sag, maybe check the sag point
-                    if (cable.options.heavySag) {
-                        // Very rough approximation of sag point height (usually much lower)
-                        const sagPoint = mid.clone();
-                        sagPoint.y -= cable.options.droop;
-                        const sagDist = playerPos.distanceTo(sagPoint);
-                        if (sagDist < minDistance)
-                            minDistance = sagDist;
+                    // Check the droop point for ALL cables (not just heavySag)
+                    // Cables are rendered as Bezier curves with droop, so we need to check the lowest point
+                    const droopAmount = cable.options.droop + (cable.options.heavySag ? 20 : 0);
+                    const sagPoint = mid.clone();
+                    sagPoint.y -= droopAmount;
+                    const sagDist = playerPos.distanceTo(sagPoint);
+                    if (sagDist < minDistance)
+                        minDistance = sagDist;
+
+                    // For dangling cables (one end on ground), also check points along the curve
+                    if (cable.endNode.isGround || cable.startNode.isGround) {
+                        // Check a few points along the Bezier curve
+                        const controlPoint = mid.clone();
+                        controlPoint.y -= droopAmount;
+                        for (const t of [0.25, 0.5, 0.75]) {
+                            const pt = new THREE.Vector3();
+                            pt.x = (1 - t) * (1 - t) * start.x + 2 * (1 - t) * t * controlPoint.x + t * t * end.x;
+                            pt.y = (1 - t) * (1 - t) * start.y + 2 * (1 - t) * t * controlPoint.y + t * t * end.y;
+                            pt.z = (1 - t) * (1 - t) * start.z + 2 * (1 - t) * t * controlPoint.z + t * t * end.z;
+                            const ptDist = playerPos.distanceTo(pt);
+                            if (ptDist < minDistance)
+                                minDistance = ptDist;
+                        }
                     }
                 }
             }
