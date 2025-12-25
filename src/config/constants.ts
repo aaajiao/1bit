@@ -24,9 +24,9 @@ export const CABLE_PROXIMITY = {
     /** Maximum distance for any cable audio effect */
     MAX_AUDIO_DISTANCE: 12.0,
     /** Distance for cable pulse effect */
-    PULSE_DISTANCE: 2.5,
-    /** Probability of cable pulse per check (3%) */
-    PULSE_PROBABILITY: 0.03,
+    PULSE_DISTANCE: 5.0,
+    /** Probability of cable pulse per check (2.5%) */
+    PULSE_PROBABILITY: 0.025,
     /** Cooldown between pulse sounds (seconds) */
     PULSE_COOLDOWN: 2.5,
     /** Squared distance for early-exit optimization (50m) */
