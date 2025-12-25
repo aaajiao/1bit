@@ -391,14 +391,17 @@ export class ChunkManager {
                     continue;
 
                 // Check cables in this chunk
+                // Get chunk world position offset
+                const chunkOffset = chunk.position;
+
                 for (const cable of chunk.userData.cables) {
                     if (!cable.line)
                         continue;
 
                     // Approximate distance to the line segment
-                    // Simple check against midpoint first
-                    const start = cable.startNode.obj.position.clone().add(cable.startNode.topOffset);
-                    const end = cable.endNode.obj.position.clone().add(cable.endNode.topOffset);
+                    // Convert local positions to world positions by adding chunk offset
+                    const start = cable.startNode.obj.position.clone().add(cable.startNode.topOffset).add(chunkOffset);
+                    const end = cable.endNode.obj.position.clone().add(cable.endNode.topOffset).add(chunkOffset);
                     const mid = start.clone().lerp(end, 0.5);
 
                     // Skip far cables for performance (>50m)
