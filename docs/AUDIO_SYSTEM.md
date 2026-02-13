@@ -6,7 +6,7 @@
 
 这种设计通过创造一种**粗糙、数字、二进制**的听觉体验，完美契合了项目的 "1-bit" 视觉美学。
 
-- **文件路径**: `src/audio/AudioSystem.ts`
+- **文件路径**: `src/audio/AudioController.ts`（业务逻辑）、`src/audio/AudioEngine.ts`（Web Audio 底层引擎）
 - **核心技术**: `window.AudioContext`
 - **设计哲学**: 极简主义、数字噪声、频率调制。
 
