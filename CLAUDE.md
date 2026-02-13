@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+Package manager is **Bun**. Install dependencies with `bun install`.
+
 ```bash
 npm run dev          # Vite dev server (localhost:5173)
 npm run build        # Type check + production build
@@ -17,6 +19,8 @@ npm run test:watch   # Watch mode (vitest)
 ```
 
 Run a single test file: `npx vitest run tests/GazeMechanic.test.ts`
+
+> **Note:** Bun is used only as a package manager. Dev server (Vite) and test runner (Vitest) remain unchanged. Use `npm run` / `npx` to run scripts — `bun run` has issues with directory paths.
 
 ## Code Style
 
