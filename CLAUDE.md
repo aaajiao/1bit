@@ -11,16 +11,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Package manager is **Bun**. Install dependencies with `bun install`.
 
 ```bash
-npm run dev          # Vite dev server (localhost:5173)
-npm run build        # Type check + production build
-npm run typecheck    # TypeScript checking only
-npm run test         # Run tests once (vitest run)
-npm run test:watch   # Watch mode (vitest)
+bun run dev          # Vite dev server (localhost:5173)
+bun run build        # Type check + production build
+bun run typecheck    # TypeScript checking only
+bun run test         # Run tests once (vitest run)
+bun run test:watch   # Watch mode (vitest)
 ```
 
-Run a single test file: `npx vitest run tests/GazeMechanic.test.ts`
-
-> **Note:** Bun is used only as a package manager. Dev server (Vite) and test runner (Vitest) remain unchanged. Use `npm run` / `npx` to run scripts.
+Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 
 ## Code Style
