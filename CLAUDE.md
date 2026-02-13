@@ -20,7 +20,8 @@ npm run test:watch   # Watch mode (vitest)
 
 Run a single test file: `npx vitest run tests/GazeMechanic.test.ts`
 
-> **Note:** Bun is used only as a package manager. Dev server (Vite) and test runner (Vitest) remain unchanged. Use `npm run` / `npx` to run scripts — `bun run` has issues with directory paths.
+> **Note:** Bun is used only as a package manager. Dev server (Vite) and test runner (Vitest) remain unchanged. Use `npm run` / `npx` to run scripts.
+
 
 ## Code Style
 
