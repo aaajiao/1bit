@@ -1,6 +1,6 @@
 /**
- * AudioEngine - 底层音频引擎
- * 管理 AudioContext、节点连接、Master Volume 等 WebAudio API 细节
+ * AudioEngine - Low-level audio engine
+ * Manages AudioContext, node connections, Master Volume, and other Web Audio API details
  */
 
 // Extend Window interface for webkit prefix

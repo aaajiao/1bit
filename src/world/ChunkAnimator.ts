@@ -106,7 +106,7 @@ function animateObjects(objects: AnimatedObject[], time: number, delta: number):
  * Animate fog particles for cracked floors
  */
 function animateFogSystem(chunk: Chunk, delta: number): void {
-    const fogSystem = (chunk.userData as any).fogSystem as THREE.InstancedMesh;
+    const fogSystem = chunk.userData.fogSystem;
     if (!fogSystem || !fogSystem.userData.speeds)
         return;
 

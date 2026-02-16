@@ -108,6 +108,7 @@ export interface ChunkUserData {
     cables: DynamicCable[];
     buildings: THREE.Group[];
     animatedObjects: AnimatedObject[];
+    fogSystem?: THREE.InstancedMesh;
 }
 
 export interface Chunk extends THREE.Group {
