@@ -1,6 +1,7 @@
 import type { AudioSystemInterface } from '../types';
 // 1-bit Chimera Void - Sky Eye System
 import * as THREE from 'three';
+import { removeAndDispose } from '../utils/dispose';
 
 interface RingUserData {
     speed?: number;
@@ -13,6 +14,10 @@ export class SkyEye {
     private group: THREE.Group = new THREE.Group();
     private pupil: THREE.Mesh | null = null;
     private isBlinking: boolean = false;
+    private blinkTimer: number = 0;
+    private blinkPhase: 'none' | 'closing' | 'opening' = 'none';
+    private preBlinkScaleY: number = 1;
+    private _targetVec = new THREE.Vector3();
 
     constructor(scene: THREE.Scene) {
         this.createGeometry();
@@ -72,13 +77,15 @@ export class SkyEye {
             const targetX = Math.max(-maxOffset, Math.min(maxOffset, dx * 0.02));
             const targetY = Math.max(-maxOffset, Math.min(maxOffset, dz * 0.02));
 
-            this.pupil.position.lerp(new THREE.Vector3(targetX, targetY, 0.1), 0.05);
+            this.pupil.position.lerp(this._targetVec.set(targetX, targetY, 0.1), 0.05);
         }
 
         // Random blinking
         if (!this.isBlinking && Math.random() > 0.999) {
             this.triggerBlink(audio);
         }
+
+        this.updateBlink(delta);
 
         // Ring rotation
         this.group.children.forEach((ring) => {
@@ -99,39 +106,36 @@ export class SkyEye {
             return;
 
         this.isBlinking = true;
-        const originalScaleY = this.group.scale.y;
+        this.blinkPhase = 'closing';
+        this.blinkTimer = 0;
+        this.preBlinkScaleY = this.group.scale.y;
 
-        // Play sound
         if (audio)
             audio.playEyeBlink();
+    }
 
-        // Close eye
-        setTimeout(() => {
+    private updateBlink(delta: number): void {
+        if (this.blinkPhase === 'closing') {
             this.group.scale.y = 0.05;
-        }, 0);
-
-        // Open eye
-        setTimeout(() => {
-            this.group.scale.y = originalScaleY;
-            this.isBlinking = false;
-        }, 150);
+            this.blinkPhase = 'opening';
+            this.blinkTimer = 0;
+        }
+        else if (this.blinkPhase === 'opening') {
+            this.blinkTimer += delta;
+            if (this.blinkTimer >= 0.15) {
+                this.group.scale.y = this.preBlinkScaleY;
+                this.blinkPhase = 'none';
+                this.isBlinking = false;
+            }
+        }
     }
 
     /**
      * Cleanup resources
      */
     dispose(): void {
-        // Dispose all geometries and materials
-        this.group.traverse((obj) => {
-            if (obj instanceof THREE.Mesh) {
-                obj.geometry?.dispose();
-                if (obj.material instanceof THREE.Material) {
-                    obj.material.dispose();
-                }
-            }
-        });
-
-        // Remove from parent
-        this.group.parent?.remove(this.group);
+        this.blinkPhase = 'none';
+        this.isBlinking = false;
+        removeAndDispose(this.group);
     }
 }

@@ -1,17 +1,17 @@
 /**
- * 轻量级信号类 - 用于系统间解耦通信
+ * Lightweight signal class for decoupled inter-system communication
  *
- * 使用示例:
+ * Usage example:
  * ```typescript
  * const onJump = new Signal<{ isDoubleJump: boolean }>();
  *
- * // 订阅
+ * // Subscribe
  * const unsubscribe = onJump.connect((data) => console.log(data));
  *
- * // 发射
+ * // Emit
  * onJump.emit({ isDoubleJump: true });
  *
- * // 取消订阅
+ * // Unsubscribe
  * unsubscribe();
  * ```
  */
@@ -19,8 +19,8 @@ export class Signal<T = void> {
     private listeners: Set<(data: T) => void> = new Set();
 
     /**
-     * 连接监听器
-     * @returns 取消订阅函数
+     * Connect a listener
+     * @returns Unsubscribe function
      */
     connect(fn: (data: T) => void): () => void {
         this.listeners.add(fn);
@@ -28,21 +28,21 @@ export class Signal<T = void> {
     }
 
     /**
-     * 发射信号
+     * Emit signal
      */
     emit(data: T): void {
         this.listeners.forEach(fn => fn(data));
     }
 
     /**
-     * 清除所有监听器
+     * Clear all listeners
      */
     clear(): void {
         this.listeners.clear();
     }
 
     /**
-     * 获取监听器数量（用于调试）
+     * Get listener count (for debugging)
      */
     get listenerCount(): number {
         return this.listeners.size;

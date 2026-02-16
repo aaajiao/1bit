@@ -1,7 +1,7 @@
 /**
- * AudioController - 高层音频控制器
- * 封装所有游戏音效播放逻辑，使用 AudioEngine 底层 API
- * 实现 AudioSystemInterface 以保持向后兼容
+ * AudioController - High-level audio controller
+ * Encapsulates all game sound effect playback logic, uses AudioEngine low-level API
+ * Implements AudioSystemInterface for backward compatibility
  */
 
 import type { AmbientNode, AudioSystemInterface } from '../types';

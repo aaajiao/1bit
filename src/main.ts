@@ -1,12 +1,13 @@
 // 1-bit Chimera Void - Main Entry Point
 import type * as THREE from 'three';
 import type { PostProcessingComponents } from './core/PostProcessing';
-import type { AppConfig, WeatherState } from './types';
-import type { RoomShaderConfig } from './world/RoomConfig';
+import type { AppConfig } from './types';
 import { AudioController } from './audio/AudioController';
-import { CABLE_PROXIMITY, GAMEPLAY, PERFORMANCE } from './config';
+import { GAMEPLAY, PERFORMANCE } from './config';
+import { CableAudioUpdater } from './core/CableAudioUpdater';
 import { createPostProcessing, updatePostProcessingSize } from './core/PostProcessing';
 import { createScene } from './core/SceneSetup';
+import { updateShaderUniforms } from './core/ShaderUniformUpdater';
 // New Managers
 import { PlayerManager } from './player/PlayerManager';
 import { RunStatsCollector } from './stats/RunStatsCollector';
@@ -55,11 +56,7 @@ class ChimeraVoid {
     private snapshotOverlay: SnapshotOverlay;
     private hud: HUD;
     private previousRoomType: RoomType | null = null;
-
-    // Performance optimization: cable check throttling
-    private cableCheckCounter: number = 0;
-    // Cable pulse cooldown tracking
-    private lastCablePulseTime: number = 0;
+    private cableAudio: CableAudioUpdater;
 
     // Animation loop control
     private isRunning: boolean = true;
@@ -99,6 +96,7 @@ class ChimeraVoid {
         this.player.setSpawnPosition(8, 2, 8); // Safe spawn
 
         // Mechanics
+        this.cableAudio = new CableAudioUpdater();
         this.riftMechanic = new RiftMechanic();
         this.skyEye = new SkyEye(this.scene);
         this.chunkManager = new ChunkManager(this.scene);
@@ -174,11 +172,8 @@ class ChimeraVoid {
             this.audio.playInfoChirp();
         }
 
-        // Cable Audio - throttled for performance (every N frames)
-        if (++this.cableCheckCounter >= CABLE_PROXIMITY.CHECK_INTERVAL) {
-            this.cableCheckCounter = 0;
-            this.updateCableAudio(playerPos);
-        }
+        // Cable Audio
+        this.cableAudio.update(playerPos, this.chunkManager, this.audio);
 
         // 4. Update Player
         const playerState = this.player.update(delta, t, { currentRoomType });
@@ -210,11 +205,13 @@ class ChimeraVoid {
         this.audio.updateWeatherAudio(weatherState.weatherType, weatherState.weatherIntensity);
 
         // 6. Update Shaders & Visuals
-        this.updateUniforms(
+        updateShaderUniforms(
+            this.postProcessing.shaderQuad,
             t,
             weatherState,
             shaderConfig,
             playerState.flowerIntensity,
+            this.player.getColorInversionValue(),
             playerState.overrideProgress,
         );
 
@@ -250,54 +247,6 @@ class ChimeraVoid {
 
         // Loop Render
         this.render();
-    }
-
-    private updateCableAudio(playerPos: THREE.Vector3): void {
-        const cableDist = this.chunkManager.getDistanceToNearestCable(playerPos);
-        if (cableDist < CABLE_PROXIMITY.HUM_START_DISTANCE) {
-            this.audio.startCableHum();
-        }
-        else if (cableDist > CABLE_PROXIMITY.HUM_STOP_DISTANCE) {
-            this.audio.stopCableHum();
-        }
-
-        if (cableDist < CABLE_PROXIMITY.MAX_AUDIO_DISTANCE) {
-            const humIntensity = Math.max(0, 1 - Math.max(0, cableDist - 1) / 11.0);
-            this.audio.updateCableHum(humIntensity);
-
-            // Pulse with cooldown: check distance, probability, and cooldown
-            const now = performance.now() / 1000;
-            const cooldownElapsed = now - this.lastCablePulseTime >= CABLE_PROXIMITY.PULSE_COOLDOWN;
-            if (cableDist < CABLE_PROXIMITY.PULSE_DISTANCE
-                && cooldownElapsed
-                && Math.random() < CABLE_PROXIMITY.PULSE_PROBABILITY) {
-                this.audio.playCablePulse();
-                this.lastCablePulseTime = now;
-            }
-        }
-    }
-
-    private updateUniforms(t: number, weather: WeatherState, shaderConfig: RoomShaderConfig, flowerIntensity: number, overrideProgress: number): void {
-        const u = this.postProcessing.shaderQuad.material.uniforms;
-
-        // Weather
-        u.weatherType.value = weather.weatherType;
-        u.weatherIntensity.value = weather.weatherIntensity;
-        u.weatherTime.value = weather.weatherTime;
-
-        // Room
-        u.uNoiseDensity.value = shaderConfig.uNoiseDensity;
-        u.uThresholdBias.value = shaderConfig.uThresholdBias;
-        u.uTemporalJitter.value = shaderConfig.uTemporalJitter;
-        u.uContrast.value = shaderConfig.uContrast;
-        u.uGlitchAmount.value = shaderConfig.uGlitchAmount;
-        u.uGlitchSpeed.value = shaderConfig.uGlitchSpeed;
-
-        // Globals & Player
-        u.uTime.value = t;
-        u.uFlowerIntensity.value = flowerIntensity;
-        u.uColorInversion.value = this.player.getColorInversionValue();
-        u.uOverrideProgress.value = overrideProgress;
     }
 
     private render(): void {

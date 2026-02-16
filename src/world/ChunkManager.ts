@@ -9,8 +9,8 @@ import type { RoomShaderConfig } from './RoomConfig';
 import type { SharedAssets } from './SharedAssets';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
-import { hash } from '../utils/hash';
 import { disposeObject3D } from '../utils/dispose';
+import { hash } from '../utils/hash';
 import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
 import { createDynamicCable } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
@@ -110,7 +110,7 @@ export class ChunkManager {
             // Store fog system for animation
             if (crackedSystem.fog) {
                 // We'll store it in userData.fogSystem (requires type update or loose typing)
-                (chunk.userData as any).fogSystem = crackedSystem.fog;
+                chunk.userData.fogSystem = crackedSystem.fog;
             }
         }
         else if (roomType === RoomType.IN_BETWEEN) {
