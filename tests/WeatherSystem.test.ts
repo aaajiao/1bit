@@ -18,8 +18,8 @@ describe('weatherSystem', () => {
 
     describe('initial state', () => {
         it('should start in CLEAR weather with zero intensity', () => {
-            // No glitch (random 0.5 >> glitchChance 0.002) and cooldown not yet
-            // elapsed, so a tiny update keeps us clear at zero intensity.
+            // No glitch (0.5 >> the per-second glitch threshold 0.12*0.016 ~ 0.0019)
+            // and cooldown not yet elapsed, so a tiny update keeps us clear.
             const state = weather.update(0.016, 1.0);
             expect(state.weatherType).toBe(WEATHER_TYPES.CLEAR);
             expect(state.weatherIntensity).toBe(0);
@@ -113,7 +113,7 @@ describe('weatherSystem', () => {
         // instant weather becomes active. r drives type/duration/target.
         function startNaturalWeather(r: number): WeatherSystem {
             const draw = vi.spyOn(Math, 'random');
-            draw.mockReturnValue(r); // r >= glitchChance(0.002), so no ambient glitch
+            draw.mockReturnValue(r); // r >> per-second glitch threshold (0.12*0.01), so no ambient glitch
             const sys = new WeatherSystem(); // cooldown = 30 + r*30 (<= 60)
             for (let i = 0; i < 7000; i++) {
                 const s = sys.update(0.01, i * 0.01);
@@ -221,8 +221,8 @@ describe('weatherSystem', () => {
         });
 
         it('should trigger a random weather event when cooldown expires', () => {
-            // random 0.5 -> startRandomWeather picks types[floor(0.5*2)] = RAIN,
-            // duration = min + 0.5*(max-min) = 15 + 0.5*30 = 30, target ~ 0.8.
+            // random 0.5 -> startRandomWeather picks types[floor(0.5*3)] = index 1
+            // of [STATIC, RAIN, GLITCH] = RAIN, duration 30, target ~ 0.8.
             // First advance enough to drain the initial cooldown (45 at random 0.5).
             let state = weather.update(0.016, 0);
             expect(state.weatherType).toBe(WEATHER_TYPES.CLEAR);
@@ -232,37 +232,68 @@ describe('weatherSystem', () => {
                 if (state.weatherType !== WEATHER_TYPES.CLEAR)
                     break;
             }
-            // After cooldown drains, a non-clear weather (static or rain) starts.
-            expect([WEATHER_TYPES.STATIC, WEATHER_TYPES.RAIN]).toContain(state.weatherType);
-        });
-
-        it('should pick weather type deterministically from the RNG draw', () => {
-            // random() == 0 -> types[floor(0)] = STATIC
-            const r = vi.spyOn(Math, 'random');
-            r.mockReturnValue(0); // initial cooldown = randomRange(30,60) = 30
-            const sys = new WeatherSystem();
-
-            // Drain cooldown (30s) then the trigger fires.
-            let state = sys.update(31, 31);
-            expect(state.weatherType).toBe(WEATHER_TYPES.STATIC);
-
-            // random() just under 1 -> types[floor(~1.99*0.5*2)]? floor(0.999*2)=1 -> RAIN
-            r.mockReturnValue(0.999);
-            const sys2 = new WeatherSystem();
-            state = sys2.update(61, 61); // cooldown = 30+0.999*30 ~ 60
+            // After cooldown drains a non-clear weather starts (any of the three
+            // rotation types). With random pinned at 0.5 this is deterministically RAIN.
+            expect([
+                WEATHER_TYPES.STATIC,
+                WEATHER_TYPES.RAIN,
+                WEATHER_TYPES.GLITCH,
+            ]).toContain(state.weatherType);
             expect(state.weatherType).toBe(WEATHER_TYPES.RAIN);
         });
 
-        it('should trigger a glitch during clear weather when the RNG draw is below glitchChance', () => {
+        it('should pick the weather type deterministically from the RNG draw (3-way rotation)', () => {
+            // The rotation is [STATIC, RAIN, GLITCH], so floor(random()*3) selects:
+            //   0     -> index 0 -> STATIC
+            //   0.5   -> index 1 -> RAIN
+            //   0.999 -> index 2 -> GLITCH
+            // One large update() drains the constructor cooldown (<= 60s) and fires
+            // the trigger in a single frame. (For these draws an ambient glitch also
+            // fires first, but startRandomWeather runs last and wins the frame.)
+            const cases: Array<[number, number]> = [
+                [0, WEATHER_TYPES.STATIC],
+                [0.5, WEATHER_TYPES.RAIN],
+                [0.999, WEATHER_TYPES.GLITCH],
+            ];
+            const r = vi.spyOn(Math, 'random');
+            for (const [draw, expected] of cases) {
+                r.mockReturnValue(draw);
+                const sys = new WeatherSystem(); // cooldown = 30 + draw*30 (<= 60)
+                const state = sys.update(61, 61);
+                expect(state.weatherType, `draw ${draw}`).toBe(expected);
+            }
+        });
+
+        it('should trigger a glitch during clear weather when the RNG draw is below the per-second threshold', () => {
             const r = vi.spyOn(Math, 'random');
             r.mockReturnValue(0.5); // constructor cooldown
             const sys = new WeatherSystem();
 
-            // Force the per-frame glitch draw below glitchChance (0.002).
+            // Threshold this frame = glitchChance(0.12) * delta(0.016) ~ 0.00192,
+            // and the pinned draw 0.001 < 0.00192, so a transient glitch fires.
             r.mockReturnValue(0.001);
             const state = sys.update(0.016, 1.0);
             expect(state.weatherType).toBe(WEATHER_TYPES.GLITCH);
             expect(state.weatherIntensity).toBe(1); // glitch is instant-on
+        });
+
+        it('should scale the ambient glitch rate by delta (frame-rate independent)', () => {
+            // glitchChance is a per-second rate (0.12) applied as random() < 0.12*delta,
+            // so the SAME pinned draw triggers a glitch on a long frame but not a short
+            // one — proving the threshold tracks delta instead of being per-frame fixed.
+            const r = vi.spyOn(Math, 'random');
+
+            r.mockReturnValue(0.5); // constructor cooldown
+            const longFrame = new WeatherSystem();
+            r.mockReturnValue(0.001);
+            // 0.12 * 0.016 = 0.00192 > 0.001 -> glitch fires
+            expect(longFrame.update(0.016, 1).weatherType).toBe(WEATHER_TYPES.GLITCH);
+
+            r.mockReturnValue(0.5);
+            const shortFrame = new WeatherSystem();
+            r.mockReturnValue(0.001);
+            // 0.12 * 0.004 = 0.00048 < 0.001 -> no glitch, stays clear
+            expect(shortFrame.update(0.004, 1).weatherType).toBe(WEATHER_TYPES.CLEAR);
         });
 
         it('should not start a second random weather while one is already active', () => {

@@ -129,7 +129,7 @@ export interface WeatherConfig {
     minDuration: number;
     maxDuration: number;
     transitionSpeed: number;
-    glitchChance: number;
+    glitchChance: number; // Ambient glitch rate per second (scaled by delta, frame-rate independent)
 }
 
 export interface WeatherSystemInterface {

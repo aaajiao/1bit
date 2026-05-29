@@ -42,7 +42,7 @@ export class WeatherSystem implements WeatherSystemInterface {
         minDuration: 15, // Min weather duration
         maxDuration: 45, // Max weather duration
         transitionSpeed: 0.5, // Fade in/out speed
-        glitchChance: 0.002, // Chance of glitch per frame
+        glitchChance: 0.12, // Ambient glitch rate per SECOND (scaled by delta below; 0.12/s ~ the old 0.002/frame at 60fps)
     };
 
     constructor() {
@@ -63,8 +63,10 @@ export class WeatherSystem implements WeatherSystemInterface {
         if (this.currentWeather === WEATHER_TYPES.CLEAR) {
             this.cooldown -= delta;
 
-            // Random glitch even during clear weather
-            if (Math.random() < this.config.glitchChance) {
+            // Random brief glitch even during clear weather. glitchChance is a
+            // per-second rate, so scale by delta to stay frame-rate independent
+            // (a 144Hz monitor no longer glitches ~2.4x more than a 60Hz one).
+            if (Math.random() < this.config.glitchChance * delta) {
                 this.triggerGlitch();
             }
 
@@ -105,8 +107,17 @@ export class WeatherSystem implements WeatherSystemInterface {
      * Start a random weather event
      */
     private startRandomWeather(): void {
-        // Choose weather type (static or rain, glitch is separate)
-        const types: WeatherType[] = [WEATHER_TYPES.STATIC, WEATHER_TYPES.RAIN];
+        // Choose weather type. All three sustained weathers — static snow,
+        // digital rain, and signal glitch — share the rotation at equal odds
+        // (1/3 each). The brief ambient flickers and the eclipse flash are a
+        // SEPARATE transient path (triggerGlitch / forceWeather), flagged with
+        // isGlitchEvent so they don't reset the main cooldown; a glitch picked
+        // here is a real, full-duration weather event (isGlitchEvent = false).
+        const types: WeatherType[] = [
+            WEATHER_TYPES.STATIC,
+            WEATHER_TYPES.RAIN,
+            WEATHER_TYPES.GLITCH,
+        ];
         this.currentWeather = types[Math.floor(Math.random() * types.length)];
         this.isGlitchEvent = false;
 
