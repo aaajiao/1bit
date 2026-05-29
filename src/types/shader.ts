@@ -12,6 +12,11 @@ export interface DitherUniforms {
     weatherType: { value: number };
     weatherIntensity: { value: number };
     weatherTime: { value: number };
+    // 1-bit duotone palette (per-room) + tone-fix brightness lift.
+    // Vector3 RGB (0-1); defaults to black ink / white paper for monochrome parity.
+    uInkColor: { value: THREE.Vector3 };
+    uPaperColor: { value: THREE.Vector3 };
+    uBrightnessLift: { value: number };
 }
 
 export interface CableUniforms {

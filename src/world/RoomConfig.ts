@@ -14,6 +14,13 @@ export enum RoomType {
 /**
  * Shader parameters for each room type
  */
+/**
+ * Duotone color tuple, RGB components in 0-1 (sRGB-normalized).
+ * Stored as a plain triple (not THREE.Color) so it interpolates cleanly inside
+ * the pure numeric lerp and stays test-friendly.
+ */
+export type ColorRGB = [number, number, number];
+
 export interface RoomShaderConfig {
     uNoiseDensity: number; // 0-1, dither pattern density
     uThresholdBias: number; // -0.5 to 0.5, black/white balance offset
@@ -21,6 +28,13 @@ export interface RoomShaderConfig {
     uContrast: number; // 1.0+, overall contrast
     uGlitchAmount: number; // 0-1, vertex displacement amplitude
     uGlitchSpeed: number; // Hz, glitch animation frequency
+    // Per-room 1-bit duotone palette. The dithered scalar (~0 or ~1 per pixel)
+    // is mapped to these two colors at the very end of the fragment shader:
+    //   finalRGB = mix(inkColor, paperColor, value)
+    // All rooms keep a near-identical value structure (paper L~0.90, ink L~0.07);
+    // only hue/temperature differs so the result still reads as "1-bit with a cast".
+    inkColor: ColorRGB; // the "0"/dark ink
+    paperColor: ColorRGB; // the "1"/light paper
 }
 
 /**
@@ -60,6 +74,9 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uContrast: 1.2,
             uGlitchAmount: 0.05,
             uGlitchSpeed: 2.0,
+            // Cold cyan (data / screen overload). paper #DCEDF2, ink #0A1A22
+            inkColor: [0.0392, 0.1020, 0.1333],
+            paperColor: [0.8627, 0.9294, 0.9490],
         },
         audio: {
             baseFrequency: 60,
@@ -82,6 +99,9 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uContrast: 1.0,
             uGlitchAmount: 0.02,
             uGlitchSpeed: 1.0,
+            // Phosphor amber-green (institutional / surveillance). paper #E9EAD2, ink #15180B
+            inkColor: [0.0824, 0.0941, 0.0431],
+            paperColor: [0.9137, 0.9176, 0.8235],
         },
         audio: {
             baseFrequency: 55,
@@ -105,6 +125,9 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uContrast: 1.1,
             uGlitchAmount: 0.08,
             uGlitchSpeed: 3.0,
+            // Near-neutral faint violet-grey (liminal anchor, lowest saturation). paper #E7E6EA, ink #111016
+            inkColor: [0.0667, 0.0627, 0.0863],
+            paperColor: [0.9059, 0.9020, 0.9176],
         },
         audio: {
             baseFrequency: 50,
@@ -127,6 +150,9 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uContrast: 2.0,
             uGlitchAmount: 0.0,
             uGlitchSpeed: 0.0,
+            // Charged warm red / bone (extremes / aggression, most charged). paper #F3E9E4, ink #1E0C0E
+            inkColor: [0.1176, 0.0471, 0.0549],
+            paperColor: [0.9529, 0.9137, 0.8941],
         },
         audio: {
             baseFrequency: 40,
@@ -176,6 +202,11 @@ export function lerpRoomShaderConfig(
     // Clamp interpolation factor to [0, 1] to avoid extrapolation overshoot
     const tc = t < 0 ? 0 : t > 1 ? 1 : t;
     const lerp = (a: number, b: number) => a + (b - a) * tc;
+    const lerpColor = (a: ColorRGB, b: ColorRGB): ColorRGB => [
+        lerp(a[0], b[0]),
+        lerp(a[1], b[1]),
+        lerp(a[2], b[2]),
+    ];
     return {
         uNoiseDensity: lerp(from.uNoiseDensity, to.uNoiseDensity),
         uThresholdBias: lerp(from.uThresholdBias, to.uThresholdBias),
@@ -183,6 +214,9 @@ export function lerpRoomShaderConfig(
         uContrast: lerp(from.uContrast, to.uContrast),
         uGlitchAmount: lerp(from.uGlitchAmount, to.uGlitchAmount),
         uGlitchSpeed: lerp(from.uGlitchSpeed, to.uGlitchSpeed),
+        // Fresh tuples each call so the shallow spread in ChunkManager never aliases.
+        inkColor: lerpColor(from.inkColor, to.inkColor),
+        paperColor: lerpColor(from.paperColor, to.paperColor),
     };
 }
 

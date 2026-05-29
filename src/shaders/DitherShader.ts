@@ -34,6 +34,16 @@ export const DitherShader: ShaderDefinition = {
         uTime: { value: 0.0 }, // Global time for animations
         // Flower intensity (affects world response)
         uFlowerIntensity: { value: 0.5 }, // 0-1, player's light intensity
+        // ===== 1-bit duotone palette (per-room) =====
+        // The dithered scalar (~0 or ~1 per pixel) is mapped to two colors at the
+        // very end of the pipeline: finalRGB = mix(uInkColor, uPaperColor, value).
+        // Defaults are pure black/white so behavior is identical to the original
+        // monochrome 1-bit output until per-room colors are supplied.
+        uInkColor: { value: new THREE.Vector3(0.0, 0.0, 0.0) }, // the "0"/dark ink
+        uPaperColor: { value: new THREE.Vector3(1.0, 1.0, 1.0) }, // the "1"/light paper
+        // Tone fix: brightness lift applied after contrast so the floor / shadows
+        // render as a textured ink/paper dither instead of crushing to solid ink.
+        uBrightnessLift: { value: 1.55 },
     },
     vertexShader: `
         varying vec2 vUv;
@@ -66,7 +76,19 @@ export const DitherShader: ShaderDefinition = {
         uniform float uOverrideProgress;
         uniform float uTime;
         uniform float uFlowerIntensity;
+        // 1-bit duotone palette (per-room) + tone-fix brightness lift
+        uniform vec3 uInkColor;
+        uniform vec3 uPaperColor;
+        uniform float uBrightnessLift;
         varying vec2 vUv;
+
+        // Duotone-aware "inverse": swaps a color toward the opposite palette
+        // endpoint. Reduces to (1.0 - c) when ink=black/paper=white, so every
+        // existing value-space inversion (day/night, override, glitch, weather,
+        // flower vignette) keeps working under an arbitrary duotone palette.
+        vec3 duoInvert(vec3 c) {
+            return uInkColor + uPaperColor - c;
+        }
 
         // ===== BAYER MATRICES =====
 
@@ -172,9 +194,11 @@ export const DitherShader: ShaderDefinition = {
             // Apply contrast (room-specific) BEFORE the brightness boost so that
             // high uContrast (e.g. POLARIZED's 2.0) is not neutered by midtone saturation.
             gray = (gray - 0.5) * uContrast + 0.5;
-            // Conservative brightness boost (gamma lift) - reduced factor keeps midtones
-            // from clamping to white before dithering, preserving the 1-bit look.
-            gray = pow(clamp(gray, 0.0, 1.0), 0.8) * 1.25;
+            // Brightness boost (gamma lift). Contrast still bites first (per-room
+            // uContrast), then we lift so the floor / shadows are not crushed to a
+            // featureless ink void: they render as a textured ~10-25% paper dither.
+            // uBrightnessLift (~1.55) is the exposed, tunable tone-fix lever.
+            gray = pow(clamp(gray, 0.0, 1.0), 0.8) * uBrightnessLift;
             gray = clamp(gray, 0.0, 1.0);
 
             // Edge detection
@@ -223,12 +247,14 @@ export const DitherShader: ShaderDefinition = {
             // Brighter flower = slightly higher threshold = more white
             threshold -= (uFlowerIntensity - 0.5) * 0.1;
 
-            // Dither to black/white
-            vec3 finalColor = (gray < threshold) ? vec3(0.0) : vec3(1.0);
+            // Dither to 1-bit, then map the scalar (~0 / ~1) to the per-room
+            // duotone palette. All value-space effects below operate on this
+            // vec3 via duoInvert(), which stays palette-correct.
+            vec3 finalColor = (gray < threshold) ? uInkColor : uPaperColor;
 
-            // Apply edge as black outline
+            // Apply edge as ink outline (on-palette, was hard black)
             if (enableOutline && edge > outlineStrength) {
-                finalColor = vec3(0.0);
+                finalColor = uInkColor;
             }
 
             // Glitch effect (room-specific). uGlitchAmount scales BOTH line density
@@ -242,13 +268,13 @@ export const DitherShader: ShaderDefinition = {
                 if (glitchLine > 0.5 && fract(sin(glitchTime * 100.0) * 12345.0) > 0.7) {
                     // Scale inversion strength by amount instead of a hard full flip.
                     float invStrength = clamp(uGlitchAmount * 8.0, 0.0, 1.0);
-                    finalColor = mix(finalColor, vec3(1.0) - finalColor, invStrength);
+                    finalColor = mix(finalColor, duoInvert(finalColor), invStrength);
                 }
             }
 
-            // Day/night inversion
+            // Day/night inversion (swaps ink <-> paper under the duotone palette)
             if (invertColors) {
-                finalColor = vec3(1.0) - finalColor;
+                finalColor = duoInvert(finalColor);
             }
 
             // Override progress feedback (edge pulse while holding)
@@ -258,12 +284,12 @@ export const DitherShader: ShaderDefinition = {
                 float pulse = sin(animTime * 8.0) * 0.5 + 0.5;
                 float edgePulse = smoothstep(0.4, 0.5, edgeDist) * uOverrideProgress;
                 edgePulse *= pulse * 0.5 + 0.5;
-                finalColor = mix(finalColor, vec3(1.0) - finalColor, edgePulse * 0.6);
+                finalColor = mix(finalColor, duoInvert(finalColor), edgePulse * 0.6);
             }
 
             // Override color inversion effect (for resistance mechanic)
             if (uColorInversion > 0.0) {
-                vec3 inverted = vec3(1.0) - finalColor;
+                vec3 inverted = duoInvert(finalColor);
                 finalColor = mix(finalColor, inverted, uColorInversion);
             }
 
@@ -277,19 +303,19 @@ export const DitherShader: ShaderDefinition = {
                     // Static snow
                     float noise = staticNoise(gl_FragCoord.xy * 0.15, wTime * 15.0);
                     if (noise > 1.0 - weatherIntensity * 0.3) {
-                        finalColor = vec3(1.0) - finalColor;
+                        finalColor = duoInvert(finalColor);
                     }
                 } else if (weatherType == 2) {
                     // Digital rain
                     float rain = digitalRain(pixelUV, wTime);
                     if (rain > 0.5) {
-                        finalColor = vec3(1.0);  // White rain drops
+                        finalColor = uPaperColor;  // Paper-colored rain drops (on-palette)
                     }
                 } else if (weatherType == 3) {
                     // Signal glitch
                     float glitch = glitchEffect(pixelUV, wTime);
                     if (glitch > 0.5) {
-                        finalColor = vec3(1.0) - finalColor;
+                        finalColor = duoInvert(finalColor);
                     }
                 }
             }
@@ -306,7 +332,7 @@ export const DitherShader: ShaderDefinition = {
                 float edgeGlow = smoothstep(0.8, 1.2, radialDist) * highIntensity * pulse;
 
                 // Invert edges slightly to create "bloom overflow" effect
-                finalColor = mix(finalColor, vec3(1.0) - finalColor, edgeGlow * 0.4);
+                finalColor = mix(finalColor, duoInvert(finalColor), edgeGlow * 0.4);
             }
 
             gl_FragColor = vec4(finalColor, 1.0);

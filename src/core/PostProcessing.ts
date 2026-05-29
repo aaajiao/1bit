@@ -56,6 +56,12 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
                 uOverrideProgress: { value: 0.0 },
                 uTime: { value: 0.0 },
                 uFlowerIntensity: { value: 0.5 },
+                // Duotone palette + tone fix (mutated per-frame by ShaderUniformUpdater).
+                // Declared here so Three.js builds the correct uniform upload list at
+                // construction — the runtime inject in ShaderUniformUpdater is then a no-op.
+                uInkColor: { value: new THREE.Vector3(0.0, 0.0, 0.0) },
+                uPaperColor: { value: new THREE.Vector3(1.0, 1.0, 1.0) },
+                uBrightnessLift: { value: 1.55 },
             },
             vertexShader: DitherShader.vertexShader,
             fragmentShader: DitherShader.fragmentShader,

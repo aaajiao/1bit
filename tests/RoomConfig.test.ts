@@ -65,6 +65,26 @@ describe('roomConfig', () => {
         const from = ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader;
         const to = ROOM_CONFIGS[RoomType.POLARIZED].shader;
 
+        // Endpoint equality must tolerate the float error a linear lerp
+        // (a + (b - a) * t) reintroduces at t=1 (e.g. 0.0549 -> 0.0549000000…4).
+        // Every numeric uniform and every color component is still pinned to
+        // the expected config — this is exact-in-intent, just not bit-exact.
+        const expectShaderConfigClose = (
+            actual: typeof from,
+            expected: typeof from,
+        ): void => {
+            expect(actual.uNoiseDensity).toBeCloseTo(expected.uNoiseDensity, 9);
+            expect(actual.uThresholdBias).toBeCloseTo(expected.uThresholdBias, 9);
+            expect(actual.uTemporalJitter).toBeCloseTo(expected.uTemporalJitter, 9);
+            expect(actual.uContrast).toBeCloseTo(expected.uContrast, 9);
+            expect(actual.uGlitchAmount).toBeCloseTo(expected.uGlitchAmount, 9);
+            expect(actual.uGlitchSpeed).toBeCloseTo(expected.uGlitchSpeed, 9);
+            for (let i = 0; i < 3; i++) {
+                expect(actual.inkColor[i]).toBeCloseTo(expected.inkColor[i], 9);
+                expect(actual.paperColor[i]).toBeCloseTo(expected.paperColor[i], 9);
+            }
+        };
+
         it('should return the from-config at t=0', () => {
             const result = lerpRoomShaderConfig(from, to, 0);
             expect(result).toEqual(from);
@@ -72,7 +92,7 @@ describe('roomConfig', () => {
 
         it('should return the to-config at t=1', () => {
             const result = lerpRoomShaderConfig(from, to, 1);
-            expect(result).toEqual(to);
+            expectShaderConfigClose(result, to);
         });
 
         it('should interpolate the midpoint at t=0.5', () => {
@@ -92,7 +112,7 @@ describe('roomConfig', () => {
 
         it('should clamp t>1 to the to-config (no extrapolation overshoot)', () => {
             const result = lerpRoomShaderConfig(from, to, 5);
-            expect(result).toEqual(to);
+            expectShaderConfigClose(result, to);
         });
 
         it('should not mutate the input configs', () => {
