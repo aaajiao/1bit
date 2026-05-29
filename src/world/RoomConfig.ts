@@ -99,9 +99,10 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uContrast: 1.0,
             uGlitchAmount: 0.02,
             uGlitchSpeed: 1.0,
-            // Phosphor amber-green (institutional / surveillance). paper #E9EAD2, ink #15180B
-            inkColor: [0.0824, 0.0941, 0.0431],
-            paperColor: [0.9137, 0.9176, 0.8235],
+            // Phosphor amber (institutional / surveillance), chroma matched to the
+            // cyan/red ends so the room reads clearly amber. paper #F0EED4, ink #221E0A
+            inkColor: [0.1333, 0.1176, 0.0392],
+            paperColor: [0.9412, 0.9333, 0.8314],
         },
         audio: {
             baseFrequency: 55,
@@ -125,9 +126,10 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uContrast: 1.1,
             uGlitchAmount: 0.08,
             uGlitchSpeed: 3.0,
-            // Near-neutral faint violet-grey (liminal anchor, lowest saturation). paper #E7E6EA, ink #111016
-            inkColor: [0.0667, 0.0627, 0.0863],
-            paperColor: [0.9059, 0.9020, 0.9176],
+            // Violet (liminal / misread by both systems), chroma raised to match the
+            // other rooms so it no longer reads as flat grey. paper #EADDF3, ink #1C1228
+            inkColor: [0.1098, 0.0706, 0.1569],
+            paperColor: [0.9176, 0.8667, 0.9529],
         },
         audio: {
             baseFrequency: 50,
