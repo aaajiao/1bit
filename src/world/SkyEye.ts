@@ -7,8 +7,43 @@ interface RingUserData {
     speed?: number;
 }
 
+/** Height of the eye above the ground plane. */
+export const SKY_EYE_HEIGHT = 120;
+/** Max horizontal distance the eye may trail behind the player before being leashed. */
+export const SKY_EYE_MAX_LAG = 60;
+/** Per-frame easing factor for the damped follow. */
+export const SKY_EYE_FOLLOW_LERP = 0.02;
+/** How strongly the residual player offset deflects the pupil. */
+export const SKY_EYE_PUPIL_GAIN = 0.1;
+
 /**
- * Giant eye floating in the sky, tracks player, blinks randomly
+ * Damped horizontal follow with a hard leash. Eases the eye toward the player,
+ * then clamps so it never trails farther than `maxLag` — keeping the eye in view
+ * across the infinite world while leaving a residual offset for the pupil to
+ * track. Mutates `target` in place (no per-frame allocation). Pure; exported for
+ * testing.
+ */
+export function stepEyeFollow(
+    target: { x: number; z: number },
+    playerX: number,
+    playerZ: number,
+    lerp: number = SKY_EYE_FOLLOW_LERP,
+    maxLag: number = SKY_EYE_MAX_LAG,
+): void {
+    target.x += (playerX - target.x) * lerp;
+    target.z += (playerZ - target.z) * lerp;
+    const lagX = target.x - playerX;
+    const lagZ = target.z - playerZ;
+    const lag = Math.hypot(lagX, lagZ);
+    if (lag > maxLag) {
+        const k = maxLag / lag;
+        target.x = playerX + lagX * k;
+        target.z = playerZ + lagZ * k;
+    }
+}
+
+/**
+ * Giant eye floating in the sky, follows the player, blinks randomly
  */
 export class SkyEye {
     private group: THREE.Group = new THREE.Group();
@@ -24,7 +59,7 @@ export class SkyEye {
         this.createGeometry();
 
         // Position high in the sky, facing down
-        this.group.position.set(0, 120, 0);
+        this.group.position.set(0, SKY_EYE_HEIGHT, 0);
         this.group.rotation.x = -Math.PI / 2;
         this.group.renderOrder = 999;
 
@@ -70,15 +105,22 @@ export class SkyEye {
      * @param audio - Audio system for blink sound
      */
     update(delta: number, playerPosition: THREE.Vector3, audio: AudioSystemInterface): void {
-        // Pupil tracking
+        const eyePos = this.group.position;
+
+        // Damped follow: keep the eye overhead as the player explores the infinite
+        // world, but never let it trail farther than SKY_EYE_MAX_LAG so it stays in
+        // view. The residual (player - eye) offset is what the pupil tracks below.
+        stepEyeFollow(eyePos, playerPosition.x, playerPosition.z);
+        eyePos.y = SKY_EYE_HEIGHT;
+
+        // Pupil tracking — follows the residual horizontal offset toward the player
         if (this.pupil) {
-            const eyePos = this.group.position;
             const dx = playerPosition.x - eyePos.x;
             const dz = playerPosition.z - eyePos.z;
 
             const maxOffset = 3;
-            const targetX = Math.max(-maxOffset, Math.min(maxOffset, dx * 0.02));
-            const targetY = Math.max(-maxOffset, Math.min(maxOffset, dz * 0.02));
+            const targetX = Math.max(-maxOffset, Math.min(maxOffset, dx * SKY_EYE_PUPIL_GAIN));
+            const targetY = Math.max(-maxOffset, Math.min(maxOffset, dz * SKY_EYE_PUPIL_GAIN));
 
             this.pupil.position.lerp(this._targetVec.set(targetX, targetY, 0.1), 0.05);
         }
