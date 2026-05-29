@@ -2,10 +2,14 @@ import type { AudioSystemInterface } from '../types';
 // 1-bit Chimera Void - Sky Eye System
 import * as THREE from 'three';
 import { removeAndDispose } from '../utils/dispose';
+import { hash } from '../utils/hash';
 
 interface RingUserData {
     speed?: number;
 }
+
+/** Constant salt for deterministic per-ring spin seeding (see createGeometry). */
+const RING_SPIN_SALT = 7;
 
 /** Height of the eye above the ground plane. */
 export const SKY_EYE_HEIGHT = 120;
@@ -86,7 +90,10 @@ export class SkyEye {
                 new THREE.RingGeometry(i * 8, i * 8 + 1, 64),
                 mat,
             );
-            (ring.userData as RingUserData) = { speed: (Math.random() - 0.5) * 0.3 };
+            // Deterministic per-ring spin: hash() seeded by the fixed ring index
+            // (and a constant salt) keeps each ring's speed stable across sessions
+            // while preserving the original [-0.15, 0.15) range.
+            (ring.userData as RingUserData) = { speed: (hash(i, RING_SPIN_SALT) - 0.5) * 0.3 };
             this.group.add(ring);
         }
 

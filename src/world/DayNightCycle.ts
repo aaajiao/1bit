@@ -15,9 +15,10 @@ export class DayNightCycle {
     /**
      * Update the day/night cycle
      * @param t - Time in seconds
+     * @param delta - Delta time in seconds (frame-rate-independent event scaling)
      * @param context - { scene, shaderQuad, audio, weather }
      */
-    update(t: number, context: DayNightContext): void {
+    update(t: number, delta: number, context: DayNightContext): void {
         const halfCycle = this.cycleDuration / 2;
 
         // Check for eclipse end
@@ -27,8 +28,10 @@ export class DayNightCycle {
             console.log('Eclipse ended');
         }
 
-        // Random eclipse chance during day (0.05% per frame)
-        if (this.isDay && !this.inEclipse && Math.random() < 0.0005) {
+        // Random eclipse chance during day. The 0.03 is a per-SECOND rate
+        // (the old 0.05%/frame * 60), scaled by delta so the cadence is
+        // frame-rate independent (reproduces the old rate at 60fps).
+        if (this.isDay && !this.inEclipse && Math.random() < 0.03 * delta) {
             this.triggerSolarEclipse(t, context);
         }
 

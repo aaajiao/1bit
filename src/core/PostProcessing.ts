@@ -62,6 +62,10 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
                 uInkColor: { value: new THREE.Vector3(0.0, 0.0, 0.0) },
                 uPaperColor: { value: new THREE.Vector3(1.0, 1.0, 1.0) },
                 uBrightnessLift: { value: 1.55 },
+                // Per-room post-process character (Phase 5b). Default 0 = inert,
+                // overwritten each frame by ShaderUniformUpdater from the room config.
+                uScanIntensity: { value: 0.0 },
+                uMisregister: { value: 0.0 },
             },
             vertexShader: DitherShader.vertexShader,
             fragmentShader: DitherShader.fragmentShader,

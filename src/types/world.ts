@@ -3,6 +3,7 @@ import type * as THREE from 'three';
 
 // ===== Day/Night System =====
 
+import type { RoomType } from '../world/RoomConfig';
 import type { AudioSystemInterface } from './audio';
 
 // ===== Building & Generation =====
@@ -12,6 +13,7 @@ export interface BuildingParams {
     cx: number;
     cz: number;
     assets: SharedAssets;
+    roomType?: RoomType;
 }
 
 export interface SharedAssets {
@@ -25,6 +27,8 @@ export interface SharedAssets {
     matFlowerPetal: THREE.MeshPhongMaterial;
     matFlowerCore: THREE.MeshStandardMaterial;
     matLiquid: THREE.MeshPhongMaterial;
+    // Phase 4 sub-palette tints (shared greyscale Lambert singletons)
+    subTints: THREE.MeshLambertMaterial[];
     // Geometries
     boxGeo: THREE.BoxGeometry;
     blobGeo: THREE.IcosahedronGeometry;
@@ -33,6 +37,10 @@ export interface SharedAssets {
     coneGeo: THREE.ConeGeometry;
     tetraGeo: THREE.TetrahedronGeometry;
     cylinderGeo: THREE.CylinderGeometry;
+    // Phase 4 sub-palette geometries (shared primitive singletons)
+    tallBoxGeo: THREE.BoxGeometry;
+    octaGeo: THREE.OctahedronGeometry;
+    hiCylinderGeo: THREE.CylinderGeometry;
     dispose: () => void;
 }
 
@@ -104,11 +112,31 @@ export interface BuildingUserData {
     isMobile: boolean;
 }
 
+/**
+ * A flicker group is a small set of pre-built variant child meshes parented to
+ * one building fragment. The animator toggles exactly one visible at a time on
+ * a deterministic interval (INFO_OVERFLOW only) — NEVER rebuilding geometry.
+ */
+export interface FlickerGroup {
+    /** The variant meshes; all share pooled geometry/material (no new disposables). */
+    variants: THREE.Object3D[];
+    /** Deterministic per-group phase offset (seconds) so groups desync. */
+    phase: number;
+    /** The variant index currently shown, to avoid redundant visibility writes. */
+    current: number;
+}
+
 export interface ChunkUserData {
     cables: DynamicCable[];
     buildings: THREE.Group[];
     animatedObjects: AnimatedObject[];
     fogSystem?: THREE.InstancedMesh;
+    roomType?: RoomType;
+    /**
+     * INFO_OVERFLOW building-flicker groups (Phase 4). Present only on a capped
+     * subset of fragments in INFO_OVERFLOW chunks; absent elsewhere.
+     */
+    flickerGroups?: FlickerGroup[];
 }
 
 export interface Chunk extends THREE.Group {

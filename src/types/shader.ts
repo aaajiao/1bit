@@ -17,6 +17,14 @@ export interface DitherUniforms {
     uInkColor: { value: THREE.Vector3 };
     uPaperColor: { value: THREE.Vector3 };
     uBrightnessLift: { value: number };
+    // Per-room post-process character (Phase 5b).
+    // uScanIntensity: 0-1, slow horizontal CRT/surveillance scan band biasing the
+    //   dither threshold (FORCED_ALIGNMENT only; 0 elsewhere — must stay 0 in
+    //   POLARIZED so it never collides with the uNoiseDensity<0.01 hard-threshold).
+    // uMisregister: 0-1, subtle 1-px duotone channel misregistration (IN_BETWEEN
+    //   "misread by both systems"; 0 elsewhere).
+    uScanIntensity: { value: number };
+    uMisregister: { value: number };
 }
 
 export interface CableUniforms {

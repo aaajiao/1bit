@@ -44,6 +44,12 @@ export const DitherShader: ShaderDefinition = {
         // Tone fix: brightness lift applied after contrast so the floor / shadows
         // render as a textured ink/paper dither instead of crushing to solid ink.
         uBrightnessLift: { value: 1.55 },
+        // ===== Per-room post-process character (Phase 5b) =====
+        // uScanIntensity: 0-1, slow horizontal CRT/surveillance scan band biasing
+        //   the dither threshold (FORCED_ALIGNMENT only; 0 elsewhere).
+        // uMisregister: 0-1, subtle duotone channel misregistration (IN_BETWEEN).
+        uScanIntensity: { value: 0.0 },
+        uMisregister: { value: 0.0 },
     },
     vertexShader: `
         varying vec2 vUv;
@@ -80,6 +86,9 @@ export const DitherShader: ShaderDefinition = {
         uniform vec3 uInkColor;
         uniform vec3 uPaperColor;
         uniform float uBrightnessLift;
+        // Per-room post-process character (Phase 5b)
+        uniform float uScanIntensity;   // FORCED_ALIGNMENT: slow horizontal scan band
+        uniform float uMisregister;     // IN_BETWEEN: subtle duotone misregistration
         varying vec2 vUv;
 
         // Duotone-aware "inverse": swaps a color toward the opposite palette
@@ -243,6 +252,18 @@ export const DitherShader: ShaderDefinition = {
             // Apply threshold bias (shifts black/white balance)
             threshold += uThresholdBias;
 
+            // FORCED_ALIGNMENT scan band (~few ALU ops): an orderly horizontal
+            // CRT/surveillance refresh line sweeping slowly down-screen biases the
+            // dither threshold, so a soft bright/dark band glides over the room.
+            // Multiplied by uScanIntensity, so it is exactly inert (no-op) at 0 —
+            // including POLARIZED, which never enters this branch with 0 anyway.
+            if (uScanIntensity > 0.0) {
+                // 0.05 Hz sweep; cosine band centered on the moving scan line.
+                float scanPhase = vUv.y * 3.0 - animTime * 0.15;
+                float scanBand = cos(scanPhase * 6.28318);
+                threshold -= scanBand * uScanIntensity * 0.12;
+            }
+
             // Apply flower intensity influence on threshold
             // Brighter flower = slightly higher threshold = more white
             threshold -= (uFlowerIntensity - 0.5) * 0.1;
@@ -255,6 +276,18 @@ export const DitherShader: ShaderDefinition = {
             // Apply edge as ink outline (on-palette, was hard black)
             if (enableOutline && edge > outlineStrength) {
                 finalColor = uInkColor;
+            }
+
+            // IN_BETWEEN misregistration (~few ALU ops): the two systems disagree by
+            // a sliver. Edges (already computed, free) get a faint duotone fringe — a
+            // 1px-style channel slip — by nudging finalColor toward the inverted
+            // palette only on edge pixels. Stays on the duotone axis (greyscale-/1bit-
+            // consistent) and is exactly inert at uMisregister = 0.
+            if (uMisregister > 0.0) {
+                float fringe = smoothstep(outlineStrength * 0.5, outlineStrength, edge);
+                // Tiny temporal shimmer so the slip "breathes" rather than sitting still.
+                float slip = fringe * uMisregister * (0.35 + 0.15 * sin(animTime * 1.7 + vUv.y * 40.0));
+                finalColor = mix(finalColor, duoInvert(finalColor), slip);
             }
 
             // Glitch effect (room-specific). uGlitchAmount scales BOTH line density

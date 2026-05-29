@@ -1,5 +1,6 @@
 // 1-bit Chimera Void - Flower Prop (Hand-held flower)
 import * as THREE from 'three';
+import { hash } from '../utils/hash';
 import { getSharedAssets } from '../world/SharedAssets';
 
 interface FlowerPartUserData {
@@ -98,9 +99,9 @@ export function createFlowerProp(): FlowerGroup {
             Math.cos(angle) * 0.12,
         );
         sepal.rotation.set(
-            Math.random(),
-            Math.random(),
-            Math.random(),
+            hash(s, 11) * Math.PI * 2,
+            hash(s, 23) * Math.PI * 2,
+            hash(s, 37) * Math.PI * 2,
         );
         (sepal.userData as FlowerPartUserData) = {
             animType: 'SEPAL_FLOAT',
@@ -114,9 +115,9 @@ export function createFlowerProp(): FlowerGroup {
     const pGeo = new THREE.BoxGeometry(0.012, 0.012, 0.012);
     for (let d = 0; d < 16; d++) {
         const dust = new THREE.Mesh(pGeo, assets.matFlowerCore);
-        const r = 0.3 + Math.random() * 0.3;
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.random() * Math.PI;
+        const r = 0.3 + hash(d, 3) * 0.3;
+        const theta = hash(d, 5) * Math.PI * 2;
+        const phi = hash(d, 7) * Math.PI;
         dust.position.set(
             r * Math.sin(phi) * Math.cos(theta),
             r * Math.cos(phi),
@@ -125,11 +126,11 @@ export function createFlowerProp(): FlowerGroup {
         (dust.userData as FlowerPartUserData) = {
             animType: 'DUST_ORBIT',
             axis: new THREE.Vector3(
-                Math.random() - 0.5,
-                Math.random() - 0.5,
-                Math.random() - 0.5,
+                hash(d, 13) - 0.5,
+                hash(d, 17) - 0.5,
+                hash(d, 19) - 0.5,
             ).normalize(),
-            speed: 0.4 + Math.random(),
+            speed: 0.4 + hash(d, 29),
         };
         bloom.add(dust);
     }

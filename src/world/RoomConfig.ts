@@ -35,6 +35,15 @@ export interface RoomShaderConfig {
     // only hue/temperature differs so the result still reads as "1-bit with a cast".
     inkColor: ColorRGB; // the "0"/dark ink
     paperColor: ColorRGB; // the "1"/light paper
+    // Per-room post-process character (Phase 5b).
+    // uScanIntensity: 0-1. A slow horizontal scan band that biases the dither
+    //   threshold — an orderly CRT/surveillance refresh. Nonzero ONLY in
+    //   FORCED_ALIGNMENT; MUST stay 0 in POLARIZED so it never perturbs the
+    //   uNoiseDensity<0.01 hard-threshold branch.
+    uScanIntensity: number;
+    // uMisregister: 0-1. Subtle ~1px duotone channel misregistration so the world
+    //   reads as "misread by both systems". Nonzero ONLY in IN_BETWEEN.
+    uMisregister: number;
 }
 
 /**
@@ -77,6 +86,8 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             // Cold cyan (data / screen overload). paper #DCEDF2, ink #0A1A22
             inkColor: [0.0392, 0.1020, 0.1333],
             paperColor: [0.8627, 0.9294, 0.9490],
+            uScanIntensity: 0.0,
+            uMisregister: 0.0,
         },
         audio: {
             baseFrequency: 60,
@@ -103,6 +114,9 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             // cyan/red ends so the room reads clearly amber. paper #F0EED4, ink #221E0A
             inkColor: [0.1333, 0.1176, 0.0392],
             paperColor: [0.9412, 0.9333, 0.8314],
+            // Orderly CRT/surveillance refresh band — the signature of this room.
+            uScanIntensity: 0.6,
+            uMisregister: 0.0,
         },
         audio: {
             baseFrequency: 55,
@@ -130,6 +144,9 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             // other rooms so it no longer reads as flat grey. paper #EADDF3, ink #1C1228
             inkColor: [0.1098, 0.0706, 0.1569],
             paperColor: [0.9176, 0.8667, 0.9529],
+            uScanIntensity: 0.0,
+            // Subtle duotone misregistration — "misread by both systems".
+            uMisregister: 0.5,
         },
         audio: {
             baseFrequency: 50,
@@ -155,6 +172,10 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             // Charged warm red / bone (extremes / aggression, most charged). paper #F3E9E4, ink #1E0C0E
             inkColor: [0.1176, 0.0471, 0.0549],
             paperColor: [0.9529, 0.9137, 0.8941],
+            // MUST stay 0: scan/misregister are dithering perturbations and POLARIZED
+            // is pure binary (uNoiseDensity<0.01 hard-threshold branch).
+            uScanIntensity: 0.0,
+            uMisregister: 0.0,
         },
         audio: {
             baseFrequency: 40,
@@ -183,7 +204,8 @@ export const INFO_OVERFLOW_NOISE_MAP: Record<number, number> = {
 };
 
 /**
- * Building refresh interval mapping based on flower intensity
+ * Building refresh interval mapping based on flower intensity. Higher intensity
+ * => shorter interval => faster INFO_OVERFLOW building flicker.
  */
 export const INFO_OVERFLOW_REFRESH_MAP: Record<number, number> = {
     0.1: 6.0,
@@ -192,6 +214,44 @@ export const INFO_OVERFLOW_REFRESH_MAP: Record<number, number> = {
     0.7: 2.5,
     1.0: 1.5,
 };
+
+/**
+ * Sorted intensity breakpoints of INFO_OVERFLOW_REFRESH_MAP, precomputed once so
+ * the per-frame lookup never re-sorts. Module-level (not per-frame allocation).
+ */
+const REFRESH_BREAKPOINTS = Object.keys(INFO_OVERFLOW_REFRESH_MAP)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+/**
+ * Maps a flower intensity in [0,1] to a flicker refresh interval (seconds) by
+ * piecewise-linear interpolation over INFO_OVERFLOW_REFRESH_MAP. Pure and cheap
+ * (no allocation), safe to call per frame. Clamps to the map's end values.
+ *
+ * @param intensity - Flower intensity, expected in [0,1].
+ * @returns Refresh interval in seconds.
+ */
+export function refreshIntervalForIntensity(intensity: number): number {
+    const bps = REFRESH_BREAKPOINTS;
+    if (intensity <= bps[0])
+        return INFO_OVERFLOW_REFRESH_MAP[bps[0]];
+    const last = bps[bps.length - 1];
+    if (intensity >= last)
+        return INFO_OVERFLOW_REFRESH_MAP[last];
+
+    for (let k = 0; k < bps.length - 1; k++) {
+        const lo = bps[k];
+        const hi = bps[k + 1];
+        if (intensity >= lo && intensity <= hi) {
+            const t = (intensity - lo) / (hi - lo);
+            const a = INFO_OVERFLOW_REFRESH_MAP[lo];
+            const b = INFO_OVERFLOW_REFRESH_MAP[hi];
+            return a + (b - a) * t;
+        }
+    }
+    // Unreachable given the clamps above, but keep a safe fallback.
+    return INFO_OVERFLOW_REFRESH_MAP[last];
+}
 
 /**
  * Interpolate shader config between two rooms for smooth transitions
@@ -219,6 +279,8 @@ export function lerpRoomShaderConfig(
         // Fresh tuples each call so the shallow spread in ChunkManager never aliases.
         inkColor: lerpColor(from.inkColor, to.inkColor),
         paperColor: lerpColor(from.paperColor, to.paperColor),
+        uScanIntensity: lerp(from.uScanIntensity, to.uScanIntensity),
+        uMisregister: lerp(from.uMisregister, to.uMisregister),
     };
 }
 

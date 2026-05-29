@@ -261,8 +261,11 @@ class ChimeraVoid {
         // 1. Update Core World
         updateCableTime(t);
         this.chunkManager.update(this.camera);
-        // Pass camera world position to activate animation LOD (world agent API).
-        this.chunkManager.animate(t, delta, this.camera.position);
+        // Pass camera world position to activate animation LOD (world agent API)
+        // and the last-known flower intensity to drive INFO_OVERFLOW flicker rate
+        // (read before the player update => one frame stale, fine for the slow
+        // flicker cadence; avoids reordering the fixed update sequence).
+        this.chunkManager.animate(t, delta, this.camera.position, this.player.getFlowerIntensity());
 
         // 2. Update Player FIRST so all consumers see this frame's position.
         const playerState = this.player.update(delta, t, {
@@ -294,7 +297,13 @@ class ChimeraVoid {
         if (currentRoomType === RoomType.FORCED_ALIGNMENT) {
             this.riftMechanic.update(this.player, this.audio, playerPos);
         }
-        else if (currentRoomType === RoomType.INFO_OVERFLOW && Math.random() < GAMEPLAY.INFO_CHIRP_PROBABILITY) {
+        else if (
+            currentRoomType === RoomType.INFO_OVERFLOW
+            // INFO_CHIRP_PROBABILITY is a per-FRAME value; treat (value * 60) as a
+            // per-SECOND rate and scale by delta so the chirp cadence is
+            // frame-rate independent (reproduces the old ~2%/frame at 60fps).
+            && Math.random() < GAMEPLAY.INFO_CHIRP_PROBABILITY * 60 * delta
+        ) {
             this.audio.playInfoChirp();
         }
 
@@ -313,7 +322,7 @@ class ChimeraVoid {
             playerState.overrideTriggered,
         );
 
-        this.dayNight.update(t, {
+        this.dayNight.update(t, delta, {
             scene: this.scene,
             shaderQuad: this.postProcessing.shaderQuad,
             audio: this.audio,

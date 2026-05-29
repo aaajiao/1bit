@@ -122,6 +122,15 @@ export class PlayerManager {
     }
 
     /**
+     * Get the last computed flower intensity in [0,1]. Reflects the most recent
+     * update() (one frame stale if read before update), which is fine for the
+     * slow INFO_OVERFLOW flicker cadence that consumes it.
+     */
+    public getFlowerIntensity(): number {
+        return this.currentState.flowerIntensity;
+    }
+
+    /**
      * Set ground level for physics
      */
     public setGroundLevel(level: number): void {

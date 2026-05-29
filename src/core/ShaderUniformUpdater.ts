@@ -46,6 +46,16 @@ function ensureDuotoneUniforms(
         u.uBrightnessLift = { value: DEFAULT_BRIGHTNESS_LIFT };
         injected = true;
     }
+    // Per-room post-process character (Phase 5b). Same lazy-inject guard as above
+    // for materials built before these uniforms existed; default 0 = inert.
+    if (!u.uScanIntensity) {
+        u.uScanIntensity = { value: 0.0 };
+        injected = true;
+    }
+    if (!u.uMisregister) {
+        u.uMisregister = { value: 0.0 };
+        injected = true;
+    }
 
     if (injected) {
         // Force the renderer to rebuild its cached uniform list so the freshly
@@ -86,6 +96,9 @@ export function updateShaderUniforms(
     u.uContrast.value = shaderConfig.uContrast;
     u.uGlitchAmount.value = shaderConfig.uGlitchAmount;
     u.uGlitchSpeed.value = shaderConfig.uGlitchSpeed;
+    // Per-room post-process character (Phase 5b).
+    u.uScanIntensity.value = shaderConfig.uScanIntensity;
+    u.uMisregister.value = shaderConfig.uMisregister;
 
     // Room duotone palette (mutate the existing Vector3 in place to avoid churn).
     (u.uInkColor.value as THREE.Vector3).set(

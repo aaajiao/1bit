@@ -46,6 +46,54 @@ export const RIFT_AUDIO_CONFIG = {
 };
 
 /**
+ * Per-room ambient configuration.
+ *
+ * Drives the retunable ambient drone (osc1/osc2) and an optional filtered
+ * white-noise bed on room change. Frequencies for the drone partner are derived
+ * from the room's `baseFrequency` via `harmonicRatio[harmonic]`:
+ *   - consonant => octave  (POLARIZED 40 => 40/80, pure octave, no beat)
+ *   - dissonant => ~1.4x   (IN_BETWEEN 50 => 50/70, dissonant beat)
+ *   - binaural  => +detune (FORCED_ALIGNMENT; the binaural beat system handles
+ *                           the L/R split, so the drone stays a subtle pair)
+ */
+export const ROOM_AMBIENT_CONFIG = {
+    /** Multiplier applied to baseFrequency to derive the drone's second oscillator. */
+    harmonicRatio: {
+        consonant: 2.0, // octave
+        dissonant: 1.4, // dissonant interval (~tritone-ish)
+        binaural: 1.0, // unison; small fixed detune added on top
+    } as Record<'consonant' | 'dissonant' | 'binaural', number>,
+    /** Small absolute detune (Hz) added to the binaural-room drone partner. */
+    binauralDroneDetune: 0.5,
+    /** Lowpass cutoff (Hz) for the retuned drone (keeps it sub/low). */
+    droneFilterFreq: 200,
+    /** Time constant (s) for setTargetAtTime drone-frequency glides on retune. */
+    droneRetuneGlide: 0.4,
+    /** Time constant (s) for noise-bed gain fades (in and out). */
+    noiseFadeTime: 0.6,
+    /**
+     * Hard ceiling on the noise-bed gain regardless of a room's configured
+     * noiseGain. Matches the design's INFO_OVERFLOW 0.15 ceiling.
+     */
+    noiseGainCeiling: 0.15,
+    /** Bandpass center (Hz) and Q for the high hiss bed (INFO_OVERFLOW style). */
+    noiseBandHighFreq: 4000, // centered in the 2-6kHz hiss range
+    noiseBandHighQ: 0.6,
+    /** Bandpass center (Hz) and Q for the low/dull noise bed (IN_BETWEEN style). */
+    noiseBandLowFreq: 600,
+    noiseBandLowQ: 0.8,
+    /** noiseGain threshold above which the "high hiss" band is used (else low). */
+    noiseHighBandThreshold: 0.1,
+    /** Looping noise buffer length (s); reused across all rooms (pooled). */
+    noiseBufferSeconds: 2,
+    /**
+     * Debounce (ms) before a room change retunes the drone / swaps the noise bed.
+     * Prevents thrash when the player oscillates across a chunk seam.
+     */
+    retuneDebounceMs: 250,
+};
+
+/**
  * Weather audio configuration
  */
 export const WEATHER_AUDIO_CONFIG = {

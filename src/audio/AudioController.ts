@@ -10,6 +10,7 @@ import {
     CABLE_AUDIO_CONFIG,
     FOOTSTEP_CONFIG,
     RIFT_AUDIO_CONFIG,
+    ROOM_AMBIENT_CONFIG,
     WEATHER_AUDIO_CONFIG,
 } from '../config';
 import { RoomType } from '../world/RoomConfig';
@@ -51,6 +52,17 @@ export class AudioController implements AudioSystemInterface {
 
     // Cable hum state
     private cableHumNode: { osc: OscillatorNode; gain: GainNode; lfo: OscillatorNode } | null = null;
+
+    // Per-room ambient state
+    // Pooled looping white-noise buffer, created once and reused across every
+    // room's noise bed (a fresh BufferSource is cheap; the buffer is not).
+    private noiseBedBuffer: AudioBuffer | null = null;
+    // Currently active room noise bed; torn down before the next one starts.
+    private roomNoiseBed: { source: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode } | null = null;
+    // Debounce: defer drone retune / noise-bed swap until the room is stable, so
+    // oscillating across a chunk seam doesn't thrash Web Audio nodes.
+    private retuneTimer: number | null = null;
+    private pendingRoomType: RoomType | null = null;
 
     constructor() {
         this.engine = new AudioEngine();
@@ -806,17 +818,180 @@ export class AudioController implements AudioSystemInterface {
         if (!this.enabled)
             return;
 
+        // One-shot transition whoosh fires immediately for responsive feedback,
+        // even while the ambient reconfiguration below is being debounced.
         if (prevType !== null) {
             this.playRoomTransition();
         }
 
-        if (prevType === RoomType.FORCED_ALIGNMENT) {
-            this.stopBinauralBeat();
+        // Debounce the heavier ambient reconfiguration (drone retune, noise bed,
+        // binaural) so oscillating across a chunk seam doesn't thrash nodes.
+        this.pendingRoomType = newType;
+        if (this.retuneTimer !== null) {
+            clearTimeout(this.retuneTimer);
         }
+        this.retuneTimer = window.setTimeout(() => {
+            this.retuneTimer = null;
+            // Re-read the latest pending room: the player may have crossed several
+            // seams during the debounce window; only the final room matters.
+            const target = this.pendingRoomType;
+            if (target === null)
+                return;
+            this.applyRoomAmbient(target, audioConfig);
+        }, ROOM_AMBIENT_CONFIG.retuneDebounceMs);
+    }
 
-        if (newType === RoomType.FORCED_ALIGNMENT && audioConfig.beatFrequency) {
+    /**
+     * Apply a room's ambient audio: retune the drone, swap the noise bed, and
+     * start/stop the binaural beat. Called from the debounced room-change path.
+     *
+     * Each onRoomChange reschedules the single debounce timer, so the surviving
+     * timer's captured `audioConfig` is always paired with the final
+     * `pendingRoomType` passed here as `target` — they describe the same room.
+     */
+    private applyRoomAmbient(target: RoomType, audioConfig: RoomAudioConfig): void {
+        this.retuneAmbientDrone(audioConfig);
+        this.setRoomNoiseBed(audioConfig);
+
+        // Binaural beat: only FORCED_ALIGNMENT runs one. Stop any existing beat
+        // when leaving, (re)start when entering.
+        if (target === RoomType.FORCED_ALIGNMENT && audioConfig.beatFrequency) {
+            this.stopBinauralBeat();
             this.startBinauralBeat(audioConfig.baseFrequency, audioConfig.beatFrequency);
         }
+        else {
+            this.stopBinauralBeat();
+        }
+    }
+
+    /**
+     * Retune the persistent ambient drone (osc1/osc2) to the room's base
+     * frequency and harmonic relationship. Glides rather than jumps to avoid
+     * clicks. The drone runs continuously; we never recreate its nodes here.
+     */
+    private retuneAmbientDrone(audioConfig: RoomAudioConfig): void {
+        const ctx = this.engine.getContext();
+        if (!ctx || !this.ambientNode)
+            return;
+
+        const base = audioConfig.baseFrequency;
+        const ratio = ROOM_AMBIENT_CONFIG.harmonicRatio[audioConfig.harmonic];
+        let partner = base * ratio;
+        if (audioConfig.harmonic === 'binaural')
+            partner = base + ROOM_AMBIENT_CONFIG.binauralDroneDetune;
+
+        const now = ctx.currentTime;
+        const glide = ROOM_AMBIENT_CONFIG.droneRetuneGlide;
+        this.ambientNode.osc1.frequency.setTargetAtTime(base, now, glide);
+        this.ambientNode.osc2.frequency.setTargetAtTime(partner, now, glide);
+        // Keep the lowpass parked where the drone is meant to sit.
+        this.ambientNode.filter.frequency.setTargetAtTime(
+            ROOM_AMBIENT_CONFIG.droneFilterFreq,
+            now,
+            glide,
+        );
+    }
+
+    /**
+     * Lazily build (once) the pooled looping white-noise buffer shared by every
+     * room's noise bed. Returns null before the audio context exists.
+     */
+    private getNoiseBedBuffer(): AudioBuffer | null {
+        const ctx = this.engine.getContext();
+        if (!ctx)
+            return null;
+        if (this.noiseBedBuffer)
+            return this.noiseBedBuffer;
+
+        const length = Math.floor(ctx.sampleRate * ROOM_AMBIENT_CONFIG.noiseBufferSeconds);
+        const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < length; i++)
+            data[i] = Math.random() * 2 - 1;
+        this.noiseBedBuffer = buffer;
+        return buffer;
+    }
+
+    /**
+     * Tear down the current room noise bed (if any) and, when the new room calls
+     * for one, start a fresh filtered noise bed faded in to its clamped gain.
+     *
+     * - noiseLayer false => no bed (e.g. POLARIZED, FORCED_ALIGNMENT).
+     * - INFO_OVERFLOW (high noiseGain) => bright 2-6kHz hiss band.
+     * - IN_BETWEEN (low noiseGain) => duller low band.
+     * Gain is clamped to ROOM_AMBIENT_CONFIG.noiseGainCeiling regardless of config.
+     */
+    private setRoomNoiseBed(audioConfig: RoomAudioConfig): void {
+        const ctx = this.engine.getContext();
+        const master = this.engine.getMasterGain();
+
+        // Always stop the previous bed first so we never stack/leak sources.
+        this.stopRoomNoiseBed();
+
+        if (!ctx || !master || !audioConfig.noiseLayer || audioConfig.noiseGain <= 0)
+            return;
+
+        const buffer = this.getNoiseBedBuffer();
+        if (!buffer)
+            return;
+
+        const now = ctx.currentTime;
+        const targetGain = Math.min(audioConfig.noiseGain, ROOM_AMBIENT_CONFIG.noiseGainCeiling);
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.loop = true;
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        if (audioConfig.noiseGain > ROOM_AMBIENT_CONFIG.noiseHighBandThreshold) {
+            filter.frequency.value = ROOM_AMBIENT_CONFIG.noiseBandHighFreq;
+            filter.Q.value = ROOM_AMBIENT_CONFIG.noiseBandHighQ;
+        }
+        else {
+            filter.frequency.value = ROOM_AMBIENT_CONFIG.noiseBandLowFreq;
+            filter.Q.value = ROOM_AMBIENT_CONFIG.noiseBandLowQ;
+        }
+
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.setTargetAtTime(targetGain, now, ROOM_AMBIENT_CONFIG.noiseFadeTime);
+
+        source.connect(filter);
+        filter.connect(gain);
+        gain.connect(master);
+        source.start(now);
+
+        this.roomNoiseBed = { source, gain, filter };
+    }
+
+    /**
+     * Fade out and disconnect the active room noise bed. Clears state
+     * synchronously so a rapid re-entry never orphans or double-frees a chain.
+     */
+    private stopRoomNoiseBed(): void {
+        if (!this.roomNoiseBed)
+            return;
+        const ctx = this.engine.getContext();
+        const { source, gain, filter } = this.roomNoiseBed;
+        this.roomNoiseBed = null;
+
+        if (ctx) {
+            const now = ctx.currentTime;
+            gain.gain.cancelScheduledValues(now);
+            gain.gain.setValueAtTime(gain.gain.value, now);
+            gain.gain.setTargetAtTime(0, now, ROOM_AMBIENT_CONFIG.noiseFadeTime);
+        }
+
+        // Stop slightly after the fade so we don't click; reuse the shared buffer
+        // (only the source/filter/gain nodes are discarded).
+        setTimeout(() => {
+            try { source.stop(); }
+            catch { }
+            source.disconnect();
+            filter.disconnect();
+            gain.disconnect();
+        }, ROOM_AMBIENT_CONFIG.noiseFadeTime * 1000 + 200);
     }
 
     // ==================== Cleanup ====================
@@ -825,14 +1000,25 @@ export class AudioController implements AudioSystemInterface {
      * Dispose all audio resources
      */
     dispose(): void {
+        // Cancel any pending debounced room retune.
+        if (this.retuneTimer !== null) {
+            clearTimeout(this.retuneTimer);
+            this.retuneTimer = null;
+        }
+        this.pendingRoomType = null;
+
         // Stop all active sounds
         this.stopStaticAmbient();
         this.stopRainAmbient();
+        this.stopRoomNoiseBed();
         this.stopBinauralBeat();
         this.stopCableHum();
         this.stopRiftFog();
         this.stopRiftFall();
         this.stopFlowerAudio();
+
+        // Release the pooled noise buffer reference.
+        this.noiseBedBuffer = null;
 
         // Stop ambient drone
         if (this.ambientNode) {

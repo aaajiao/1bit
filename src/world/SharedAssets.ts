@@ -17,6 +17,12 @@ export class SharedAssets implements ISharedAssets {
     matFlowerCore: THREE.MeshStandardMaterial;
     matLiquid: THREE.MeshPhongMaterial;
 
+    // Phase 4 sub-palette: 2-3 shared greyscale Lambert tints selected per
+    // biome/room. Shared singletons — never cloned per instance — so they add
+    // zero per-instance allocation. Index 0 = lightest .. last = darkest, all
+    // greyscale so the duotone post-process maps cleanly.
+    subTints: THREE.MeshLambertMaterial[];
+
     // Geometries
     boxGeo: THREE.BoxGeometry;
     blobGeo: THREE.IcosahedronGeometry;
@@ -25,6 +31,12 @@ export class SharedAssets implements ISharedAssets {
     coneGeo: THREE.ConeGeometry;
     tetraGeo: THREE.TetrahedronGeometry;
     cylinderGeo: THREE.CylinderGeometry;
+
+    // Phase 4 sub-palette geometries: extra THREE primitives shared as
+    // singletons (no per-instance allocation) for biome/room variety.
+    tallBoxGeo: THREE.BoxGeometry;
+    octaGeo: THREE.OctahedronGeometry;
+    hiCylinderGeo: THREE.CylinderGeometry;
 
     constructor() {
         // Materials
@@ -68,6 +80,14 @@ export class SharedAssets implements ISharedAssets {
             shininess: 60,
         });
 
+        // Sub-palette tints (greyscale, light -> dark). Selected per biome/room
+        // by RoomGeneration.subPaletteIndex; SUB_PALETTE_COUNT mirrors length.
+        this.subTints = [
+            new THREE.MeshLambertMaterial({ color: 0x6A6A6A }),
+            new THREE.MeshLambertMaterial({ color: 0x3A3A3A }),
+            new THREE.MeshLambertMaterial({ color: 0x1A1A1A }),
+        ];
+
         // Geometries
         this.boxGeo = new THREE.BoxGeometry(1, 1, 1);
         this.blobGeo = new THREE.IcosahedronGeometry(1, 1);
@@ -76,15 +96,31 @@ export class SharedAssets implements ISharedAssets {
         this.coneGeo = new THREE.ConeGeometry(0.5, 1, 16);
         this.tetraGeo = new THREE.TetrahedronGeometry(1);
         this.cylinderGeo = new THREE.CylinderGeometry(1, 1, 1, 6);
+
+        // Sub-palette geometries: tall box (verticality), octahedron (faceted
+        // crystal), and a higher-segment cylinder (smoother column).
+        this.tallBoxGeo = new THREE.BoxGeometry(1, 3, 1);
+        this.octaGeo = new THREE.OctahedronGeometry(1);
+        this.hiCylinderGeo = new THREE.CylinderGeometry(1, 1, 1, 16);
     }
 
     /**
      * Dispose all assets when no longer needed
      */
     dispose(): void {
-        // Dispose materials
+        // Dispose materials/geometries. The generic loop frees every field that
+        // is itself disposable; array-valued fields (e.g. subTints) are walked
+        // element-by-element so their shared singletons are freed too.
         const values = Object.values(this) as unknown[];
         values.forEach((value) => {
+            if (Array.isArray(value)) {
+                value.forEach((entry) => {
+                    if (entry && typeof (entry as { dispose?: () => void }).dispose === 'function') {
+                        (entry as { dispose: () => void }).dispose();
+                    }
+                });
+                return;
+            }
             if (value && typeof (value as { dispose?: () => void }).dispose === 'function') {
                 (value as { dispose: () => void }).dispose();
             }

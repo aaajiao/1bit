@@ -1,10 +1,11 @@
 // Chunk Animation Logic
 // Extracted from ChunkManager for better separation of concerns
 
-import type { AnimatedObject, BuildingUserData, Chunk, DynamicCable } from '../types';
+import type { AnimatedObject, BuildingUserData, Chunk, DynamicCable, FlickerGroup } from '../types';
 import * as THREE from 'three';
 import { WORLD } from '../config/constants';
 import { updateCableGeometry } from './CableSystem';
+import { refreshIntervalForIntensity, RoomType } from './RoomConfig';
 
 // Squared LOD thresholds (compared against squared distances to avoid sqrt)
 const ANIMATION_FULL_DISTANCE_SQ = WORLD.ANIMATION_FULL_DISTANCE * WORLD.ANIMATION_FULL_DISTANCE;
@@ -25,12 +26,15 @@ const _worldPos = new THREE.Vector3();
  * @param cameraPosition - Optional camera world position. When provided,
  *   per-object animation is gated by distance using the WORLD LOD thresholds.
  *   When omitted (default), every object is animated (legacy behavior).
+ * @param flowerIntensity - Optional flower intensity in [0,1] driving the
+ *   INFO_OVERFLOW building-flicker refresh rate (defaults to a neutral 0.5).
  */
 export function animateChunk(
     chunk: Chunk,
     time: number,
     delta: number,
     cameraPosition?: THREE.Vector3,
+    flowerIntensity: number = 0.5,
 ): void {
     // Animate buildings (mobile wandering)
     if (chunk.userData.buildings) {
@@ -51,6 +55,55 @@ export function animateChunk(
 
     // Animate fog system for cracked floors
     animateFogSystem(chunk, delta);
+
+    // INFO_OVERFLOW building flicker: toggle pre-built variant visibility only.
+    // Gated to INFO_OVERFLOW chunks that actually carry flicker groups.
+    if (chunk.userData.roomType === RoomType.INFO_OVERFLOW && chunk.userData.flickerGroups) {
+        animateFlicker(chunk.userData.flickerGroups, time, flowerIntensity, cameraPosition);
+    }
+}
+
+/**
+ * INFO_OVERFLOW building flicker. For each flicker group, computes the active
+ * variant index from a deterministic interval (keyed off flower intensity via
+ * INFO_OVERFLOW_REFRESH_MAP) plus the group's stable phase, then toggles
+ * .visible so exactly one variant shows. NEVER rebuilds geometry (variants are
+ * pre-built, sharing pooled geo/material). Redundant visibility writes are
+ * skipped via the cached `current` index. LOD-gated by the first variant's
+ * world position so distant chunks stop toggling.
+ */
+function animateFlicker(
+    groups: FlickerGroup[],
+    time: number,
+    flowerIntensity: number,
+    cameraPosition?: THREE.Vector3,
+): void {
+    // Interval is shared across all groups this frame (depends only on intensity).
+    const interval = refreshIntervalForIntensity(flowerIntensity);
+    if (interval <= 0)
+        return;
+
+    for (const group of groups) {
+        const variants = group.variants;
+        if (variants.length < 2)
+            continue;
+
+        // LOD: skip flicker for groups beyond the LOD distance (anchor = v0).
+        const distSq = distanceSqToCamera(variants[0], cameraPosition);
+        if (distSq !== null && distSq > ANIMATION_LOD_DISTANCE_SQ)
+            continue;
+
+        // Deterministic step index from time + per-group phase, wrapped to the
+        // variant count. No hash() in this loop — phase was precomputed at build.
+        const step = Math.floor((time + group.phase) / interval);
+        const next = ((step % variants.length) + variants.length) % variants.length;
+        if (next === group.current)
+            continue;
+
+        variants[group.current].visible = false;
+        variants[next].visible = true;
+        group.current = next;
+    }
 }
 
 /**
@@ -166,11 +219,15 @@ function animateFogSystem(chunk: Chunk, delta: number): void {
         const speed = fogSystem.userData.speeds[i];
         _fogPosition.y += speed * delta;
 
-        // Reset if too high
+        // Reset if too high. The horizontal nudge must stay deterministic, but this
+        // is a per-frame hot loop over up to 400 instances, so hash() is too costly
+        // here. Instead derive a cheap stable per-instance offset from the already
+        // deterministic per-instance speed (seeded via hash-RNG at creation) using
+        // plain trig — no allocation, no hash() call. Mapped to ~[-0.25, 0.25).
         if (_fogPosition.y > 2.0) {
             _fogPosition.y = -160.0;
-            _fogPosition.x += (Math.random() - 0.5) * 0.5;
-            _fogPosition.z += (Math.random() - 0.5) * 0.5;
+            _fogPosition.x += Math.sin(speed * 12.9898) * 0.25;
+            _fogPosition.z += Math.cos(speed * 78.233) * 0.25;
         }
 
         _fogMatrix.compose(_fogPosition, _fogRotation, _fogScale);

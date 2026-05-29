@@ -2,6 +2,7 @@ import type { CableNode, CableOptions, DynamicCable } from '../types';
 // 1-bit Chimera Void - Cable System
 import * as THREE from 'three';
 import { CableShader } from '../shaders/DitherShader';
+import { hash } from '../utils/hash';
 
 // Shared shader material for all cables
 let cableShaderMat: THREE.ShaderMaterial | null = null;
@@ -63,9 +64,14 @@ export function createDynamicCable(
     const positions = new Float32Array((segments + 1) * 3);
     const distances = new Float32Array(segments + 1);
 
-    // Random seed per cable - same value for all vertices in this cable
+    // Deterministic seed per cable - same value for all vertices in this cable.
+    // Derived from the start node's grounded position so the same node pair always
+    // yields the same sway phase (hash() is the project's seeded RNG, see utils/hash).
     const randomSeeds = new Float32Array(segments + 1);
-    const cableSeed = Math.random();
+    const cableSeed = hash(
+        Math.round(startNode.obj.position.x),
+        Math.round(startNode.obj.position.z),
+    );
     for (let i = 0; i <= segments; i++) {
         randomSeeds[i] = cableSeed;
     }
