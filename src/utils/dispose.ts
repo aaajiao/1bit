@@ -15,7 +15,16 @@ export function disposeObject3D(
     disposeTextures: boolean = true,
 ): void {
     obj.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
+        if (child instanceof THREE.InstancedMesh) {
+            // InstancedMesh owns an instanceMatrix GPU buffer that must be
+            // freed via its own dispose() in addition to geometry/material.
+            child.geometry?.dispose();
+            if (disposeMaterials) {
+                disposeMaterial(child.material, disposeTextures);
+            }
+            child.dispose();
+        }
+        else if (child instanceof THREE.Mesh) {
             // Dispose geometry
             child.geometry?.dispose();
 

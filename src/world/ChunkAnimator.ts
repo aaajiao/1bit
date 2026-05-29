@@ -3,23 +3,43 @@
 
 import type { AnimatedObject, BuildingUserData, Chunk, DynamicCable } from '../types';
 import * as THREE from 'three';
+import { WORLD } from '../config/constants';
 import { updateCableGeometry } from './CableSystem';
+
+// Squared LOD thresholds (compared against squared distances to avoid sqrt)
+const ANIMATION_FULL_DISTANCE_SQ = WORLD.ANIMATION_FULL_DISTANCE * WORLD.ANIMATION_FULL_DISTANCE;
+const ANIMATION_LOD_DISTANCE_SQ = WORLD.ANIMATION_LOD_DISTANCE * WORLD.ANIMATION_LOD_DISTANCE;
+
+// Module-scoped scratch objects reused across frames (avoid per-frame allocation)
+const _fogMatrix = new THREE.Matrix4();
+const _fogPosition = new THREE.Vector3();
+const _fogRotation = new THREE.Quaternion();
+const _fogScale = new THREE.Vector3();
+const _worldPos = new THREE.Vector3();
 
 /**
  * Animate a single chunk's objects
  * @param chunk - The chunk to animate
  * @param time - Current time in seconds
  * @param delta - Delta time in seconds
+ * @param cameraPosition - Optional camera world position. When provided,
+ *   per-object animation is gated by distance using the WORLD LOD thresholds.
+ *   When omitted (default), every object is animated (legacy behavior).
  */
-export function animateChunk(chunk: Chunk, time: number, delta: number): void {
+export function animateChunk(
+    chunk: Chunk,
+    time: number,
+    delta: number,
+    cameraPosition?: THREE.Vector3,
+): void {
     // Animate buildings (mobile wandering)
     if (chunk.userData.buildings) {
-        animateBuildings(chunk.userData.buildings, time);
+        animateBuildings(chunk.userData.buildings, time, cameraPosition);
     }
 
     // Animate pre-collected objects (P0 optimization)
     if (chunk.userData.animatedObjects) {
-        animateObjects(chunk.userData.animatedObjects, time, delta);
+        animateObjects(chunk.userData.animatedObjects, time, delta, cameraPosition);
     }
 
     // Update cables
@@ -34,12 +54,28 @@ export function animateChunk(chunk: Chunk, time: number, delta: number): void {
 }
 
 /**
+ * Returns the squared world-space distance from an object to the camera,
+ * or null when no camera position is supplied (so callers skip LOD gating).
+ */
+function distanceSqToCamera(obj: THREE.Object3D, cameraPosition?: THREE.Vector3): number | null {
+    if (!cameraPosition)
+        return null;
+    obj.getWorldPosition(_worldPos);
+    return _worldPos.distanceToSquared(cameraPosition);
+}
+
+/**
  * Animate mobile buildings (wandering motion)
  */
-function animateBuildings(buildings: THREE.Group[], time: number): void {
+function animateBuildings(buildings: THREE.Group[], time: number, cameraPosition?: THREE.Vector3): void {
     buildings.forEach((group) => {
         const ud = group.userData as BuildingUserData;
         if (ud.isMobile) {
+            // LOD: skip wandering for buildings beyond the LOD distance
+            const distSq = distanceSqToCamera(group, cameraPosition);
+            if (distSq !== null && distSq > ANIMATION_LOD_DISTANCE_SQ)
+                return;
+
             const driftTime = time * ud.wanderSpeed + ud.offset;
             group.position.x = ud.initialPos.x + Math.sin(driftTime) * ud.wanderRange;
             group.position.z = ud.initialPos.z + Math.cos(driftTime * 0.7) * ud.wanderRange;
@@ -51,11 +87,23 @@ function animateBuildings(buildings: THREE.Group[], time: number): void {
 /**
  * Animate individual objects based on their animation type
  */
-function animateObjects(objects: AnimatedObject[], time: number, delta: number): void {
+function animateObjects(objects: AnimatedObject[], time: number, delta: number, cameraPosition?: THREE.Vector3): void {
     objects.forEach((obj: AnimatedObject) => {
         const ud = obj.userData;
         if (!ud)
             return;
+
+        // LOD: gate animation by distance when a camera position is supplied.
+        // Beyond the LOD distance the object is left static; within the full
+        // distance it always animates. Between the two it animates on alternate
+        // frames (cheap temporal decimation) keyed off the object's id.
+        const distSq = distanceSqToCamera(obj, cameraPosition);
+        if (distSq !== null) {
+            if (distSq > ANIMATION_LOD_DISTANCE_SQ)
+                return;
+            if (distSq > ANIMATION_FULL_DISTANCE_SQ && (obj.id + Math.floor(time * 60)) % 2 !== 0)
+                return;
+        }
 
         switch (ud.animType) {
             case 'ROTATE_FLOAT':
@@ -110,28 +158,23 @@ function animateFogSystem(chunk: Chunk, delta: number): void {
     if (!fogSystem || !fogSystem.userData.speeds)
         return;
 
-    const matrix = new THREE.Matrix4();
-    const position = new THREE.Vector3();
-    const rotation = new THREE.Quaternion();
-    const scale = new THREE.Vector3();
-
     for (let i = 0; i < fogSystem.count; i++) {
-        fogSystem.getMatrixAt(i, matrix);
-        matrix.decompose(position, rotation, scale);
+        fogSystem.getMatrixAt(i, _fogMatrix);
+        _fogMatrix.decompose(_fogPosition, _fogRotation, _fogScale);
 
         // Move up
         const speed = fogSystem.userData.speeds[i];
-        position.y += speed * delta;
+        _fogPosition.y += speed * delta;
 
         // Reset if too high
-        if (position.y > 2.0) {
-            position.y = -160.0;
-            position.x += (Math.random() - 0.5) * 0.5;
-            position.z += (Math.random() - 0.5) * 0.5;
+        if (_fogPosition.y > 2.0) {
+            _fogPosition.y = -160.0;
+            _fogPosition.x += (Math.random() - 0.5) * 0.5;
+            _fogPosition.z += (Math.random() - 0.5) * 0.5;
         }
 
-        matrix.compose(position, rotation, scale);
-        fogSystem.setMatrixAt(i, matrix);
+        _fogMatrix.compose(_fogPosition, _fogRotation, _fogScale);
+        fogSystem.setMatrixAt(i, _fogMatrix);
     }
     fogSystem.instanceMatrix.needsUpdate = true;
 }

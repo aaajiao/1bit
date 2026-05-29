@@ -37,4 +37,14 @@ export class CableAudioUpdater {
             }
         }
     }
+
+    /**
+     * Reset internal state and stop any cable hum this updater may have started.
+     * @param audio - Optional AudioController, used to stop an active cable hum.
+     */
+    dispose(audio?: AudioController): void {
+        this.checkCounter = 0;
+        this.lastPulseTime = 0;
+        audio?.stopCableHum();
+    }
 }

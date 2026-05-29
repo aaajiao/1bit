@@ -32,12 +32,7 @@ export const RIFT_PHYSICS = {
     crackHalfWidth: 2,
 };
 
-/**
- * Override mechanic timing
- */
-export const OVERRIDE_CONFIG = {
-    /** Seconds to hold before triggering */
-    holdDuration: 3.0,
-    /** Pitch threshold (degrees) to count as "looking up" */
-    pitchThreshold: 45,
-};
+// NOTE: The former OVERRIDE_CONFIG (holdDuration=3.0, pitchThreshold=45) was
+// removed. The single source of truth for override-hold timing is now
+// OVERRIDE.HOLD_THRESHOLD (1.0s) and OVERRIDE.* in config/constants.ts,
+// which is the value actually consumed by player/OverrideMechanic.ts.

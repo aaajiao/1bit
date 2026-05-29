@@ -61,6 +61,17 @@ export type BehaviorTag
         | 'RESISTER';
 
 /**
+ * Maps a dominant room type to its behavior tag.
+ * Module-level constant so generateTags() does not reallocate it every call.
+ */
+const ROOM_TAG_MAP: Record<string, BehaviorTag> = {
+    [RoomType.INFO_OVERFLOW]: 'INFO_MAZE',
+    [RoomType.FORCED_ALIGNMENT]: 'CRACK_WALKER',
+    [RoomType.IN_BETWEEN]: 'INBETWEENER',
+    [RoomType.POLARIZED]: 'BINARY_EDGE',
+};
+
+/**
  * Collects and processes runtime statistics
  */
 export class RunStatsCollector {
@@ -69,6 +80,7 @@ export class RunStatsCollector {
     private sampleInterval: number = 2.0; // Sample every 2 seconds
     private wasGazingLastFrame: boolean = false;
     private wasOverrideActiveLastFrame: boolean = false;
+    private wasGlitchingLastFrame: boolean = false;
 
     constructor() {
         this.stats = this.createEmptyStats();
@@ -105,6 +117,7 @@ export class RunStatsCollector {
         this.sampleTimer = 0;
         this.wasGazingLastFrame = false;
         this.wasOverrideActiveLastFrame = false;
+        this.wasGlitchingLastFrame = false;
     }
 
     /**
@@ -161,13 +174,16 @@ export class RunStatsCollector {
         }
         if (isOverrideActive) {
             this.stats.overrideTimeTotal += deltaTime;
-            if (isGlitchingFromOverride) {
-                this.stats.overrideSuccesses++;
-            }
+        }
+        // Edge-detect the glitch (success) so it counts once per attempt,
+        // consistent with overrideAttempts, instead of once per frame.
+        if (isGlitchingFromOverride && !this.wasGlitchingLastFrame) {
+            this.stats.overrideSuccesses++;
         }
 
         this.wasGazingLastFrame = isGazing;
         this.wasOverrideActiveLastFrame = isOverrideActive;
+        this.wasGlitchingLastFrame = isGlitchingFromOverride;
     }
 
     /**
@@ -241,15 +257,8 @@ export class RunStatsCollector {
         const dominantRoom = Object.entries(metrics.roomRatios)
             .reduce((a, b) => (a[1] > b[1] ? a : b), ['', 0])[0];
 
-        const roomTagMap: Record<string, BehaviorTag> = {
-            [RoomType.INFO_OVERFLOW]: 'INFO_MAZE',
-            [RoomType.FORCED_ALIGNMENT]: 'CRACK_WALKER',
-            [RoomType.IN_BETWEEN]: 'INBETWEENER',
-            [RoomType.POLARIZED]: 'BINARY_EDGE',
-        };
-
-        if (dominantRoom && roomTagMap[dominantRoom]) {
-            tags.push(roomTagMap[dominantRoom]);
+        if (dominantRoom && ROOM_TAG_MAP[dominantRoom]) {
+            tags.push(ROOM_TAG_MAP[dominantRoom]);
         }
 
         // Position tags

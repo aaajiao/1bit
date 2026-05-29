@@ -173,7 +173,9 @@ export function lerpRoomShaderConfig(
     to: RoomShaderConfig,
     t: number,
 ): RoomShaderConfig {
-    const lerp = (a: number, b: number) => a + (b - a) * t;
+    // Clamp interpolation factor to [0, 1] to avoid extrapolation overshoot
+    const tc = t < 0 ? 0 : t > 1 ? 1 : t;
+    const lerp = (a: number, b: number) => a + (b - a) * tc;
     return {
         uNoiseDensity: lerp(from.uNoiseDensity, to.uNoiseDensity),
         uThresholdBias: lerp(from.uThresholdBias, to.uThresholdBias),

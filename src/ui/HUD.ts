@@ -1,3 +1,5 @@
+import type { OverrideHintDisplay } from '../types/player';
+
 export interface HUDState {
     posX: number;
     posZ: number;
@@ -8,6 +10,9 @@ export interface HUDState {
     overrideActive: boolean;
     overrideProgress: number; // 0-1
     tags: string[];
+    // Optional [SHIFT]-resistance hint. Populated by main from the
+    // OverrideMechanic hint state; optional for backward compatibility.
+    hint?: OverrideHintDisplay;
 }
 
 /**
@@ -37,7 +42,8 @@ export class HUD {
         const gazing = state.isGazing ? '👁️GAZE' : '';
         const progress = state.overrideActive ? `[${Math.round(state.overrideProgress * 100)}%]` : '';
         const tagStr = state.tags.join(', ');
+        const hintStr = state.hint && state.hint.visible ? `\n${state.hint.text}` : '';
 
-        this.element.innerText = `POS: ${state.posX.toFixed(1)}, ${state.posZ.toFixed(1)} | ${state.roomType} | ↑${pitchDeg}° ${shiftKey} ${gazing} ${progress}\n${tagStr}`;
+        this.element.innerText = `POS: ${state.posX.toFixed(1)}, ${state.posZ.toFixed(1)} | ${state.roomType} | ↑${pitchDeg}° ${shiftKey} ${gazing} ${progress}\n${tagStr}${hintStr}`;
     }
 }

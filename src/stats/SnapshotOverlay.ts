@@ -36,6 +36,8 @@ export class SnapshotOverlay {
     private textHideTimeoutId: number | null = null;
     private animationFrameId: number | null = null;
     private patternTime: number = 0;
+    private textShowTimeoutId: number | null = null;
+    private readonly resizeHandler: () => void;
 
     constructor(config: Partial<OverlayConfig> = {}) {
         this.config = { ...DEFAULT_CONFIG, ...config };
@@ -100,8 +102,9 @@ export class SnapshotOverlay {
         // Add to DOM
         document.body.appendChild(this.container);
 
-        // Handle resize
-        window.addEventListener('resize', () => this.resizeCanvas());
+        // Handle resize (store the bound handler so dispose() can remove it)
+        this.resizeHandler = () => this.resizeCanvas();
+        window.addEventListener('resize', this.resizeHandler);
         this.resizeCanvas();
     }
 
@@ -131,7 +134,7 @@ export class SnapshotOverlay {
         this.container.style.opacity = '1';
 
         // Show text after delay
-        setTimeout(() => {
+        this.textShowTimeoutId = window.setTimeout(() => {
             this.textEl.textContent = snapshot.text;
             this.textEl.style.opacity = '1';
         }, this.config.textDelay);
@@ -156,6 +159,10 @@ export class SnapshotOverlay {
         this.isVisible = false;
 
         // Cancel pending timeouts
+        if (this.textShowTimeoutId !== null) {
+            clearTimeout(this.textShowTimeoutId);
+            this.textShowTimeoutId = null;
+        }
         if (this.hideTimeoutId !== null) {
             clearTimeout(this.hideTimeoutId);
             this.hideTimeoutId = null;
@@ -282,7 +289,10 @@ export class SnapshotOverlay {
     }
 
     private hash(x: number, y: number): number {
-        return (Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
+        // Proper fract() (matching the GLSL twin); JS `% 1` is signed and biases
+        // half the grid negative, darkening the noise pattern.
+        const h = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+        return h - Math.floor(h);
     }
 
     private mix(a: number, b: number, t: number): number {
@@ -300,7 +310,9 @@ export class SnapshotOverlay {
      * Clean up resources
      */
     dispose(): void {
+        // hide() cancels all pending timeouts and the rAF loop.
         this.hide();
+        window.removeEventListener('resize', this.resizeHandler);
         if (this.container.parentNode) {
             this.container.parentNode.removeChild(this.container);
         }

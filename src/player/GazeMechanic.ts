@@ -2,6 +2,7 @@
 // Detects when player looks at the Sky Eye and triggers disciplinary response
 
 import type * as THREE from 'three';
+import { GAZE } from '../config';
 
 /**
  * Gaze state information
@@ -41,8 +42,8 @@ export class GazeMechanic {
         this.camera = camera;
 
         this.config = {
-            pitchThreshold: Math.PI / 4, // 45 degrees
-            maxPitch: Math.PI / 2, // 90 degrees (straight up)
+            pitchThreshold: GAZE.PITCH_THRESHOLD, // 45 degrees (Math.PI / 4)
+            maxPitch: GAZE.MAX_PITCH, // 90 degrees (straight up)
             intensityCurve: 2.0, // Quadratic curve
         };
 

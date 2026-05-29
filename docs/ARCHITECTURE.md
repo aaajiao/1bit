@@ -24,12 +24,11 @@ src/
 │   ├── constants.ts # 集中管理的游戏常量（性能、机制阈值等）
 │   ├── physics.ts   # 物理/玩家参数配置
 │   └── index.ts     # 统一导出
-├── core/            # 核心初始化模块
-│   ├── GameContext.ts    # 游戏上下文接口（共享更新状态）
-│   ├── PostProcessing.ts # 后处理效果（Dither、Pixelation）
-│   ├── SceneSetup.ts     # 场景与相机初始化
-│   ├── Signal.ts         # 信号模式（系统间解耦通信）
-│   └── Updatable.ts      # 可更新系统接口与注册器
+├── core/            # 核心初始化与逐帧更新辅助模块
+│   ├── CableAudioUpdater.ts  # 根据玩家与线缆的距离更新音频
+│   ├── PostProcessing.ts     # 后处理效果（Dither、Pixelation）
+│   ├── SceneSetup.ts         # 场景与相机初始化
+│   └── ShaderUniformUpdater.ts # 每帧同步着色器 uniform
 ├── player/          # 玩家相关（控制、手部、道具、机制）
 │   ├── Controls.ts       # 玩家移动与输入控制
 │   ├── FlowerProp.ts     # 手持花朵道具及其状态/动画
@@ -43,8 +42,6 @@ src/
 │   ├── RunStatsCollector.ts     # 收集本轮游戏的数据（注视时间、移动等）
 │   ├── SnapshotOverlay.ts       # 生成并在日落时显示的统计快照 UI
 │   └── StateSnapshotGenerator.ts # 将统计数据转化为视觉快照的逻辑
-├── state/           # 游戏状态管理
-│   └── GameStateManager.ts # 存档/读档系统（localStorage）
 ├── ui/              # 用户界面与HUD
 │   └── HUD.ts            # 抬头显示器（坐标、状态调试信息）
 ├── world/           # 世界系统（区块、建筑、天气、昼夜...）
@@ -63,7 +60,6 @@ src/
 └── utils/           # 工具函数
     ├── dispose.ts          # Three.js 资源释放工具（几何体、材质、纹理）
     ├── hash.ts             # 字符串哈希工具
-    ├── ObjectPool.ts       # 对象池（用于优化性能）
     └── ScreenshotManager.ts # 截图功能管理
 
 styles/
@@ -124,7 +120,7 @@ this.newSystem.update(delta, { /* 依赖 */ });
 | UI/HUD | `ui/` | HUD |
 | 渲染效果 | `shaders/` | DitherShader |
 | 音效 | `audio/` | AudioEngine, AudioController |
-| 工具 | `utils/` | hash, ObjectPool, ScreenshotManager |
+| 工具 | `utils/` | hash, dispose, ScreenshotManager |
 | 样式 | `styles/` | main.css |
 
 ---

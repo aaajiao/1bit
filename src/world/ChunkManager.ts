@@ -9,25 +9,32 @@ import type { RoomShaderConfig } from './RoomConfig';
 import type { SharedAssets } from './SharedAssets';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
+import { ROOM_TRANSITION, WORLD } from '../config/constants';
 import { disposeObject3D } from '../utils/dispose';
 import { hash } from '../utils/hash';
 import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
-import { createDynamicCable } from './CableSystem';
+import { createDynamicCable, disposeCableMaterial } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createMoireFloorMesh } from './FloorTile';
 import { createTree } from './FloraFactory';
 import { getRoomTypeFromPosition, lerpRoomShaderConfig, ROOM_CONFIGS, RoomType } from './RoomConfig';
 import { getSharedAssets } from './SharedAssets';
 
-// Configuration
-export const CHUNK_SIZE = 80;
-export const RENDER_DISTANCE = 2;
+// Configuration (sourced from centralized constants; re-exported for consumers)
+export const CHUNK_SIZE = WORLD.CHUNK_SIZE;
+export const RENDER_DISTANCE = WORLD.RENDER_DISTANCE;
 
 /**
  * Extended chunk user data with room type
  */
 interface ExtendedChunkUserData extends ChunkUserData {
     roomType: RoomType;
+    /**
+     * Per-chunk unique materials (and their textures) that must be disposed
+     * explicitly on chunk removal, since disposeObject3D skips materials to
+     * protect shared assets like the floor material.
+     */
+    disposables: THREE.Material[];
 }
 
 /**
@@ -43,7 +50,7 @@ export class ChunkManager {
     private currentRoomType: RoomType = RoomType.INFO_OVERFLOW;
     private previousRoomType: RoomType = RoomType.INFO_OVERFLOW;
     private roomTransitionProgress: number = 1.0; // 1.0 = fully transitioned
-    private roomTransitionSpeed: number = 2.0; // Transition over 0.5 seconds
+    private roomTransitionSpeed: number = ROOM_TRANSITION.TRANSITION_SPEED; // 2.0 -> transition over 0.5 seconds
 
     // Shader config for current room (interpolated during transitions)
     private currentShaderConfig: RoomShaderConfig;
@@ -98,14 +105,17 @@ export class ChunkManager {
             buildings: [],
             animatedObjects: [], // Pre-collected animated objects for optimization
             roomType,
+            disposables: [],
         } as ExtendedChunkUserData;
 
-        // Floor - select type based on room
+        const chunkData = chunk.userData as ExtendedChunkUserData;
+
         // Floor - select type based on room
         let floor: THREE.Object3D;
         if (roomType === RoomType.FORCED_ALIGNMENT) {
-            const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial);
+            const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial, 4, cx, cz);
             floor = crackedSystem.group;
+            chunkData.disposables.push(...crackedSystem.disposables);
 
             // Store fog system for animation
             if (crackedSystem.fog) {
@@ -114,7 +124,9 @@ export class ChunkManager {
             }
         }
         else if (roomType === RoomType.IN_BETWEEN) {
-            floor = createMoireFloorMesh(CHUNK_SIZE, this.floorMaterial);
+            const moireSystem = createMoireFloorMesh(CHUNK_SIZE, this.floorMaterial);
+            floor = moireSystem.group;
+            chunkData.disposables.push(...moireSystem.disposables);
         }
         else {
             floor = createFloorMesh(CHUNK_SIZE, this.floorMaterial);
@@ -159,13 +171,14 @@ export class ChunkManager {
             let maxHeight = 0;
             const params = { i, cx, cz, assets: this.assets };
             const animatedObjects = chunk.userData.animatedObjects;
+            const disposables = chunkData.disposables;
 
             // Generate based on style
             if (style === 'TREE') {
-                maxHeight = createTree(buildGroup, params, animatedObjects);
+                maxHeight = createTree(buildGroup, params, animatedObjects, disposables);
             }
             else if (style === 'FLUID') {
-                maxHeight = createFluidBuilding(buildGroup, params, animatedObjects);
+                maxHeight = createFluidBuilding(buildGroup, params, animatedObjects, disposables);
             }
             else if (style === 'SPIKES') {
                 maxHeight = createSpikesBuilding(buildGroup, params);
@@ -272,21 +285,39 @@ export class ChunkManager {
      */
     private removeChunk(key: string): void {
         const chunk = this.activeChunks[key];
+        const chunkData = chunk.userData as ExtendedChunkUserData;
 
-        // Dispose cables (geometry and material)
-        if (chunk.userData.cables) {
-            chunk.userData.cables.forEach((c: DynamicCable) => {
-                if (c.line) {
-                    c.line.geometry?.dispose();
-                    if (c.line.material instanceof THREE.Material) {
-                        c.line.material.dispose();
-                    }
-                }
+        // Dispose cable geometry ONLY. The cable shader material is a module
+        // singleton shared by every cable in every chunk (CableSystem), so it
+        // must NOT be disposed here; it is released once in dispose().
+        if (chunkData.cables) {
+            chunkData.cables.forEach((c: DynamicCable) => {
+                c.line?.geometry?.dispose();
             });
         }
 
-        // Dispose all meshes in chunk (geometries, materials, textures)
-        disposeObject3D(chunk, false, false); // Don't dispose shared materials
+        // Explicitly dispose the abyss-fog InstancedMesh so its instanceMatrix
+        // GPU buffer is freed (disposeObject3D also handles this via traversal,
+        // but the reference makes the intent explicit and is idempotent).
+        if (chunkData.fogSystem) {
+            chunkData.fogSystem.dispose();
+        }
+
+        // Dispose all geometries in chunk. Materials are skipped here to protect
+        // the shared floor material; per-chunk unique materials are disposed below.
+        disposeObject3D(chunk, false, false);
+
+        // Dispose per-chunk unique materials (abyss, fog, moiré layer2, plasma
+        // clones) and their textures, which disposeObject3D intentionally skips.
+        if (chunkData.disposables) {
+            chunkData.disposables.forEach((mat) => {
+                const map = (mat as THREE.MeshBasicMaterial).map;
+                if (map instanceof THREE.Texture)
+                    map.dispose();
+                mat.dispose();
+            });
+            chunkData.disposables.length = 0;
+        }
 
         this.chunkGroup.remove(chunk);
         delete this.activeChunks[key];
@@ -296,11 +327,15 @@ export class ChunkManager {
      * Animate all chunks (buildings, cables)
      * @param time - Current time in seconds
      * @param delta - Delta time in seconds
+     * @param cameraPosition - Optional camera world position. When provided,
+     *   per-object animation is gated by distance (LOD) using WORLD thresholds.
+     *   When omitted (default), all objects animate (legacy behavior), keeping
+     *   existing callers working unchanged.
      */
-    animate(time: number, delta: number): void {
+    animate(time: number, delta: number, cameraPosition?: THREE.Vector3): void {
         // Animate all chunks (delegated to ChunkAnimator)
         for (const key in this.activeChunks) {
-            animateChunk(this.activeChunks[key], time, delta);
+            animateChunk(this.activeChunks[key], time, delta, cameraPosition);
         }
 
         // Update room transition
@@ -461,6 +496,10 @@ export class ChunkManager {
 
         // Dispose floor material
         this.floorMaterial.dispose();
+
+        // Dispose the shared cable shader material exactly once (it is a module
+        // singleton in CableSystem, never disposed per-chunk).
+        disposeCableMaterial();
 
         // Dispose shared assets
         this.assets.dispose();

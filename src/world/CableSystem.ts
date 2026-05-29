@@ -36,6 +36,18 @@ export function updateCableTime(time: number): void {
 }
 
 /**
+ * Dispose the shared cable shader material and reset the singleton.
+ * Must be called exactly once during teardown (e.g. ChunkManager.dispose()).
+ * Subsequent calls to getCableMaterial() will lazily recreate it.
+ */
+export function disposeCableMaterial(): void {
+    if (cableShaderMat) {
+        cableShaderMat.dispose();
+        cableShaderMat = null;
+    }
+}
+
+/**
  * Creates a dynamic cable between two nodes
  * @param startNode - Start node with position
  * @param endNode - End node with position

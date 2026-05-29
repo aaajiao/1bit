@@ -1,5 +1,6 @@
 import type { AudioSystemInterface } from '../types';
 import type { RoomType } from '../world/RoomConfig';
+import type { OverrideHint } from './OverrideMechanic';
 import * as THREE from 'three';
 import { Controls } from './Controls';
 import { forceFlowerIntensity, getFlowerIntensity, overrideFlowerIntensity, setFlowerIntensity } from './FlowerProp';
@@ -157,9 +158,17 @@ export class PlayerManager {
         let flowerIntensity = 0.5;
 
         if (flower) {
-            // Force flower intensity based on gaze
+            // Force flower intensity based on gaze.
+            // While the override effect is active, override is authoritative and
+            // holds the flower at max — skip gaze-forcing so the "blaze to full"
+            // payoff is not overwritten and decayed back down (H4).
             const isGazing = gazeState.isGazing;
-            forceFlowerIntensity(flower, isGazing, this.gaze.calculateForcedFlowerIntensity());
+            if (this.override.isTriggered()) {
+                forceFlowerIntensity(flower, false);
+            }
+            else {
+                forceFlowerIntensity(flower, isGazing, this.gaze.calculateForcedFlowerIntensity());
+            }
 
             // Get current intensity
             flowerIntensity = getFlowerIntensity(flower);
@@ -201,6 +210,22 @@ export class PlayerManager {
      */
     public getColorInversionValue(): number {
         return this.override.getColorInversionValue();
+    }
+
+    /**
+     * Get the override hint state (delegates to OverrideMechanic).
+     * Hint state is kept live each frame by the override update path.
+     */
+    public getOverrideHintState(): OverrideHint {
+        return this.override.getHintState();
+    }
+
+    /**
+     * Mark the override hint as shown (delegates to OverrideMechanic).
+     * Call once the hint has been displayed to the user.
+     */
+    public markOverrideHintShown(): void {
+        this.override.markHintShown();
     }
 
     /**

@@ -3,6 +3,8 @@
  * Manages AudioContext, node connections, Master Volume, and other Web Audio API details
  */
 
+import { AUDIO_MASTER } from '../config';
+
 // Extend Window interface for webkit prefix
 declare global {
     interface Window {
@@ -17,8 +19,8 @@ export class AudioEngine {
     public enabled: boolean = false;
 
     // Filter interpolation state
-    private gazeFilterTargetFreq: number = 20000;
-    private gazeFilterCurrentFreq: number = 20000;
+    private gazeFilterTargetFreq: number = AUDIO_MASTER.gazeFilterOpen;
+    private gazeFilterCurrentFreq: number = AUDIO_MASTER.gazeFilterOpen;
 
     /**
      * Initialize audio context (must be called after user interaction)
@@ -31,14 +33,21 @@ export class AudioEngine {
             const AudioContextClass = window.AudioContext || window.webkitAudioContext;
             this.audioContext = new AudioContextClass();
 
+            // Browsers may auto-suspend the context (e.g. created before a gesture); resume it.
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume().catch(() => {
+                    // Resume may reject until a user gesture occurs; ignore.
+                });
+            }
+
             // Create master gain
             this.masterGain = this.audioContext.createGain();
-            this.masterGain.gain.value = 0.3;
+            this.masterGain.gain.value = AUDIO_MASTER.defaultVolume;
 
             // Create gaze low-pass filter
             this.gazeLowPassFilter = this.audioContext.createBiquadFilter();
             this.gazeLowPassFilter.type = 'lowpass';
-            this.gazeLowPassFilter.frequency.value = 20000;
+            this.gazeLowPassFilter.frequency.value = AUDIO_MASTER.gazeFilterOpen;
             this.gazeLowPassFilter.Q.value = 0.7;
 
             // Route: masterGain -> gazeLowPassFilter -> destination
@@ -49,6 +58,30 @@ export class AudioEngine {
         }
         catch (e) {
             console.warn('AudioEngine: Failed to initialize', e);
+        }
+    }
+
+    /**
+     * Resume the audio context if it has been suspended (e.g. tab blur/focus,
+     * or browser autoplay policy). Safe to call repeatedly.
+     */
+    resume(): void {
+        if (this.audioContext && this.audioContext.state === 'suspended') {
+            this.audioContext.resume().catch(() => {
+                // Ignore resume errors (e.g. no user gesture yet).
+            });
+        }
+    }
+
+    /**
+     * Suspend the audio context (used by the pause state machine).
+     * Safe to call when already suspended or before init.
+     */
+    suspend(): void {
+        if (this.audioContext && this.audioContext.state === 'running') {
+            this.audioContext.suspend().catch(() => {
+                // Ignore suspend errors.
+            });
         }
     }
 
@@ -80,7 +113,7 @@ export class AudioEngine {
      */
     toggleMute(): void {
         if (this.masterGain) {
-            this.masterGain.gain.value = this.masterGain.gain.value > 0 ? 0 : 0.3;
+            this.masterGain.gain.value = this.masterGain.gain.value > 0 ? 0 : AUDIO_MASTER.defaultVolume;
         }
     }
 
@@ -91,8 +124,9 @@ export class AudioEngine {
      */
     updateGazeFilter(isGazing: boolean, gazeIntensity: number): void {
         this.gazeFilterTargetFreq = isGazing
-            ? 400 + (1 - gazeIntensity) * 19600
-            : 20000;
+            ? AUDIO_MASTER.gazeFilterClosed
+            + (1 - gazeIntensity) * (AUDIO_MASTER.gazeFilterOpen - AUDIO_MASTER.gazeFilterClosed)
+            : AUDIO_MASTER.gazeFilterOpen;
     }
 
     /**
@@ -101,6 +135,19 @@ export class AudioEngine {
     tick(deltaTime: number): void {
         if (!this.gazeLowPassFilter || !this.audioContext)
             return;
+
+        // Skip writing the filter frequency once it has converged to the target.
+        const epsilon = 0.5;
+        if (Math.abs(this.gazeFilterTargetFreq - this.gazeFilterCurrentFreq) < epsilon) {
+            if (this.gazeFilterCurrentFreq !== this.gazeFilterTargetFreq) {
+                this.gazeFilterCurrentFreq = this.gazeFilterTargetFreq;
+                this.gazeLowPassFilter.frequency.setValueAtTime(
+                    this.gazeFilterCurrentFreq,
+                    this.audioContext.currentTime,
+                );
+            }
+            return;
+        }
 
         const lerpSpeed = 3.0;
         this.gazeFilterCurrentFreq
@@ -157,15 +204,23 @@ export class AudioEngine {
         const attack = options.attack ?? 0;
         const decay = options.decay ?? options.duration;
 
+        const stopTime = now + options.duration + 0.1;
+
         gain.gain.setValueAtTime(0, now);
         gain.gain.linearRampToValueAtTime(options.volume, now + attack);
         gain.gain.setTargetAtTime(0.001, now + attack, decay);
+
+        // When the caller omits an explicit decay, the exponential approach (decay === duration)
+        // is only ~1 time-constant in at stop time, leaving an audible click. Ramp to 0 first.
+        if (options.decay === undefined) {
+            gain.gain.linearRampToValueAtTime(0, stopTime);
+        }
 
         osc.connect(gain);
         gain.connect(this.masterGain);
 
         osc.start(now);
-        osc.stop(now + options.duration + 0.1);
+        osc.stop(stopTime);
     }
 
     /**
@@ -192,6 +247,8 @@ export class AudioEngine {
         const gain = this.audioContext.createGain();
         gain.gain.setValueAtTime(options.volume, now);
         gain.gain.setTargetAtTime(0.001, now + options.duration * 0.7, options.duration * 0.3);
+        // Ensure the envelope reaches true zero before stop to avoid an audible click.
+        gain.gain.linearRampToValueAtTime(0, now + options.duration);
 
         if (options.filterType) {
             const filter = this.audioContext.createBiquadFilter();

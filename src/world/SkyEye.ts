@@ -18,6 +18,7 @@ export class SkyEye {
     private blinkPhase: 'none' | 'closing' | 'opening' = 'none';
     private preBlinkScaleY: number = 1;
     private _targetVec = new THREE.Vector3();
+    private sharedMaterial: THREE.MeshBasicMaterial | null = null;
 
     constructor(scene: THREE.Scene) {
         this.createGeometry();
@@ -41,6 +42,8 @@ export class SkyEye {
             depthWrite: false,
             fog: false, // Not affected by scene fog
         });
+        // Single material shared across all 6 meshes; disposed once in dispose()
+        this.sharedMaterial = mat;
 
         // Eye rings
         for (let i = 1; i <= 5; i++) {
@@ -136,6 +139,12 @@ export class SkyEye {
     dispose(): void {
         this.blinkPhase = 'none';
         this.isBlinking = false;
-        removeAndDispose(this.group);
+        // The material is shared by all 6 meshes; dispose geometries only here,
+        // then dispose the shared material exactly once to keep dispose idempotent.
+        removeAndDispose(this.group, false, false);
+        if (this.sharedMaterial) {
+            this.sharedMaterial.dispose();
+            this.sharedMaterial = null;
+        }
     }
 }

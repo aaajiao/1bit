@@ -34,24 +34,21 @@ Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 | Directory | Purpose |
 |-----------|---------|
-| `core/` | Scene setup, game context, signal system, system registry, post-processing |
+| `core/` | Scene setup, post-processing, and the per-frame update helpers `main.ts` calls (cable-audio proximity, shader-uniform sync) |
 | `config/` | All gameplay constants and thresholds (single source of truth) |
 | `player/` | Player controls, hand model, flower prop, gaze/override mechanics |
 | `world/` | Chunk management, building/flora factories, cables, sky eye, weather, day/night |
 | `audio/` | AudioController (business logic) + AudioEngine (Web Audio API wrapper) |
 | `shaders/` | DitherShader — 1-bit dithering, edge detection, weather overlays |
 | `stats/` | Behavior tracking, snapshot generation, sunset overlay display |
-| `state/` | Game save/load via localStorage |
 | `types/` | Modular type definitions with unified re-export via `index.ts` |
-| `utils/` | Hash, dispose, object pool, screenshot |
+| `utils/` | Hash, dispose, screenshot |
 
 ### Key Patterns
 
-**System Registry** (`core/Updatable.ts`): All per-frame systems implement the `Updatable` interface and register with `SystemRegistry`. Each receives a `GameContext` (time, delta, player position, room type) on every frame.
+**Manual orchestration in `main.ts`** (`ChimeraVoid`): There is no central registry or event bus. The `ChimeraVoid` class owns every system as a field, instantiates them in its constructor, and calls each one's `update()` by hand inside `animate()`. It threads the shared per-frame state — `delta`, elapsed time `t`, the freshly-updated player position, and the current `RoomType` — into each `update()` call explicitly, in a fixed order (player first so every consumer sees this frame's position).
 
-**Signal-based communication** (`core/Signal.ts`): Lightweight pub/sub for decoupled inter-system events. Systems emit signals rather than calling each other directly.
-
-**Manager orchestration** (`player/PlayerManager.ts`): High-level managers compose subsystems (Controls, HandsModel, GazeMechanic, OverrideMechanic) and wire them together.
+**Manager orchestration** (`player/PlayerManager.ts`): High-level managers compose subsystems (Controls, HandsModel, GazeMechanic, OverrideMechanic) and wire them together, exposing a single `update()` to `main.ts`.
 
 **Room-based state** (`world/RoomConfig.ts`): World position maps to one of four `RoomType` values (INFO_OVERFLOW, FORCED_ALIGNMENT, IN_BETWEEN, POLARIZED), each driving distinct shader parameters and audio behavior.
 
@@ -82,7 +79,7 @@ Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 ## Testing
 
-Tests live in `tests/` and cover pure logic: hash utilities, GazeMechanic (27 cases), RunStatsCollector, StateSnapshotGenerator, Signal, config validation, SystemRegistry. Test strategy focuses on logic separation — pure functions over mocked Three.js scenes.
+Tests live in `tests/` and cover pure logic: hash utilities, GazeMechanic (27 cases), RunStatsCollector, StateSnapshotGenerator, and config validation. Test strategy focuses on logic separation — pure functions over mocked Three.js scenes.
 
 ## Dependencies
 

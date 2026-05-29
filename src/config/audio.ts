@@ -33,9 +33,6 @@ export const CABLE_AUDIO_CONFIG = {
     humFrequency: 100,
     /** Max volume when close to cable */
     maxVolume: 0.15,
-    /** Distance range for audio (meters) */
-    minDistance: 3,
-    maxDistance: 25,
 };
 
 /**

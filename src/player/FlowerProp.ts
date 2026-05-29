@@ -186,6 +186,10 @@ export function forceFlowerIntensity(
 export function overrideFlowerIntensity(flowerGroup: FlowerGroup): void {
     flowerGroup.userData.intensity = 1.0;
     flowerGroup.userData.targetIntensity = 1.0;
+    // Override is authoritative: clear gaze-forcing so animateFlower's
+    // effectiveTarget holds at the max target instead of decaying back down
+    // toward forcedIntensity (H4).
+    flowerGroup.userData.isBeingForced = false;
 }
 
 /**

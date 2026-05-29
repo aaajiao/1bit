@@ -20,6 +20,17 @@ export interface PlayerPosition {
     z: number;
 }
 
+/**
+ * Display-oriented [SHIFT]-resistance hint shown on the HUD.
+ * Derived by main from OverrideMechanic.OverrideHint (shouldShow -> visible,
+ * plus the resolved hint text). Kept as a small display contract so the HUD
+ * stays decoupled from the mechanic's internal state.
+ */
+export interface OverrideHintDisplay {
+    text: string;
+    visible: boolean;
+}
+
 // ===== Finger & Hand Model =====
 
 export interface FingerStructure {

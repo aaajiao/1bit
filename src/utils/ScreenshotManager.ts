@@ -5,18 +5,27 @@ import type * as THREE from 'three';
  */
 export class ScreenshotManager {
     private renderer: THREE.WebGLRenderer;
+    private readonly keyHandler: (e: KeyboardEvent) => void;
 
     constructor(renderer: THREE.WebGLRenderer) {
         this.renderer = renderer;
+        this.keyHandler = (e: KeyboardEvent) => {
+            if (e.code === 'KeyP') {
+                this.takeScreenshot();
+            }
+        };
         this.setupKeyHandler();
     }
 
     private setupKeyHandler(): void {
-        document.addEventListener('keydown', (e: KeyboardEvent) => {
-            if (e.code === 'KeyP') {
-                this.takeScreenshot();
-            }
-        });
+        document.addEventListener('keydown', this.keyHandler);
+    }
+
+    /**
+     * Remove the keydown listener. Call when tearing down the experience.
+     */
+    public dispose(): void {
+        document.removeEventListener('keydown', this.keyHandler);
     }
 
     /**

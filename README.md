@@ -68,7 +68,7 @@
 | 层面 | 效果 | 代码位置 |
 |------|------|---------|
 | **视觉** | 花朵强度被压制到 0.1-0.5 | `GazeMechanic.ts:82` |
-| **音频** | 低通滤波器激活，声音变得沉闷 | `AudioSystem.ts:285` |
+| **音频** | 低通滤波器激活，声音变得沉闷 | `AudioController.ts:95` |
 | **着色器** | 对比度从 1.0 → 1.8，画面更刺眼 | `DitherShader.ts:156` |
 | **心理** | 玩家感受到被"规训"的压力 | — |
 
@@ -418,38 +418,61 @@ npm run serve
 
 ```
 1bit/
-├── index.html              # 入口 HTML（ES6 模块版本）
-├── 1-bit.html              # 原始单文件版本
+├── index.html              # 入口 HTML（ES6 模块）
 ├── package.json            # 项目配置
 ├── tsconfig.json           # TypeScript 配置
+├── vite.config.js          # Vite 构建配置
 ├── README.md               # 本文档
 ├── styles/
 │   └── main.css            # 样式表（扫描线效果等）
 └── src/
-    ├── main.ts             # 主程序入口
-    ├── types.ts            # 类型定义
+    ├── main.ts             # 主程序入口（ChimeraVoid，手动编排所有系统）
+    ├── core/
+    │   ├── SceneSetup.ts          # 场景/相机/渲染器初始化
+    │   ├── PostProcessing.ts      # 后处理 composer
+    │   ├── ShaderUniformUpdater.ts # 每帧同步着色器 uniform
+    │   └── CableAudioUpdater.ts    # 线缆接近度音频更新
+    ├── config/
+    │   ├── constants.ts    # 玩法常量与阈值（单一真相源）
+    │   ├── physics.ts      # 物理/裂隙常量
+    │   ├── audio.ts        # 音频常量
+    │   └── index.ts        # 统一再导出
     ├── audio/
-    │   └── AudioSystem.ts  # 程序化音效系统
+    │   ├── AudioController.ts # 音频业务逻辑
+    │   └── AudioEngine.ts     # Web Audio API 封装
     ├── shaders/
     │   └── DitherShader.ts # 1-bit 抖动着色器 + 线缆脉冲着色器
     ├── player/
-    │   ├── Controls.ts     # 第一人称移动控制
-    │   ├── HandsModel.ts   # 解剖学精确的手部模型
-    │   └── FlowerProp.ts   # 手持发光花朵
+    │   ├── PlayerManager.ts    # 组合并编排玩家子系统
+    │   ├── Controls.ts         # 第一人称移动控制
+    │   ├── HandsModel.ts       # 解剖学精确的手部模型
+    │   ├── FlowerProp.ts       # 手持发光花朵
+    │   ├── GazeMechanic.ts     # 凝视机制
+    │   └── OverrideMechanic.ts # 反抗（override）机制
     ├── world/
-    │   ├── ChunkManager.ts # 无限地形区块管理
-    │   ├── SharedAssets.ts # 共享材质和几何体
+    │   ├── ChunkManager.ts    # 无限地形区块管理
+    │   ├── ChunkAnimator.ts   # 区块物体动画 + LOD
+    │   ├── SharedAssets.ts    # 共享材质和几何体
     │   ├── BuildingFactory.ts # 建筑生成器
-    │   ├── FloraFactory.ts # 树木/植物生成器
-    │   ├── FloorTile.ts    # 地板纹理生成
-    │   ├── CableSystem.ts  # 动态线缆系统
-    │   ├── WeatherSystem.ts # 天气效果系统
-    │   ├── DayNightCycle.ts # 昼夜循环系统
-    │   └── SkyEye.ts       # 天空之眼
+    │   ├── FloraFactory.ts    # 树木/植物生成器
+    │   ├── FloorTile.ts       # 地板/裂纹/深渊雾生成
+    │   ├── CableSystem.ts     # 动态线缆系统
+    │   ├── RoomConfig.ts      # 房间类型与着色器配置
+    │   ├── RiftMechanic.ts    # 裂隙坠落机制
+    │   ├── WeatherSystem.ts   # 天气效果系统
+    │   ├── DayNightCycle.ts   # 昼夜循环系统
+    │   └── SkyEye.ts          # 天空之眼
+    ├── stats/
+    │   ├── RunStatsCollector.ts      # 行为追踪
+    │   ├── StateSnapshotGenerator.ts # 快照生成
+    │   └── SnapshotOverlay.ts        # 日落快照叠层显示
+    ├── ui/
+    │   └── HUD.ts          # 抬头显示
+    ├── types/             # 模块化类型定义（index.ts 统一再导出）
     └── utils/
-        ├── dispose.ts      # Three.js 资源释放工具
-        ├── hash.ts         # 确定性伪随机哈希
-        └── ObjectPool.ts   # 对象池（性能优化）
+        ├── dispose.ts           # Three.js 资源释放工具
+        ├── hash.ts              # 确定性伪随机哈希
+        └── ScreenshotManager.ts # 截图
 ```
 
 ---
@@ -730,7 +753,6 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 
 ### 性能优化
 
-- **对象池**: 避免 GC 抖动，流畅 60fps
 - **共享材质**: 减少 Draw Call，提升渲染效率
 - **LOD 系统**: 远距离区块简化渲染
 - **预分配缓存**: 避免运行时内存分配

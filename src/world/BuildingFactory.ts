@@ -92,7 +92,12 @@ interface AssetSelection {
  * @param materialOverride - Random value for material override
  * @param assets - Shared assets object
  */
-function selectSolidAsset(assetType: number, materialOverride: number, assets: SharedAssets): AssetSelection {
+function selectSolidAsset(
+    assetType: number,
+    materialOverride: number,
+    assets: SharedAssets,
+    disposables?: THREE.Material[],
+): AssetSelection {
     let geometry: THREE.BufferGeometry;
     let material: THREE.Material;
 
@@ -117,9 +122,12 @@ function selectSolidAsset(assetType: number, materialOverride: number, assets: S
         material = assets.matSolid;
     }
 
-    // Override with plasma material for rare cases
+    // Override with plasma material for rare cases.
+    // This clone is a per-chunk unique material; track it so the caller can
+    // dispose it (disposeObject3D skips materials to protect shared assets).
     if (materialOverride > 0.9) {
         material = assets.matPlasma.clone();
+        disposables?.push(material);
     }
 
     return { geometry, material };
@@ -158,11 +166,16 @@ interface SolidMeshParams {
  * Creates a solid building mesh
  * @param params - Creation parameters
  * @param animatedObjects - Array to collect animated objects
+ * @param disposables - Optional array to collect per-chunk unique materials
  */
-function createSolidMesh(params: SolidMeshParams, animatedObjects: AnimatedObject[]): THREE.Mesh {
+function createSolidMesh(
+    params: SolidMeshParams,
+    animatedObjects: AnimatedObject[],
+    disposables?: THREE.Material[],
+): THREE.Mesh {
     const { assets, assetType, materialOverride, r1, r2, r3 } = params;
 
-    const { geometry, material } = selectSolidAsset(assetType, materialOverride, assets);
+    const { geometry, material } = selectSolidAsset(assetType, materialOverride, assets, disposables);
     const mesh = new THREE.Mesh(geometry, material);
 
     mesh.scale.copy(calculateAssetScale(geometry, r2, assets));
@@ -245,6 +258,7 @@ export function createFluidBuilding(
     buildGroup: THREE.Group,
     params: BuildingParams,
     animatedObjects: AnimatedObject[],
+    disposables?: THREE.Material[],
 ): number {
     const { i, cx, cz, assets } = params;
     let maxHeight = 0;
@@ -265,7 +279,7 @@ export function createFluidBuilding(
                     r1,
                     r2,
                     r3,
-                }, animatedObjects);
+                }, animatedObjects, disposables);
 
         const { yPos, xOffset, zOffset } = calculateFragmentPosition(isLiquid, f, r1, r2, r3);
 

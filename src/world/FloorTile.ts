@@ -1,5 +1,20 @@
 // 1-bit Chimera Void - Floor Tile Generator
 import * as THREE from 'three';
+import { hash } from '../utils/hash';
+
+/**
+ * Deterministic pseudo-random generator seeded by chunk coords plus a
+ * monotonically increasing counter. Mirrors the hash-based seeding used
+ * elsewhere so re-entering a chunk regenerates identical geometry/fog.
+ */
+function makeSeededRandom(cx: number, cz: number): () => number {
+    let counter = 0;
+    return () => {
+        counter += 1;
+        // Spread the counter across both hash inputs for good distribution
+        return hash(cx * 17.31 + counter * 0.613, cz * 11.97 + counter * 1.193);
+    };
+}
 
 /**
  * Creates a procedural grid texture for the floor
@@ -61,8 +76,14 @@ export function createCrackedFloorMesh(
     chunkSize: number,
     material: THREE.Material,
     crackWidth: number = 4,
-): { group: THREE.Group; fog?: THREE.InstancedMesh } {
+    cx: number = 0,
+    cz: number = 0,
+): { group: THREE.Group; fog?: THREE.InstancedMesh; disposables: THREE.Material[] } {
     const group = new THREE.Group();
+    const disposables: THREE.Material[] = [];
+
+    // Deterministic per-chunk RNG so re-entering a chunk looks identical
+    const rand = makeSeededRandom(cx, cz);
 
     // Calculate half-floor dimensions
     const halfFloorWidth = (chunkSize - crackWidth) / 2;
@@ -84,7 +105,7 @@ export function createCrackedFloorMesh(
         // We want to perturb vertices near this edge
         if (x > halfFloorWidth / 2 - 0.1) {
             // Jagged noise: mix of sine waves
-            const noise = Math.sin(z * 0.5) * 0.8 + Math.sin(z * 2.1) * 0.3 + (Math.random() - 0.5) * 0.4;
+            const noise = Math.sin(z * 0.5) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
             // Subtract from X (move left, widening gap randomly) or add (narrowing)
             // But we want to keep a minimum gap, so let's mostly erode
             leftPos.setX(i, x - Math.abs(noise) * 0.8);
@@ -109,7 +130,7 @@ export function createCrackedFloorMesh(
 
         // Left edge of right floor is at x = -halfFloorWidth / 2
         if (x < -halfFloorWidth / 2 + 0.1) {
-            const noise = Math.sin(z * 0.5 + 123.4) * 0.8 + Math.sin(z * 2.1) * 0.3 + (Math.random() - 0.5) * 0.4;
+            const noise = Math.sin(z * 0.5 + 123.4) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
             // Add to X (move right, widening gap)
             rightPos.setX(i, x + Math.abs(noise) * 0.8);
         }
@@ -123,8 +144,9 @@ export function createCrackedFloorMesh(
     rightFloor.receiveShadow = true;
     group.add(rightFloor);
 
-    // Abyss plane (pure black)
+    // Abyss plane (pure black) - per-chunk material, must be disposed explicitly
     const abyssMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    disposables.push(abyssMaterial);
     const abyssFloor = new THREE.Mesh(
         new THREE.PlaneGeometry(crackWidth + 6, chunkSize),
         abyssMaterial,
@@ -134,17 +156,25 @@ export function createCrackedFloorMesh(
     group.add(abyssFloor);
 
     // --- Abyss Fog ---
-    const fog = createAbyssFog(chunkSize, crackWidth);
+    const fog = createAbyssFog(chunkSize, crackWidth, rand);
     fog.position.y = -5; // Start fog deep down
     group.add(fog);
+    // Fog material is per-chunk; the InstancedMesh GPU buffer is freed by the
+    // caller via the fogSystem reference, but its material is tracked here too.
+    if (fog.material instanceof THREE.Material)
+        disposables.push(fog.material);
 
-    return { group, fog };
+    return { group, fog, disposables };
 }
 
 /**
  * Creates an instanced mesh for rising fog particles in the abyss
  */
-export function createAbyssFog(chunkSize: number, crackWidth: number): THREE.InstancedMesh {
+export function createAbyssFog(
+    chunkSize: number,
+    crackWidth: number,
+    rand: () => number = Math.random,
+): THREE.InstancedMesh {
     const particleCount = 400;
     const geometry = new THREE.PlaneGeometry(1.5, 1.5);
     const material = new THREE.MeshBasicMaterial({
@@ -158,16 +188,16 @@ export function createAbyssFog(chunkSize: number, crackWidth: number): THREE.Ins
     const dummy = new THREE.Object3D();
 
     for (let i = 0; i < particleCount; i++) {
-        // Random position within the crack volume
+        // Deterministic position within the crack volume
         dummy.position.set(
-            (Math.random() - 0.5) * crackWidth * 1.5, // Slightly wider spread
-            -160 + Math.random() * 162.0, // Range from -160m to +2m
-            (Math.random() - 0.5) * chunkSize, // Along entire chunk length
+            (rand() - 0.5) * crackWidth * 1.5, // Slightly wider spread
+            -160 + rand() * 162.0, // Range from -160m to +2m
+            (rand() - 0.5) * chunkSize, // Along entire chunk length
         );
 
-        // Random rotation and scale
-        dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-        const s = 1.0 + Math.random() * 2.0;
+        // Deterministic rotation and scale
+        dummy.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI);
+        const s = 1.0 + rand() * 2.0;
         dummy.scale.set(s, s, s);
 
         dummy.updateMatrix();
@@ -176,7 +206,7 @@ export function createAbyssFog(chunkSize: number, crackWidth: number): THREE.Ins
         // Use user data to store speed for animation
         if (!mesh.userData.speeds)
             mesh.userData.speeds = [];
-        mesh.userData.speeds[i] = 0.5 + Math.random() * 1.5; // Upward speed
+        mesh.userData.speeds[i] = 0.5 + rand() * 1.5; // Upward speed
     }
 
     mesh.instanceMatrix.needsUpdate = true;
@@ -194,8 +224,9 @@ export function createMoireFloorMesh(
     chunkSize: number,
     material: THREE.Material,
     rotationAngle: number = 45,
-): THREE.Group {
+): { group: THREE.Group; disposables: THREE.Material[] } {
     const group = new THREE.Group();
+    const disposables: THREE.Material[] = [];
 
     // First layer - standard floor
     const layer1 = new THREE.Mesh(
@@ -207,10 +238,12 @@ export function createMoireFloorMesh(
     group.add(layer1);
 
     // Second layer - different density grid for stronger moiré interference
-    // Create a separate material with different grid density (32 vs default 64)
+    // Create a separate material with different grid density (32 vs default 64).
+    // This material + its DataTexture are per-chunk and must be disposed explicitly.
     const layer2Material = createMoireLayerMaterial(32);
     layer2Material.transparent = true;
     layer2Material.opacity = 0.7;
+    disposables.push(layer2Material);
 
     const layer2 = new THREE.Mesh(
         new THREE.PlaneGeometry(chunkSize * 1.5, chunkSize * 1.5), // Larger to cover corners after rotation
@@ -222,7 +255,7 @@ export function createMoireFloorMesh(
     layer2.receiveShadow = true;
     group.add(layer2);
 
-    return group;
+    return { group, disposables };
 }
 
 /**

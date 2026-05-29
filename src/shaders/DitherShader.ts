@@ -27,7 +27,7 @@ export const DitherShader: ShaderDefinition = {
         uThresholdBias: { value: 0.0 }, // -0.5 to 0.5, black/white balance offset
         uTemporalJitter: { value: 0.0 }, // 0-1, temporal dither animation
         uContrast: { value: 1.0 }, // 1.0+, overall contrast
-        uGlitchAmount: { value: 0.0 }, // 0-1, vertex displacement amplitude
+        uGlitchAmount: { value: 0.0 }, // 0-1, scales glitch line density + inversion strength (post-process, no vertex displacement)
         uGlitchSpeed: { value: 0.0 }, // Hz, glitch animation frequency
         uColorInversion: { value: 0.0 }, // 0-1, for override effect
         uOverrideProgress: { value: 0.0 }, // 0-1, hold progress feedback
@@ -43,6 +43,7 @@ export const DitherShader: ShaderDefinition = {
         }
     `,
     fragmentShader: `
+        precision highp float;
         uniform sampler2D tDiffuse;
         uniform vec2 resolution;
         uniform bool enableOutline;
@@ -168,9 +169,12 @@ export const DitherShader: ShaderDefinition = {
             vec4 color = texture2D(tDiffuse, vUv);
             float gray = getLuminance(color.rgb);
 
-            // Apply contrast (room-specific)
-            gray = pow(gray, 0.8) * 2.0;
+            // Apply contrast (room-specific) BEFORE the brightness boost so that
+            // high uContrast (e.g. POLARIZED's 2.0) is not neutered by midtone saturation.
             gray = (gray - 0.5) * uContrast + 0.5;
+            // Conservative brightness boost (gamma lift) - reduced factor keeps midtones
+            // from clamping to white before dithering, preserving the 1-bit look.
+            gray = pow(clamp(gray, 0.0, 1.0), 0.8) * 1.25;
             gray = clamp(gray, 0.0, 1.0);
 
             // Edge detection
@@ -183,12 +187,16 @@ export const DitherShader: ShaderDefinition = {
             vec2 pixelCoord = gl_FragCoord.xy;
             float threshold;
 
+            // Wrap unbounded time before high-frequency sin/fract usage to avoid
+            // precision banding/freezing on long sessions (and WebGL1/mediump).
+            float animTime = mod(uTime, 3600.0);
+
             // Apply temporal jitter for animated dithering (room-specific)
             vec2 jitteredCoord = pixelCoord;
             if (uTemporalJitter > 0.0) {
-                float jitterOffset = sin(uTime * 10.0 + pixelCoord.x * 0.1) * uTemporalJitter * 2.0;
+                float jitterOffset = sin(animTime * 10.0 + pixelCoord.x * 0.1) * uTemporalJitter * 2.0;
                 jitteredCoord.x += jitterOffset;
-                jitteredCoord.y += cos(uTime * 8.0 + pixelCoord.y * 0.1) * uTemporalJitter * 2.0;
+                jitteredCoord.y += cos(animTime * 8.0 + pixelCoord.y * 0.1) * uTemporalJitter * 2.0;
             }
 
             if (enableDepthDither) {
@@ -223,11 +231,18 @@ export const DitherShader: ShaderDefinition = {
                 finalColor = vec3(0.0);
             }
 
-            // Glitch effect (room-specific, applied to UV offset)
+            // Glitch effect (room-specific). uGlitchAmount scales BOTH line density
+            // (higher amount = more frequent glitch lines) and inversion strength,
+            // so per-room values (0.02 / 0.05 / 0.08) produce distinct amplitudes.
             if (uGlitchAmount > 0.0) {
-                float glitchLine = step(0.98, fract(vUv.y * 30.0 + uTime * uGlitchSpeed));
-                if (glitchLine > 0.5 && fract(sin(uTime * 100.0) * 12345.0) > 0.7) {
-                    finalColor = vec3(1.0) - finalColor;
+                float glitchTime = mod(uTime, 3600.0);
+                // Threshold drops from 0.99 (sparse) toward ~0.9 (dense) as amount grows.
+                float lineThreshold = 1.0 - clamp(uGlitchAmount, 0.0, 1.0) * 0.5;
+                float glitchLine = step(lineThreshold, fract(vUv.y * 30.0 + glitchTime * uGlitchSpeed));
+                if (glitchLine > 0.5 && fract(sin(glitchTime * 100.0) * 12345.0) > 0.7) {
+                    // Scale inversion strength by amount instead of a hard full flip.
+                    float invStrength = clamp(uGlitchAmount * 8.0, 0.0, 1.0);
+                    finalColor = mix(finalColor, vec3(1.0) - finalColor, invStrength);
                 }
             }
 
@@ -240,7 +255,7 @@ export const DitherShader: ShaderDefinition = {
             if (uOverrideProgress > 0.0 && uOverrideProgress < 1.0) {
                 vec2 centered = vUv - 0.5;
                 float edgeDist = max(abs(centered.x), abs(centered.y));
-                float pulse = sin(uTime * 8.0) * 0.5 + 0.5;
+                float pulse = sin(animTime * 8.0) * 0.5 + 0.5;
                 float edgePulse = smoothstep(0.4, 0.5, edgeDist) * uOverrideProgress;
                 edgePulse *= pulse * 0.5 + 0.5;
                 finalColor = mix(finalColor, vec3(1.0) - finalColor, edgePulse * 0.6);
@@ -255,22 +270,24 @@ export const DitherShader: ShaderDefinition = {
             // Weather effects
             if (weatherType > 0 && weatherIntensity > 0.0) {
                 vec2 pixelUV = gl_FragCoord.xy / resolution;
+                // Wrap weather time to keep high-frequency sin/fract stable over long runs.
+                float wTime = mod(weatherTime, 3600.0);
 
                 if (weatherType == 1) {
                     // Static snow
-                    float noise = staticNoise(gl_FragCoord.xy * 0.15, weatherTime * 15.0);
+                    float noise = staticNoise(gl_FragCoord.xy * 0.15, wTime * 15.0);
                     if (noise > 1.0 - weatherIntensity * 0.3) {
                         finalColor = vec3(1.0) - finalColor;
                     }
                 } else if (weatherType == 2) {
                     // Digital rain
-                    float rain = digitalRain(pixelUV, weatherTime);
+                    float rain = digitalRain(pixelUV, wTime);
                     if (rain > 0.5) {
                         finalColor = vec3(1.0);  // White rain drops
                     }
                 } else if (weatherType == 3) {
                     // Signal glitch
-                    float glitch = glitchEffect(pixelUV, weatherTime);
+                    float glitch = glitchEffect(pixelUV, wTime);
                     if (glitch > 0.5) {
                         finalColor = vec3(1.0) - finalColor;
                     }
@@ -285,7 +302,7 @@ export const DitherShader: ShaderDefinition = {
                 float radialDist = length(centered) * 2.0;
 
                 // Pulsing edge glow at high intensity
-                float pulse = sin(uTime * 4.0) * 0.3 + 0.7;
+                float pulse = sin(animTime * 4.0) * 0.3 + 0.7;
                 float edgeGlow = smoothstep(0.8, 1.2, radialDist) * highIntensity * pulse;
 
                 // Invert edges slightly to create "bloom overflow" effect

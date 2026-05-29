@@ -1,6 +1,7 @@
 // 1-bit Chimera Void - Override Mechanic
 // Resistance mechanism: holding override key while gazing forces flower to maximum intensity
 
+import { OVERRIDE } from '../config';
 import { RoomType } from '../world/RoomConfig';
 
 /**
@@ -50,6 +51,12 @@ export class OverrideMechanic {
     private forcedDownCount: number = 0;
     private wasForced: boolean = false;
 
+    // Effect timer: advanced by delta once the override triggers, regardless of
+    // key state, so the color-inversion flash plays for its full duration even
+    // if the key is released early (M3).
+    private effectTimer: number = 0;
+    private effectActive: boolean = false;
+
     // Callbacks
     private onOverrideStart: (() => void) | null = null;
     private onOverrideTrigger: (() => void) | null = null;
@@ -57,9 +64,9 @@ export class OverrideMechanic {
 
     constructor() {
         this.config = {
-            holdThreshold: 1.0, // 1 second hold
-            effectDuration: 0.5, // 0.5 second effect
-            cooldown: 3.0, // 3 second cooldown
+            holdThreshold: OVERRIDE.HOLD_THRESHOLD, // 1 second hold (live value 1.0)
+            effectDuration: OVERRIDE.EFFECT_DURATION, // 0.5 second effect
+            cooldown: OVERRIDE.COOLDOWN, // 3 second cooldown
             requiresGaze: true, // Must be gazing
             allowedRooms: [RoomType.POLARIZED], // Only in POLARIZED room
         };
@@ -123,6 +130,15 @@ export class OverrideMechanic {
             this.state.cooldownRemaining -= delta;
         }
 
+        // Advance the effect timer regardless of key state so the color-inversion
+        // flash plays for its full duration even on early key release (M3).
+        if (this.effectActive) {
+            this.effectTimer += delta;
+            if (this.effectTimer >= this.config.effectDuration) {
+                this.effectActive = false;
+            }
+        }
+
         // Track gaze time for hint
         if (isGazing) {
             this.totalGazeTime += delta;
@@ -170,6 +186,10 @@ export class OverrideMechanic {
             // Check for trigger
             if (!this.state.isTriggered && this.state.holdDuration >= this.config.holdThreshold) {
                 this.state.isTriggered = true;
+                // Start the independent effect timer that drives the flash for its
+                // full duration regardless of when the key is released (M3).
+                this.effectTimer = 0;
+                this.effectActive = true;
                 if (this.onOverrideTrigger) {
                     this.onOverrideTrigger();
                 }
@@ -270,6 +290,8 @@ export class OverrideMechanic {
         this.totalGazeTime = 0;
         this.forcedDownCount = 0;
         this.wasForced = false;
+        this.effectTimer = 0;
+        this.effectActive = false;
         // Keep hint.hasBeenShown for subsequent runs
     }
 
@@ -278,22 +300,25 @@ export class OverrideMechanic {
      * Returns 0-1 for smooth flash effect
      */
     getColorInversionValue(): number {
-        if (!this.state.isTriggered)
+        // Driven by the independent effect timer (M3) so the flash plays for its
+        // full duration even when the override key is released early.
+        if (!this.effectActive)
             return 0;
 
         // Flash effect: quick on, slower off
-        const effectProgress = Math.min(1, this.state.holdDuration - this.config.holdThreshold);
-        if (effectProgress < 0.1) {
+        const effectProgress = this.effectTimer;
+        if (effectProgress < OVERRIDE.FLASH_ON_DURATION) {
             // Quick flash on
-            return effectProgress / 0.1;
+            return effectProgress / OVERRIDE.FLASH_ON_DURATION;
         }
-        else if (effectProgress < 0.3) {
+        else if (effectProgress < OVERRIDE.FLASH_HOLD_END) {
             // Hold
             return 1;
         }
-        else if (effectProgress < 0.5) {
+        else if (effectProgress < OVERRIDE.FLASH_OFF_END) {
             // Fade off
-            return 1 - (effectProgress - 0.3) / 0.2;
+            return 1 - (effectProgress - OVERRIDE.FLASH_HOLD_END)
+                / (OVERRIDE.FLASH_OFF_END - OVERRIDE.FLASH_HOLD_END);
         }
         return 0;
     }

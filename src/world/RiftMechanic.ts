@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 import type { PlayerManager } from '../player/PlayerManager';
 import type { AudioSystemInterface } from '../types';
+import { RIFT_PHYSICS } from '../config/physics';
 import { CHUNK_SIZE } from './ChunkManager';
 
 export class RiftMechanic {
@@ -30,11 +31,11 @@ export class RiftMechanic {
         const riftProximity = Math.max(0, 1 - distFromCenter / 10);
         audio.updateRiftFog(riftProximity);
 
-        // Crack half-width is 2m
-        if (distFromCenter < 2) {
+        // Crack half-width (meters from center)
+        if (distFromCenter < RIFT_PHYSICS.crackHalfWidth) {
             // Player is above the crack - infinite fall with low gravity
             player.setGroundLevel(-1000);
-            player.setGravity(5.0); // Lunar gravity for slow, long fall
+            player.setGravity(RIFT_PHYSICS.fallGravity); // Lunar gravity for slow, long fall
 
             // Trigger fall sound if just started falling
             if (cameraPosition.y < 0 && cameraPosition.y > -5) {
@@ -51,10 +52,10 @@ export class RiftMechanic {
         }
 
         // Fall reset check (Respawn)
-        if (cameraPosition.y < -150) {
-            // Calculate safe spawn point (3.5m from center, on the side they fell closest to)
+        if (cameraPosition.y < RIFT_PHYSICS.respawnHeight) {
+            // Calculate safe spawn point (from center, on the side they fell closest to)
             const sign = cameraPosition.x > chunkCenterX ? 1 : -1;
-            const safeX = chunkCenterX + sign * 3.5;
+            const safeX = chunkCenterX + sign * RIFT_PHYSICS.safeSpawnDistance;
 
             // Teleport back to surface
             player.teleport(safeX, 2.0, cameraPosition.z);
@@ -77,5 +78,15 @@ export class RiftMechanic {
 
         // Stop rift fog
         audio.stopRiftFog();
+    }
+
+    /**
+     * Dispose any resources owned by this mechanic.
+     * RiftMechanic holds no listeners, timers, or GPU resources of its own
+     * (it mutates the shared player/audio systems, which own their cleanup),
+     * so this is a no-op provided for interface consistency with other systems.
+     */
+    public dispose(): void {
+        // No-op: nothing owned here to release.
     }
 }

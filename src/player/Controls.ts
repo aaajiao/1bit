@@ -57,6 +57,14 @@ export class Controls {
     private handleClick = (e: MouseEvent): void => this.onClick(e);
     private handlePointerLockChange = (): void => this.onPointerLockChange();
     private handleWheel = (e: WheelEvent): void => this.onWheel(e);
+    // Reset held keys when the window loses focus / becomes hidden, so keys
+    // don't stick after focus loss (M2).
+    private handleBlur = (): void => this.resetInputState();
+    private handleVisibilityChange = (): void => {
+        if (document.hidden) {
+            this.resetInputState();
+        }
+    };
 
     // Touch/trackpad event handlers
     private handleTouchStart = (e: TouchEvent): void => this.onTouchStart(e);
@@ -83,6 +91,9 @@ export class Controls {
         document.addEventListener('keydown', this.handleKeyDown);
         document.addEventListener('keyup', this.handleKeyUp);
         document.addEventListener('wheel', this.handleWheel, { passive: false });
+        // Reset held keys on focus loss / tab hide so movement doesn't stick (M2)
+        window.addEventListener('blur', this.handleBlur);
+        document.addEventListener('visibilitychange', this.handleVisibilityChange);
 
         if (this.useTouchFallback) {
             // iPad/touch mode: use touch and pointer events
@@ -102,7 +113,26 @@ export class Controls {
         }
     }
 
+    /**
+     * Reset all movement flags and the override key state.
+     * Used by the isLocked guards and the blur/visibilitychange handlers (H3, M2).
+     */
+    private resetInputState(): void {
+        this.moveForward = false;
+        this.moveBackward = false;
+        this.moveLeft = false;
+        this.moveRight = false;
+        this.overrideKeyHeld = false;
+    }
+
     private onKeyDown(e: KeyboardEvent): void {
+        // Ignore input while the game is behind the start/pause menu so WASD/
+        // Space/Q-E/Shift don't act when the pointer isn't locked (H3).
+        if (!this.isLocked) {
+            this.resetInputState();
+            return;
+        }
+
         switch (e.code) {
             case 'KeyW': this.moveForward = true; break;
             case 'KeyA': this.moveLeft = true; break;
@@ -142,6 +172,13 @@ export class Controls {
     }
 
     private onKeyUp(e: KeyboardEvent): void {
+        // Ignore input while the game is behind the start/pause menu and clear
+        // any movement that may have been latched (H3).
+        if (!this.isLocked) {
+            this.resetInputState();
+            return;
+        }
+
         switch (e.code) {
             case 'KeyW': this.moveForward = false; break;
             case 'KeyA': this.moveLeft = false; break;
@@ -317,7 +354,8 @@ export class Controls {
      * @returns Whether player is moving
      */
     update(time: number): boolean {
-        const delta = (time - this.prevTime) / 1000;
+        // Clamp delta to avoid huge physics steps after a tab/focus stall (M1).
+        const delta = Math.min((time - this.prevTime) / 1000, 0.1);
         this.prevTime = time;
 
         const { config, velocity, direction, camera } = this;
@@ -327,16 +365,20 @@ export class Controls {
         velocity.z -= velocity.z * config.friction * delta;
         velocity.y -= config.gravity * delta;
 
+        // Don't apply movement input while behind the start/pause menu (H3).
+        // Friction/gravity/ground collision still run so physics stays stable.
+        const movementEnabled = this.isLocked;
+
         // Direction
-        direction.z = Number(this.moveForward) - Number(this.moveBackward);
-        direction.x = Number(this.moveRight) - Number(this.moveLeft);
+        direction.z = movementEnabled ? Number(this.moveForward) - Number(this.moveBackward) : 0;
+        direction.x = movementEnabled ? Number(this.moveRight) - Number(this.moveLeft) : 0;
         direction.normalize();
 
         // Apply movement
-        if (this.moveForward || this.moveBackward) {
+        if (movementEnabled && (this.moveForward || this.moveBackward)) {
             velocity.z -= direction.z * config.speed * delta;
         }
-        if (this.moveLeft || this.moveRight) {
+        if (movementEnabled && (this.moveLeft || this.moveRight)) {
             velocity.x += direction.x * config.speed * delta;
         }
 
@@ -353,7 +395,8 @@ export class Controls {
         }
 
         // Head bob
-        const isMoving = this.moveForward || this.moveBackward || this.moveLeft || this.moveRight;
+        const isMoving = movementEnabled
+            && (this.moveForward || this.moveBackward || this.moveLeft || this.moveRight);
         if (isMoving && this.canJump) {
             camera.position.y += Math.sin(time * config.bobSpeed) * config.bobAmount;
         }
@@ -379,6 +422,8 @@ export class Controls {
         document.removeEventListener('keyup', this.handleKeyUp);
         document.removeEventListener('wheel', this.handleWheel);
         document.removeEventListener('click', this.handleClick);
+        window.removeEventListener('blur', this.handleBlur);
+        document.removeEventListener('visibilitychange', this.handleVisibilityChange);
 
         if (this.useTouchFallback) {
             // Touch mode cleanup

@@ -14,6 +14,7 @@ export function createTree(
     buildGroup: THREE.Group,
     params: BuildingParams,
     animatedObjects: AnimatedObject[],
+    disposables?: THREE.Material[],
 ): number {
     const { i, cx, cz, assets } = params;
 
@@ -148,7 +149,10 @@ export function createTree(
 
                 // Rare fruit
                 if (hash(leaf, i) > 0.95) {
-                    const fruit = new THREE.Mesh(assets.blobGeo, assets.matPlasma.clone());
+                    // Per-chunk unique cloned material; track for explicit disposal
+                    const fruitMaterial = assets.matPlasma.clone();
+                    disposables?.push(fruitMaterial);
+                    const fruit = new THREE.Mesh(assets.blobGeo, fruitMaterial);
                     const fs = 0.5 * globalScale;
                     fruit.scale.set(fs, fs, fs);
                     fruit.position.copy(leafMesh.position);

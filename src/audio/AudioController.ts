@@ -6,6 +6,12 @@
 
 import type { AmbientNode, AudioSystemInterface } from '../types';
 import type { RoomAudioConfig } from '../world/RoomConfig';
+import {
+    CABLE_AUDIO_CONFIG,
+    FOOTSTEP_CONFIG,
+    RIFT_AUDIO_CONFIG,
+    WEATHER_AUDIO_CONFIG,
+} from '../config';
 import { RoomType } from '../world/RoomConfig';
 import { AudioEngine } from './AudioEngine';
 
@@ -71,6 +77,21 @@ export class AudioController implements AudioSystemInterface {
         this.engine.toggleMute();
     }
 
+    /**
+     * Resume the audio context if suspended (e.g. after tab blur/focus).
+     * main wires persistent visibility/focus listeners that call this.
+     */
+    resume(): void {
+        this.engine.resume();
+    }
+
+    /**
+     * Suspend the audio context (pause state machine).
+     */
+    suspend(): void {
+        this.engine.suspend();
+    }
+
     updateGaze(isGazing: boolean, gazeIntensity: number): void {
         this.engine.updateGazeFilter(isGazing, gazeIntensity);
     }
@@ -120,15 +141,16 @@ export class AudioController implements AudioSystemInterface {
         if (!ctx)
             return;
         const now = ctx.currentTime;
-        if (now - this.lastFootstepTime < 0.25)
+        if (now - this.lastFootstepTime < FOOTSTEP_CONFIG.minInterval)
             return;
         this.lastFootstepTime = now;
 
         this.engine.playTone({
             type: 'square',
-            frequency: 80 + Math.random() * 40,
+            frequency: FOOTSTEP_CONFIG.minFrequency
+                + Math.random() * (FOOTSTEP_CONFIG.maxFrequency - FOOTSTEP_CONFIG.minFrequency),
             duration: 0.05,
-            volume: 0.15,
+            volume: FOOTSTEP_CONFIG.volume,
             decay: 0.02,
         });
     }
@@ -281,7 +303,11 @@ export class AudioController implements AudioSystemInterface {
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
             osc.type = 'square';
-            osc.frequency.setValueAtTime(2000 + Math.random() * 4000, burstStart);
+            osc.frequency.setValueAtTime(
+                WEATHER_AUDIO_CONFIG.glitchMinFreq
+                + Math.random() * (WEATHER_AUDIO_CONFIG.glitchMaxFreq - WEATHER_AUDIO_CONFIG.glitchMinFreq),
+                burstStart,
+            );
             gain.gain.setValueAtTime(0.08, burstStart);
             gain.gain.setValueAtTime(0, burstStart + burstDuration);
             osc.connect(gain);
@@ -330,7 +356,7 @@ export class AudioController implements AudioSystemInterface {
 
         const drone = ctx.createOscillator();
         drone.type = 'triangle';
-        drone.frequency.value = 50;
+        drone.frequency.value = WEATHER_AUDIO_CONFIG.staticFrequency;
 
         const lfo = ctx.createOscillator();
         lfo.type = 'sine';
@@ -374,6 +400,7 @@ export class AudioController implements AudioSystemInterface {
             });
             this._staticExtra = null;
         }
+        this.weatherNoiseGain?.disconnect();
         this.weatherNoiseGain = null;
     }
 
@@ -387,7 +414,7 @@ export class AudioController implements AudioSystemInterface {
         this.weatherNoiseGain.gain.value = 0;
         this.weatherNoiseGain.connect(master);
 
-        const notes = [1200, 900, 800, 600, 400, 300];
+        const notes = WEATHER_AUDIO_CONFIG.rainNotes;
         let noteIndex = 0;
 
         const playTone = () => {
@@ -413,7 +440,7 @@ export class AudioController implements AudioSystemInterface {
             if (this.weatherRainInterval === null)
                 return;
             playTone();
-            this.weatherRainInterval = window.setTimeout(schedule, 500);
+            this.weatherRainInterval = window.setTimeout(schedule, WEATHER_AUDIO_CONFIG.rainInterval);
         };
         this.weatherRainInterval = window.setTimeout(schedule, 0);
     }
@@ -423,6 +450,7 @@ export class AudioController implements AudioSystemInterface {
             clearTimeout(this.weatherRainInterval);
             this.weatherRainInterval = null;
         }
+        this.weatherNoiseGain?.disconnect();
         this.weatherNoiseGain = null;
     }
 
@@ -537,14 +565,26 @@ export class AudioController implements AudioSystemInterface {
             this.binauralGain.gain.setTargetAtTime(0, ctx.currentTime, 0.3);
         }
 
+        // Capture node locals, then clear instance state SYNCHRONOUSLY so rapid
+        // restart calls see a clean slate and never orphan or drop a chain.
+        const oldLeft = this.binauralLeft;
+        const oldRight = this.binauralRight;
+        const oldMerger = this.binauralMerger;
+        const oldGain = this.binauralGain;
+
+        this.binauralLeft = null;
+        this.binauralRight = null;
+        this.binauralMerger = null;
+        this.binauralGain = null;
+        this.binauralActive = false;
+
         setTimeout(() => {
-            this.binauralLeft?.stop();
-            this.binauralRight?.stop();
-            this.binauralLeft = null;
-            this.binauralRight = null;
-            this.binauralMerger = null;
-            this.binauralGain = null;
-            this.binauralActive = false;
+            try { oldLeft?.stop(); }
+            catch { }
+            try { oldRight?.stop(); }
+            catch { }
+            oldMerger?.disconnect();
+            oldGain?.disconnect();
         }, 500);
     }
 
@@ -569,7 +609,7 @@ export class AudioController implements AudioSystemInterface {
         const now = ctx.currentTime;
         const osc = ctx.createOscillator();
         osc.type = 'sawtooth';
-        osc.frequency.value = 100;
+        osc.frequency.value = CABLE_AUDIO_CONFIG.humFrequency;
 
         const lfo = ctx.createOscillator();
         lfo.type = 'sine';
@@ -594,7 +634,7 @@ export class AudioController implements AudioSystemInterface {
         const ctx = this.engine.getContext();
         if (!this.cableHumNode || !ctx)
             return;
-        const vol = Math.max(0, Math.min(1, intensity)) * 0.15;
+        const vol = Math.max(0, Math.min(1, intensity)) * CABLE_AUDIO_CONFIG.maxVolume;
         this.cableHumNode.gain.gain.setTargetAtTime(vol, ctx.currentTime, 0.1);
     }
 
@@ -612,6 +652,7 @@ export class AudioController implements AudioSystemInterface {
             catch { }
             try { lfo.stop(); }
             catch { }
+            gain.disconnect();
         }, 250);
 
         this.cableHumNode = null;
@@ -666,7 +707,7 @@ export class AudioController implements AudioSystemInterface {
         const ctx = this.engine.getContext();
         if (!this.riftFogNode || !ctx)
             return;
-        const targetVol = Math.max(0, Math.min(1, intensity)) * 0.8;
+        const targetVol = Math.max(0, Math.min(1, intensity)) * RIFT_AUDIO_CONFIG.fogMaxVolume;
         this.riftFogNode.gain.gain.setTargetAtTime(targetVol, ctx.currentTime, 0.2);
     }
 
@@ -690,7 +731,7 @@ export class AudioController implements AudioSystemInterface {
         const now = ctx.currentTime;
         this.riftFallGain = ctx.createGain();
         this.riftFallGain.gain.setValueAtTime(0, now);
-        this.riftFallGain.gain.linearRampToValueAtTime(0.4, now + 0.5);
+        this.riftFallGain.gain.linearRampToValueAtTime(0.4, now + RIFT_AUDIO_CONFIG.fallFadeIn);
         this.riftFallGain.connect(master);
 
         const bufferSize = ctx.sampleRate * 2;
