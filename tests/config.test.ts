@@ -3,7 +3,7 @@ import { AUDIO_MASTER, CABLE_AUDIO_CONFIG, FOOTSTEP_CONFIG } from '../src/config
 import { OVERRIDE } from '../src/config/constants';
 import { PHYSICS_CONFIG, RIFT_PHYSICS } from '../src/config/physics';
 
-describe('Physics Config', () => {
+describe('physics Config', () => {
     it('should have valid PHYSICS_CONFIG values', () => {
         expect(PHYSICS_CONFIG.speed).toBeGreaterThan(0);
         expect(PHYSICS_CONFIG.jumpForce).toBeGreaterThan(0);
@@ -18,7 +18,7 @@ describe('Physics Config', () => {
     });
 });
 
-describe('Override Config', () => {
+describe('override Config', () => {
     it('should have valid OVERRIDE timing values (single source of truth)', () => {
         // OVERRIDE.HOLD_THRESHOLD is the live value consumed by OverrideMechanic.
         expect(OVERRIDE.HOLD_THRESHOLD).toBeGreaterThan(0);
@@ -30,7 +30,7 @@ describe('Override Config', () => {
     });
 });
 
-describe('Audio Config', () => {
+describe('audio Config', () => {
     it('should have valid AUDIO_MASTER values', () => {
         expect(AUDIO_MASTER.defaultVolume).toBeGreaterThanOrEqual(0);
         expect(AUDIO_MASTER.defaultVolume).toBeLessThanOrEqual(1);

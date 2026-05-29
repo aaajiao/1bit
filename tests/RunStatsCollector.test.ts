@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { RunStatsCollector, type BehaviorTag } from '../src/stats/RunStatsCollector';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { RunStatsCollector } from '../src/stats/RunStatsCollector';
 import { RoomType } from '../src/world/RoomConfig';
 
-describe('RunStatsCollector', () => {
+describe('runStatsCollector', () => {
     let collector: RunStatsCollector;
 
     beforeEach(() => {

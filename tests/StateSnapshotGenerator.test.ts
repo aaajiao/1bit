@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { StateSnapshotGenerator } from '../src/stats/StateSnapshotGenerator';
 import type { BehaviorTag } from '../src/stats/RunStatsCollector';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { StateSnapshotGenerator } from '../src/stats/StateSnapshotGenerator';
 
-describe('StateSnapshotGenerator', () => {
+describe('stateSnapshotGenerator', () => {
     let generator: StateSnapshotGenerator;
 
     beforeEach(() => {

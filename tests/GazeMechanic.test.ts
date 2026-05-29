@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GazeMechanic } from '../src/player/GazeMechanic';
 
-describe('GazeMechanic', () => {
+describe('gazeMechanic', () => {
     let camera: THREE.PerspectiveCamera;
     let gaze: GazeMechanic;
 

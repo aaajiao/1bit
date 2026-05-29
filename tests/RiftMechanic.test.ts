@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import * as THREE from 'three';
 import type { PlayerManager } from '../src/player/PlayerManager';
 import type { AudioSystemInterface } from '../src/types';
+import * as THREE from 'three';
+import { describe, expect, it } from 'vitest';
 import { RIFT_PHYSICS } from '../src/config/physics';
-import { RiftMechanic } from '../src/world/RiftMechanic';
 import { CHUNK_SIZE } from '../src/world/ChunkManager';
+import { RiftMechanic } from '../src/world/RiftMechanic';
 
 interface TeleportCall { x: number; y: number; z: number }
 
