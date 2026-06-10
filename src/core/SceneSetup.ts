@@ -1,6 +1,7 @@
 import type { AppConfig } from '../types';
 // Scene initialization module
 import * as THREE from 'three';
+import { CAMERA } from '../config';
 
 /**
  * Components created by scene setup
@@ -23,7 +24,7 @@ export function createScene(container: HTMLElement, config: AppConfig): SceneCom
 
     // Camera
     const camera = new THREE.PerspectiveCamera(
-        80,
+        CAMERA.FOV_DEGREES,
         window.innerWidth / window.innerHeight,
         0.1,
         1000,

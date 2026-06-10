@@ -28,8 +28,10 @@ export class RiftMechanic {
         const nearestChunkZ = worldToChunkCoord(cameraPosition.z, CHUNK_SIZE);
         const isRiftChunk = getRoomTypeFromPosition(nearestChunkX, nearestChunkZ) === RoomType.FORCED_ALIGNMENT;
 
-        // Update binaural position for audio context
-        audio.updateBinauralPosition(cameraPosition.x, 20);
+        // Update binaural position for audio context: SIGNED x offset from the
+        // rift crack center (flow-audit break #7) so the beat hears which side
+        // the player stands on — negative = tidy left, positive = broken right.
+        audio.updateBinauralPosition(cameraPosition.x - chunkCenterX, 20);
 
         // RIFT AUDIO: Fog Sound
         // Start if not already playing (internal check handles redundancy)

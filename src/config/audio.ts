@@ -46,6 +46,84 @@ export const RIFT_AUDIO_CONFIG = {
 };
 
 /**
+ * "Being watched" hum (flow-audit break #4): a low drone that fades in as the
+ * flower gets bright enough to attract the sky eye's attention. Gentle by
+ * design — a felt presence, not an alarm.
+ */
+export const FLOWER_ATTENTION_CONFIG = {
+    /** Flower intensity above which the watched-hum starts fading in */
+    threshold: 0.6,
+    /** Hum oscillator frequency (Hz, low) */
+    frequency: 46,
+    /** Hum gain at flower intensity 1.0 */
+    maxGain: 0.05,
+    /** setTargetAtTime time constant (s) for hum gain fades */
+    fadeTime: 0.8,
+    /** Slow frequency-wobble LFO rate (Hz) and depth (Hz) so the hum breathes */
+    lfoRate: 0.15,
+    lfoDepth: 1.5,
+};
+
+/**
+ * Override denied thud (flow-audit break #2, failure-feedback tier 2): an
+ * extremely light low-frequency thump played when the player holds the
+ * override key in POLARIZED without gazing — "the direction is wrong".
+ * Non-POLARIZED rooms stay silent by design (only here can you resist).
+ */
+export const OVERRIDE_DENIED_CONFIG = {
+    /** Thud frequency sweep (Hz, low and soft) */
+    frequency: 70,
+    frequencyEnd: 36,
+    /** Thud length (seconds) */
+    duration: 0.18,
+    /** Very light volume — a nudge, not a buzzer */
+    volume: 0.07,
+};
+
+/**
+ * Flower-intensity change confirm tone (flow-audit medium #6): event-driven
+ * from the player's wheel / Q-E / touch-button input. Pitch rises with the
+ * new intensity so each tick is an audible confirmation of the change.
+ */
+export const FLOWER_CHANGE_TONE_CONFIG = {
+    /** Minimum interval between confirm tones (s) — debounces rapid scrolling */
+    debounceSeconds: 0.09,
+    /** Pitch mapping: frequency = base + intensity * range */
+    baseFrequency: 150,
+    frequencyRange: 350,
+    /** Tone length (s), volume, and attack (s) */
+    duration: 0.18,
+    volume: 0.05,
+    attack: 0.03,
+};
+
+/**
+ * INFO_OVERFLOW chirp volume scaling (flow-audit break #8): chirps get louder
+ * as the flower brightens — more input, more meaningless chatter.
+ */
+export const INFO_CHIRP_CONFIG = {
+    /** Chirp volume at flower intensity 0 */
+    minVolume: 0.02,
+    /** Chirp volume at flower intensity 1 */
+    maxVolume: 0.06,
+};
+
+/**
+ * FORCED_ALIGNMENT binaural side asymmetry (flow-audit break #7): the beat
+ * frequency narrows toward consonance on the LEFT of the rift and widens
+ * toward dissonance on the RIGHT, matching the tidy-left/broken-right visuals.
+ */
+export const BINAURAL_SIDE_CONFIG = {
+    /**
+     * Fractional beat-frequency change at full side displacement:
+     * effective beat = beatFreq * (1 + side * detuneGain), side in [-1, 1].
+     */
+    detuneGain: 0.6,
+    /** setTargetAtTime time constant (s) for side-driven beat retunes */
+    glide: 0.15,
+};
+
+/**
  * Per-room ambient configuration.
  *
  * Drives the retunable ambient drone (osc1/osc2) and an optional filtered

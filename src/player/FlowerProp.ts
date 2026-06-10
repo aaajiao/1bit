@@ -1,5 +1,6 @@
 // 1-bit Chimera Void - Flower Prop (Hand-held flower)
 import * as THREE from 'three';
+import { GAZE } from '../config';
 import { hash } from '../utils/hash';
 import { getSharedAssets } from '../world/SharedAssets';
 
@@ -18,9 +19,11 @@ interface FlowerGroupUserData {
     targetIntensity: number;
     isBeingForced: boolean; // True when gaze is forcing intensity down
     forcedIntensity: number; // The intensity to force to when gazing
+    wasBeingForced: boolean; // Previous-frame forcing state (transition detection)
+    recoveryDelay: number; // Seconds left before post-gaze recovery may begin
 }
 
-interface FlowerGroup extends THREE.Group {
+export interface FlowerGroup extends THREE.Group {
     userData: FlowerGroupUserData;
 }
 
@@ -143,6 +146,8 @@ export function createFlowerProp(): FlowerGroup {
         targetIntensity: 0.5, // Target for smooth interpolation
         isBeingForced: false, // Not being forced by gaze
         forcedIntensity: 0.1, // Default forced intensity when gazing
+        wasBeingForced: false, // Previous-frame forcing state
+        recoveryDelay: 0, // No pending post-gaze recovery hold
     };
 
     return flowerGroup;
@@ -156,6 +161,9 @@ export function createFlowerProp(): FlowerGroup {
  */
 export function setFlowerIntensity(flowerGroup: FlowerGroup, intensity: number): void {
     flowerGroup.userData.targetIntensity = Math.max(0, Math.min(1, intensity));
+    // Deliberate player input (scroll wheel) cancels the post-gaze recovery
+    // hold — the flower should respond to the player immediately.
+    flowerGroup.userData.recoveryDelay = 0;
 }
 
 /**
@@ -163,6 +171,14 @@ export function setFlowerIntensity(flowerGroup: FlowerGroup, intensity: number):
  */
 export function getFlowerIntensity(flowerGroup: FlowerGroup): number {
     return flowerGroup.userData.intensity;
+}
+
+/**
+ * Get the player-set target intensity (scroll wheel / override).
+ * Used by the gaze one-way clamp: gaze may only suppress below this value.
+ */
+export function getFlowerTargetIntensity(flowerGroup: FlowerGroup): number {
+    return flowerGroup.userData.targetIntensity;
 }
 
 /**
@@ -189,8 +205,11 @@ export function overrideFlowerIntensity(flowerGroup: FlowerGroup): void {
     flowerGroup.userData.targetIntensity = 1.0;
     // Override is authoritative: clear gaze-forcing so animateFlower's
     // effectiveTarget holds at the max target instead of decaying back down
-    // toward forcedIntensity (H4).
+    // toward forcedIntensity (H4). Also cancel any pending post-gaze recovery
+    // hold so the blaze-to-full payoff is instant.
     flowerGroup.userData.isBeingForced = false;
+    flowerGroup.userData.wasBeingForced = false;
+    flowerGroup.userData.recoveryDelay = 0;
 }
 
 /**
@@ -210,10 +229,23 @@ export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: num
     const ud = flowerGroup.userData;
     const assets = getSharedAssets();
 
+    // Post-gaze recovery hold (flow-audit enhancement #3): when gaze-forcing
+    // ends, keep the flower extinguished for a beat so the player can look
+    // back down and actually see the dimmed flower before it recovers.
+    if (ud.wasBeingForced && !ud.isBeingForced) {
+        ud.recoveryDelay = GAZE.FLOWER_RECOVERY_DELAY;
+    }
+    ud.wasBeingForced = ud.isBeingForced;
+
     // Determine target intensity based on gaze forcing
     let effectiveTarget = ud.targetIntensity;
     if (ud.isBeingForced) {
         effectiveTarget = ud.forcedIntensity;
+        ud.recoveryDelay = 0; // Active forcing supersedes any pending hold
+    }
+    else if (ud.recoveryDelay > 0) {
+        ud.recoveryDelay = Math.max(0, ud.recoveryDelay - delta);
+        effectiveTarget = ud.intensity; // Freeze at the extinguished level
     }
 
     // Smooth interpolation of intensity

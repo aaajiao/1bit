@@ -7,8 +7,13 @@
 import type { AmbientNode, AudioSystemInterface } from '../types';
 import type { RoomAudioConfig } from '../world/RoomConfig';
 import {
+    BINAURAL_SIDE_CONFIG,
     CABLE_AUDIO_CONFIG,
+    FLOWER_ATTENTION_CONFIG,
+    FLOWER_CHANGE_TONE_CONFIG,
     FOOTSTEP_CONFIG,
+    INFO_CHIRP_CONFIG,
+    OVERRIDE_DENIED_CONFIG,
     RIFT_AUDIO_CONFIG,
     ROOM_AMBIENT_CONFIG,
     WEATHER_AUDIO_CONFIG,
@@ -31,6 +36,10 @@ export class AudioController implements AudioSystemInterface {
     private binauralMerger: ChannelMergerNode | null = null;
     private binauralGain: GainNode | null = null;
     private binauralActive: boolean = false;
+    // Base/beat frequencies of the active binaural pair, kept so the side
+    // asymmetry (flow-audit break #7) can retune the beat around them.
+    private binauralBaseFreq: number = 0;
+    private binauralBeatFreq: number = 0;
 
     // Weather state
     private weatherNoiseSource: AudioBufferSourceNode | null = null;
@@ -40,9 +49,13 @@ export class AudioController implements AudioSystemInterface {
     private _staticExtra: OscillatorNode[] | null = null;
 
     // Flower state
-    private lastFlowerIntensity: number = -1;
     private lastFlowerState: number = -1;
-    private flowerSilenceTimer: number = 0;
+    // Debounce clock (AudioContext time) for the event-driven intensity
+    // confirm tone (flow-audit medium #6).
+    private lastFlowerToneTime: number = -1;
+    // "Being watched" hum (flow-audit break #4): created lazily on first use,
+    // then kept alive with its gain riding the flower intensity.
+    private flowerAttentionNode: { osc: OscillatorNode; gain: GainNode; lfo: OscillatorNode; lfoGain: GainNode } | null = null;
 
     // Rift state
     private riftFogNode: { noise: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode; lfo: OscillatorNode } | null = null;
@@ -258,12 +271,19 @@ export class AudioController implements AudioSystemInterface {
         });
     }
 
-    playInfoChirp(): void {
+    /**
+     * INFO_OVERFLOW data chirp. Volume scales with the flower intensity
+     * (flow-audit break #8): a brighter flower makes each chirp louder,
+     * INFO_CHIRP_CONFIG.minVolume -> maxVolume across the 0-1 range.
+     */
+    playInfoChirp(flowerIntensity: number = 0.5): void {
+        const t = Math.max(0, Math.min(1, flowerIntensity));
         this.engine.playTone({
             type: 'square',
             frequency: 2000 + Math.random() * 8000,
             duration: 0.03,
-            volume: 0.03,
+            volume: INFO_CHIRP_CONFIG.minVolume
+                + t * (INFO_CHIRP_CONFIG.maxVolume - INFO_CHIRP_CONFIG.minVolume),
             decay: 0.01,
         });
     }
@@ -275,6 +295,21 @@ export class AudioController implements AudioSystemInterface {
             filterType: 'bandpass',
             filterFreq: 2000,
             filterQ: 1.5,
+        });
+    }
+
+    /**
+     * Extremely light low-frequency thud for an override key press that is
+     * denied because the player is not gazing (flow-audit break #2): a felt
+     * "wrong direction" nudge, deliberately quieter than any success sound.
+     */
+    playOverrideDeniedThud(): void {
+        this.engine.playTone({
+            type: 'sine',
+            frequency: OVERRIDE_DENIED_CONFIG.frequency,
+            frequencyEnd: OVERRIDE_DENIED_CONFIG.frequencyEnd,
+            duration: OVERRIDE_DENIED_CONFIG.duration,
+            volume: OVERRIDE_DENIED_CONFIG.volume,
         });
     }
 
@@ -485,32 +520,109 @@ export class AudioController implements AudioSystemInterface {
         }
         this.lastFlowerState = currentState;
 
-        const changeThreshold = 0.01;
-        const intensityChange = Math.abs(intensity - this.lastFlowerIntensity);
+        // NOTE: the per-frame intensity-change confirm tone used to live here,
+        // but its threshold math could never fire at >=30fps (flow-audit
+        // medium #6). The tone is now event-driven: Controls' intensity-change
+        // callback calls playFlowerChangeTone directly.
 
-        if (this.lastFlowerIntensity >= 0 && intensityChange > changeThreshold) {
-            this.playFlowerChangeTone(intensity, intensityChange);
-            this.flowerSilenceTimer = 0;
-        }
-        else {
-            this.flowerSilenceTimer++;
-        }
-        this.lastFlowerIntensity = intensity;
+        // "Being watched" hum rides the same per-frame intensity feed
+        // (flow-audit break #4: a bright flower attracts the sky eye).
+        this.updateFlowerAttentionHum(intensity);
     }
 
-    private playFlowerChangeTone(intensity: number, changeSpeed: number): void {
-        if (this.flowerSilenceTimer < 2)
+    /**
+     * Low "being watched" hum that fades in once the flower is bright enough
+     * to attract the sky eye (flow-audit break #4). Nodes are created lazily
+     * the first time the threshold is crossed, then kept alive with the gain
+     * riding the intensity (no per-frame node churn); a slow LFO wobbles the
+     * frequency so the presence breathes. Gentle by config.
+     */
+    private updateFlowerAttentionHum(intensity: number): void {
+        const ctx = this.engine.getContext();
+        const master = this.engine.getMasterGain();
+        if (!ctx || !master)
             return;
-        const freq = 150 + intensity * 350;
-        const volume = Math.min(changeSpeed * 2 + 0.02, 0.06);
-        const duration = 0.2 + changeSpeed * 0.2;
 
+        const cfg = FLOWER_ATTENTION_CONFIG;
+        const drive = cfg.threshold >= 1
+            ? 0
+            : Math.max(0, Math.min(1, (intensity - cfg.threshold) / (1 - cfg.threshold)));
+
+        if (!this.flowerAttentionNode) {
+            if (drive <= 0)
+                return;
+
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.value = cfg.frequency;
+
+            const lfo = ctx.createOscillator();
+            lfo.type = 'sine';
+            lfo.frequency.value = cfg.lfoRate;
+            const lfoGain = ctx.createGain();
+            lfoGain.gain.value = cfg.lfoDepth;
+            lfo.connect(lfoGain);
+            lfoGain.connect(osc.frequency);
+
+            const gain = ctx.createGain();
+            gain.gain.value = 0;
+            osc.connect(gain);
+            gain.connect(master);
+
+            osc.start();
+            lfo.start();
+            this.flowerAttentionNode = { osc, gain, lfo, lfoGain };
+        }
+
+        this.flowerAttentionNode.gain.gain.setTargetAtTime(
+            drive * cfg.maxGain,
+            ctx.currentTime,
+            cfg.fadeTime,
+        );
+    }
+
+    /**
+     * Stop and release the "being watched" hum nodes (dispose path).
+     */
+    private stopFlowerAttentionHum(): void {
+        if (!this.flowerAttentionNode)
+            return;
+        const { osc, gain, lfo, lfoGain } = this.flowerAttentionNode;
+        this.flowerAttentionNode = null;
+        try { osc.stop(); }
+        catch { }
+        try { lfo.stop(); }
+        catch { }
+        lfoGain.disconnect();
+        gain.disconnect();
+    }
+
+    /**
+     * Confirm tone for a player-driven flower intensity change (wheel / Q-E /
+     * touch buttons). Event-driven (flow-audit medium #6): called from the
+     * Controls intensity-change callback, debounced so a fast scroll burst
+     * doesn't machine-gun. Pitch rises with the new intensity, so repeated
+     * ticks read as an ascending/descending scale.
+     */
+    playFlowerChangeTone(intensity: number): void {
+        const ctx = this.engine.getContext();
+        if (!ctx)
+            return;
+        const now = ctx.currentTime;
+        if (this.lastFlowerToneTime >= 0
+            && now - this.lastFlowerToneTime < FLOWER_CHANGE_TONE_CONFIG.debounceSeconds) {
+            return;
+        }
+        this.lastFlowerToneTime = now;
+
+        const t = Math.max(0, Math.min(1, intensity));
         this.engine.playTone({
             type: 'sine',
-            frequency: freq,
-            duration,
-            volume,
-            attack: 0.03,
+            frequency: FLOWER_CHANGE_TONE_CONFIG.baseFrequency
+                + t * FLOWER_CHANGE_TONE_CONFIG.frequencyRange,
+            duration: FLOWER_CHANGE_TONE_CONFIG.duration,
+            volume: FLOWER_CHANGE_TONE_CONFIG.volume,
+            attack: FLOWER_CHANGE_TONE_CONFIG.attack,
         });
     }
 
@@ -525,9 +637,8 @@ export class AudioController implements AudioSystemInterface {
     }
 
     stopFlowerAudio(): void {
-        this.lastFlowerIntensity = -1;
         this.lastFlowerState = -1;
-        this.flowerSilenceTimer = 0;
+        this.lastFlowerToneTime = -1;
     }
 
     // ==================== Binaural Beat ====================
@@ -537,6 +648,9 @@ export class AudioController implements AudioSystemInterface {
         const master = this.engine.getMasterGain();
         if (!ctx || !master || this.binauralActive)
             return;
+
+        this.binauralBaseFreq = baseFreq;
+        this.binauralBeatFreq = beatFreq;
 
         this.binauralMerger = ctx.createChannelMerger(2);
         this.binauralLeft = ctx.createOscillator();
@@ -589,6 +703,8 @@ export class AudioController implements AudioSystemInterface {
         this.binauralMerger = null;
         this.binauralGain = null;
         this.binauralActive = false;
+        this.binauralBaseFreq = 0;
+        this.binauralBeatFreq = 0;
 
         setTimeout(() => {
             try { oldLeft?.stop(); }
@@ -600,14 +716,31 @@ export class AudioController implements AudioSystemInterface {
         }, 500);
     }
 
-    updateBinauralPosition(xPosition: number, crackWidth: number): void {
+    /**
+     * Drive the binaural beat from the player's SIGNED x offset to the rift
+     * crack center (flow-audit break #7). |offset| keeps the historical
+     * proximity loudness; the SIGN now retunes the beat — the left (negative)
+     * side narrows it toward consonance, the right (positive) side widens it
+     * toward dissonance — so the player can hear which side they chose.
+     */
+    updateBinauralPosition(signedOffsetX: number, crackWidth: number): void {
         const ctx = this.engine.getContext();
         if (!this.binauralGain || !ctx)
             return;
 
-        const distanceFromCrack = Math.abs(xPosition);
+        const distanceFromCrack = Math.abs(signedOffsetX);
         const intensity = Math.max(0, 1 - distanceFromCrack / crackWidth);
         this.binauralGain.gain.setTargetAtTime(intensity, ctx.currentTime, 0.1);
+
+        if (this.binauralRight && this.binauralBeatFreq > 0) {
+            const side = Math.max(-1, Math.min(1, signedOffsetX / crackWidth));
+            const beat = this.binauralBeatFreq * (1 + side * BINAURAL_SIDE_CONFIG.detuneGain);
+            this.binauralRight.frequency.setTargetAtTime(
+                this.binauralBaseFreq + beat,
+                ctx.currentTime,
+                BINAURAL_SIDE_CONFIG.glide,
+            );
+        }
     }
 
     // ==================== Cable Hum ====================
@@ -1016,6 +1149,7 @@ export class AudioController implements AudioSystemInterface {
         this.stopRiftFog();
         this.stopRiftFall();
         this.stopFlowerAudio();
+        this.stopFlowerAttentionHum();
 
         // Release the pooled noise buffer reference.
         this.noiseBedBuffer = null;

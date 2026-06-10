@@ -2,6 +2,8 @@
 // Procedural 1-bit style weather effects
 
 import type { WeatherConfig, WeatherState, WeatherSystemInterface } from '../types';
+import type { RoomType, WeatherTypeWeights } from './RoomConfig';
+import { DEFAULT_WEATHER_WEIGHTS, ROOM_WEATHER_WEIGHTS } from './RoomConfig';
 
 /**
  * Weather types
@@ -34,6 +36,9 @@ export class WeatherSystem implements WeatherSystemInterface {
     private isGlitchEvent: boolean = false;
     // Cooldown captured before a transient glitch, restored when it ends.
     private savedCooldown: number = 0;
+    // Player's current room (flow-audit medium #3): weights the SELECTION of
+    // the next weather event only — in-progress weather is never cut short.
+    private currentRoomType: RoomType | null = null;
 
     // Configuration
     private config: WeatherConfig = {
@@ -54,10 +59,13 @@ export class WeatherSystem implements WeatherSystemInterface {
      * Update weather system
      * @param delta - Delta time in seconds
      * @param time - Total time in seconds
+     * @param roomType - Player's current room; weights the next event's type
+     *   selection (omit/null for the historical unweighted rotation)
      * @returns Weather state for shader uniforms
      */
-    update(delta: number, time: number): WeatherState {
+    update(delta: number, time: number, roomType: RoomType | null = null): WeatherState {
         this.weatherTime = time;
+        this.currentRoomType = roomType;
 
         // Update cooldown
         if (this.currentWeather === WEATHER_TYPES.CLEAR) {
@@ -107,18 +115,33 @@ export class WeatherSystem implements WeatherSystemInterface {
      * Start a random weather event
      */
     private startRandomWeather(): void {
-        // Choose weather type. All three sustained weathers — static snow,
-        // digital rain, and signal glitch — share the rotation at equal odds
-        // (1/3 each). The brief ambient flickers and the eclipse flash are a
+        // Choose weather type, weighted by the player's current room (flow-audit
+        // medium #3): INFO_OVERFLOW heavily favors digital RAIN, POLARIZED blocks
+        // STATIC/RAIN and keeps only GLITCH. With no room (or the default equal
+        // weights) the cumulative pick reproduces the historical 1/3 rotation
+        // exactly. The brief ambient flickers and the eclipse flash are a
         // SEPARATE transient path (triggerGlitch / forceWeather), flagged with
         // isGlitchEvent so they don't reset the main cooldown; a glitch picked
         // here is a real, full-duration weather event (isGlitchEvent = false).
-        const types: WeatherType[] = [
-            WEATHER_TYPES.STATIC,
-            WEATHER_TYPES.RAIN,
-            WEATHER_TYPES.GLITCH,
-        ];
-        this.currentWeather = types[Math.floor(Math.random() * types.length)];
+        const weights: WeatherTypeWeights = this.currentRoomType !== null
+            ? ROOM_WEATHER_WEIGHTS[this.currentRoomType]
+            : DEFAULT_WEATHER_WEIGHTS;
+        const total = weights.static + weights.rain + weights.glitch;
+        if (total <= 0) {
+            // Every type is blocked in this room: skip the event entirely and
+            // restart the cooldown so the system keeps ticking.
+            this.cooldown = this.randomRange(
+                this.config.minCooldown,
+                this.config.maxCooldown,
+            );
+            return;
+        }
+        const pick = Math.random() * total;
+        this.currentWeather = pick < weights.static
+            ? WEATHER_TYPES.STATIC
+            : pick < weights.static + weights.rain
+                ? WEATHER_TYPES.RAIN
+                : WEATHER_TYPES.GLITCH;
         this.isGlitchEvent = false;
 
         this.duration = this.randomRange(

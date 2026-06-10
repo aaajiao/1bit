@@ -45,6 +45,12 @@ export interface RoomShaderConfig {
     // uMisregister: 0-1. Subtle ~1px duotone channel misregistration so the world
     //   reads as "misread by both systems". Nonzero ONLY in IN_BETWEEN.
     uMisregister: number;
+    // uFlowerThresholdGain: signed gain of the flower term in the dither
+    //   threshold (threshold -= (uFlowerIntensity - 0.5) * gain). Positive =
+    //   brighter flower whitens/cleans the frame (default rooms). NEGATIVE in
+    //   INFO_OVERFLOW so a brighter flower DIRTIES the frame instead — the
+    //   room's "more input != more clarity" lesson (flow-audit break #8).
+    uFlowerThresholdGain: number;
 }
 
 /**
@@ -89,6 +95,8 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             paperColor: [0.8627, 0.9294, 0.9490],
             uScanIntensity: 0.0,
             uMisregister: 0.0,
+            // REVERSED: brighter flower lowers clarity here (see interface doc).
+            uFlowerThresholdGain: -0.1,
         },
         audio: {
             baseFrequency: 60,
@@ -118,6 +126,7 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             // Orderly CRT/surveillance refresh band — the signature of this room.
             uScanIntensity: 0.6,
             uMisregister: 0.0,
+            uFlowerThresholdGain: 0.1,
         },
         audio: {
             baseFrequency: 55,
@@ -148,6 +157,7 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uScanIntensity: 0.0,
             // Subtle duotone misregistration — "misread by both systems".
             uMisregister: 0.5,
+            uFlowerThresholdGain: 0.1,
         },
         audio: {
             baseFrequency: 50,
@@ -177,6 +187,7 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             // is pure binary (uNoiseDensity<0.01 hard-threshold branch).
             uScanIntensity: 0.0,
             uMisregister: 0.0,
+            uFlowerThresholdGain: 0.1,
         },
         audio: {
             baseFrequency: 40,
@@ -224,6 +235,42 @@ const REFRESH_BREAKPOINTS = Object.keys(INFO_OVERFLOW_REFRESH_MAP)
     .map(Number)
     .sort((a, b) => a - b);
 
+/** Precomputed sorted breakpoints of INFO_OVERFLOW_NOISE_MAP (same rationale). */
+const NOISE_BREAKPOINTS = Object.keys(INFO_OVERFLOW_NOISE_MAP)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+/**
+ * Piecewise-linear interpolation over a breakpoint map. Pure and cheap (no
+ * allocation), safe to call per frame. Clamps to the map's end values.
+ * `breakpoints` MUST be the sorted numeric keys of `map` (precomputed at module
+ * level so the per-frame lookup never re-sorts).
+ */
+function interpolateIntensityMap(
+    map: Record<number, number>,
+    breakpoints: number[],
+    intensity: number,
+): number {
+    if (intensity <= breakpoints[0])
+        return map[breakpoints[0]];
+    const last = breakpoints[breakpoints.length - 1];
+    if (intensity >= last)
+        return map[last];
+
+    for (let k = 0; k < breakpoints.length - 1; k++) {
+        const lo = breakpoints[k];
+        const hi = breakpoints[k + 1];
+        if (intensity >= lo && intensity <= hi) {
+            const t = (intensity - lo) / (hi - lo);
+            const a = map[lo];
+            const b = map[hi];
+            return a + (b - a) * t;
+        }
+    }
+    // Unreachable given the clamps above, but keep a safe fallback.
+    return map[last];
+}
+
 /**
  * Maps a flower intensity in [0,1] to a flicker refresh interval (seconds) by
  * piecewise-linear interpolation over INFO_OVERFLOW_REFRESH_MAP. Pure and cheap
@@ -233,26 +280,88 @@ const REFRESH_BREAKPOINTS = Object.keys(INFO_OVERFLOW_REFRESH_MAP)
  * @returns Refresh interval in seconds.
  */
 export function refreshIntervalForIntensity(intensity: number): number {
-    const bps = REFRESH_BREAKPOINTS;
-    if (intensity <= bps[0])
-        return INFO_OVERFLOW_REFRESH_MAP[bps[0]];
-    const last = bps[bps.length - 1];
-    if (intensity >= last)
-        return INFO_OVERFLOW_REFRESH_MAP[last];
-
-    for (let k = 0; k < bps.length - 1; k++) {
-        const lo = bps[k];
-        const hi = bps[k + 1];
-        if (intensity >= lo && intensity <= hi) {
-            const t = (intensity - lo) / (hi - lo);
-            const a = INFO_OVERFLOW_REFRESH_MAP[lo];
-            const b = INFO_OVERFLOW_REFRESH_MAP[hi];
-            return a + (b - a) * t;
-        }
-    }
-    // Unreachable given the clamps above, but keep a safe fallback.
-    return INFO_OVERFLOW_REFRESH_MAP[last];
+    return interpolateIntensityMap(INFO_OVERFLOW_REFRESH_MAP, REFRESH_BREAKPOINTS, intensity);
 }
+
+/**
+ * Maps a flower intensity in [0,1] to the INFO_OVERFLOW dither noise density by
+ * piecewise-linear interpolation over INFO_OVERFLOW_NOISE_MAP (flow-audit break
+ * #8: the brighter the flower, the denser the overload). Pure, per-frame safe.
+ */
+export function noiseDensityForIntensity(intensity: number): number {
+    return interpolateIntensityMap(INFO_OVERFLOW_NOISE_MAP, NOISE_BREAKPOINTS, intensity);
+}
+
+/**
+ * INFO_OVERFLOW temporal-jitter response to the flower (flow-audit break #8):
+ * uTemporalJitter = base + intensity * flowerGain (0.3 -> 0.9 across the range,
+ * finally reaching the documented 0.9 ceiling).
+ */
+export const INFO_OVERFLOW_JITTER = {
+    base: 0.3,
+    flowerGain: 0.6,
+} as const;
+
+/** Pure mapper for the INFO_OVERFLOW flower-driven temporal jitter. */
+export function infoOverflowJitterForIntensity(intensity: number): number {
+    const clamped = intensity < 0 ? 0 : intensity > 1 ? 1 : intensity;
+    return INFO_OVERFLOW_JITTER.base + clamped * INFO_OVERFLOW_JITTER.flowerGain;
+}
+
+/**
+ * FORCED_ALIGNMENT side asymmetry (flow-audit break #7): noise density slides
+ * from a tidy LEFT of the rift crack to a broken RIGHT. The blend saturates at
+ * halfRange (the chunk footprint half-width), and the crack-center value is the
+ * room's baseline 0.55 by construction ((left + right) / 2).
+ */
+export const FORCED_ALIGNMENT_SIDE_NOISE = {
+    /** uNoiseDensity at (and beyond) the far LEFT of the crack — tidy side */
+    left: 0.4,
+    /** uNoiseDensity at (and beyond) the far RIGHT of the crack — broken side */
+    right: 0.7,
+    /** Distance (m) from the crack center at which the side blend saturates */
+    halfRange: WORLD.CHUNK_SIZE / 2,
+} as const;
+
+/**
+ * FORCED_ALIGNMENT noise density for a world x position: signed distance from
+ * the rift crack center (= the chunk center, same round convention as
+ * worldToChunkCoord / RiftMechanic — the single chunk-coord source of truth).
+ * Pure, per-frame safe.
+ */
+export function faSideNoiseDensity(worldX: number): number {
+    const crackCenterX = worldToChunkCoord(worldX) * WORLD.CHUNK_SIZE;
+    const side = Math.max(-1, Math.min(1, (worldX - crackCenterX) / FORCED_ALIGNMENT_SIDE_NOISE.halfRange));
+    const t = (side + 1) * 0.5;
+    return FORCED_ALIGNMENT_SIDE_NOISE.left
+        + t * (FORCED_ALIGNMENT_SIDE_NOISE.right - FORCED_ALIGNMENT_SIDE_NOISE.left);
+}
+
+/**
+ * Per-room weather selection weights (flow-audit medium #3: weather must obey
+ * the room's identity). Consumed by WeatherSystem.startRandomWeather — only the
+ * SELECTION of the next event is weighted; weather already in progress is never
+ * cut short. Order matches the rotation [STATIC, RAIN, GLITCH].
+ *
+ * - INFO_OVERFLOW heavily favors digital RAIN (data overload made literal).
+ * - POLARIZED blocks STATIC/RAIN entirely; only GLITCH ("a crack in the
+ *   system") may interrupt its pure-binary stillness.
+ */
+export interface WeatherTypeWeights {
+    static: number;
+    rain: number;
+    glitch: number;
+}
+
+/** Equal thirds — identical odds to the historical unweighted rotation. */
+export const DEFAULT_WEATHER_WEIGHTS: WeatherTypeWeights = { static: 1, rain: 1, glitch: 1 };
+
+export const ROOM_WEATHER_WEIGHTS: Record<RoomType, WeatherTypeWeights> = {
+    [RoomType.INFO_OVERFLOW]: { static: 1, rain: 6, glitch: 1 },
+    [RoomType.FORCED_ALIGNMENT]: DEFAULT_WEATHER_WEIGHTS,
+    [RoomType.IN_BETWEEN]: DEFAULT_WEATHER_WEIGHTS,
+    [RoomType.POLARIZED]: { static: 0, rain: 0, glitch: 1 },
+};
 
 /**
  * Interpolate shader config between two rooms for smooth transitions
@@ -282,6 +391,7 @@ export function lerpRoomShaderConfig(
         paperColor: lerpColor(from.paperColor, to.paperColor),
         uScanIntensity: lerp(from.uScanIntensity, to.uScanIntensity),
         uMisregister: lerp(from.uMisregister, to.uMisregister),
+        uFlowerThresholdGain: lerp(from.uFlowerThresholdGain, to.uFlowerThresholdGain),
     };
 }
 

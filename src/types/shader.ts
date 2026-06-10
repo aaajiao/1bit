@@ -25,6 +25,20 @@ export interface DitherUniforms {
     //   "misread by both systems"; 0 elsewhere).
     uScanIntensity: { value: number };
     uMisregister: { value: number };
+    // uFlowerThresholdGain: signed per-room gain of the flower term in the
+    //   dither threshold (positive = brighter flower cleans the frame; negative
+    //   in INFO_OVERFLOW so brightness dirties it — flow-audit break #8).
+    uFlowerThresholdGain: { value: number };
+    // Gaze visual feedback (flow-audit break #1 + enhancement #2).
+    // uGazeIntensity: 0-1 smoothed gaze intensity; drives the disciplinary
+    //   vignette (scaled by uGazeVignetteStrength from GAZE_VISUAL config)
+    //   and, CPU-side, the uContrast gaze boost.
+    // uPitchLineV / uPitchLineAlpha: screen-space 45° gaze-threshold marker
+    //   line (v position + opacity incl. the first-crossing pulse).
+    uGazeIntensity: { value: number };
+    uGazeVignetteStrength: { value: number };
+    uPitchLineV: { value: number };
+    uPitchLineAlpha: { value: number };
 }
 
 export interface CableUniforms {

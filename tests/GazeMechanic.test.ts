@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { GAZE, GAZE_VISUAL } from '../src/config';
 import { GazeMechanic } from '../src/player/GazeMechanic';
 
 describe('gazeMechanic', () => {
@@ -200,7 +201,80 @@ describe('gazeMechanic', () => {
         it('should return minimum value (0.1) at max gaze intensity', () => {
             camera.rotation.x = Math.PI / 2; // Max gaze
             gaze.update(0.016);
-            expect(gaze.calculateForcedFlowerIntensity()).toBeCloseTo(0.1, 2);
+            expect(gaze.calculateForcedFlowerIntensity()).toBeCloseTo(GAZE.FLOWER_MIN_INTENSITY, 2);
+        });
+
+        it('should start near FLOWER_FORCED_START (0.35) just above the threshold', () => {
+            // Flow-audit medium #1: the forced value at the threshold crossing
+            // sits below the default flower intensity (0.5), so a default
+            // player sees the flower dim the instant they cross 45°.
+            camera.rotation.x = Math.PI / 4 + 0.001; // Just over 45°
+            gaze.update(0.016);
+            expect(gaze.calculateForcedFlowerIntensity()).toBeCloseTo(GAZE.FLOWER_FORCED_START, 1);
+            expect(gaze.calculateForcedFlowerIntensity()).toBeLessThan(0.5);
+        });
+
+        it('should interpolate between FLOWER_FORCED_START and FLOWER_MIN_INTENSITY', () => {
+            camera.rotation.x = Math.PI / 3; // 60°
+            const state = gaze.update(0.016);
+            const expected = GAZE.FLOWER_MIN_INTENSITY
+                + (1 - state.gazeIntensity) * (GAZE.FLOWER_FORCED_START - GAZE.FLOWER_MIN_INTENSITY);
+            expect(gaze.calculateForcedFlowerIntensity()).toBeCloseTo(expected, 5);
+        });
+    });
+
+    describe('threshold-crossing pulse (45° marker line)', () => {
+        it('should start at zero', () => {
+            expect(gaze.getThresholdPulse()).toBe(0);
+        });
+
+        it('should stay zero while below the threshold', () => {
+            camera.rotation.x = Math.PI / 4 - 0.1;
+            gaze.update(0.016);
+            expect(gaze.getThresholdPulse()).toBe(0);
+        });
+
+        it('should fire at full strength on the first crossing', () => {
+            camera.rotation.x = Math.PI / 3;
+            gaze.update(0.016);
+            expect(gaze.getThresholdPulse()).toBe(1.0);
+        });
+
+        it('should decay to zero over PITCH_LINE_PULSE_DURATION', () => {
+            camera.rotation.x = Math.PI / 3;
+            gaze.update(0.016); // Crossing frame: pulse = 1.0
+
+            gaze.update(GAZE_VISUAL.PITCH_LINE_PULSE_DURATION / 2);
+            expect(gaze.getThresholdPulse()).toBeCloseTo(0.5, 5);
+
+            gaze.update(GAZE_VISUAL.PITCH_LINE_PULSE_DURATION);
+            expect(gaze.getThresholdPulse()).toBe(0);
+        });
+
+        it('should not re-fire on subsequent crossings in the same session', () => {
+            camera.rotation.x = Math.PI / 3; // First crossing
+            gaze.update(0.016);
+            gaze.update(GAZE_VISUAL.PITCH_LINE_PULSE_DURATION * 2); // Fully decayed
+
+            camera.rotation.x = 0; // Look back down
+            gaze.update(0.016);
+
+            camera.rotation.x = Math.PI / 3; // Second crossing
+            gaze.update(0.016);
+            expect(gaze.getThresholdPulse()).toBe(0);
+        });
+
+        it('should fire again after reset()', () => {
+            camera.rotation.x = Math.PI / 3;
+            gaze.update(0.016);
+
+            camera.rotation.x = 0;
+            gaze.update(0.016);
+            gaze.reset();
+
+            camera.rotation.x = Math.PI / 3;
+            gaze.update(0.016);
+            expect(gaze.getThresholdPulse()).toBe(1.0);
         });
     });
 

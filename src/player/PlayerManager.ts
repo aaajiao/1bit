@@ -3,7 +3,7 @@ import type { RoomType } from '../world/RoomConfig';
 import type { OverrideHint } from './OverrideMechanic';
 import * as THREE from 'three';
 import { Controls } from './Controls';
-import { forceFlowerIntensity, getFlowerIntensity, overrideFlowerIntensity, setFlowerIntensity } from './FlowerProp';
+import { forceFlowerIntensity, getFlowerIntensity, getFlowerTargetIntensity, overrideFlowerIntensity, setFlowerIntensity } from './FlowerProp';
 import { GazeMechanic } from './GazeMechanic';
 import { HandsModel } from './HandsModel';
 import { OverrideMechanic } from './OverrideMechanic';
@@ -17,6 +17,8 @@ export interface PlayerState {
     isMoving: boolean;
     isGazing: boolean;
     gazeIntensity: number;
+    /** First-crossing pulse for the 45° threshold marker line (0-1, decaying) */
+    gazeThresholdPulse: number;
     pitch: number;
     overrideActive: boolean;
     overrideTriggered: boolean;
@@ -54,6 +56,7 @@ export class PlayerManager {
             isMoving: false,
             isGazing: false,
             gazeIntensity: 0,
+            gazeThresholdPulse: 0,
             pitch: 0,
             overrideActive: false,
             overrideTriggered: false,
@@ -81,12 +84,27 @@ export class PlayerManager {
             }
         });
 
-        // Flower intensity control via scroll wheel
+        // Tiered failure feedback (flow-audit break #2):
+        // - 'no-gaze' (POLARIZED, not gazing): a very light low thud — "wrong
+        //   direction" — once per key press.
+        // - 'cooldown' is fed back visually via getFeedbackProgress (edge pulse).
+        // - 'wrong-room' stays silent by design (only POLARIZED permits revolt).
+        this.override.setOnOverrideDenied((reason) => {
+            if (reason === 'no-gaze') {
+                this.audio.playOverrideDeniedThud();
+            }
+        });
+
+        // Flower intensity control via scroll wheel / Q-E / touch buttons.
+        // The confirm tone is event-driven from the player's input (flow-audit
+        // medium #6): the old per-frame threshold detection never fired at
+        // >=30fps and has been removed from AudioController.
         this.controls.setOnFlowerIntensityChange((intensity) => {
             const flower = this.hands.getFlower();
             if (flower) {
                 setFlowerIntensity(flower, intensity);
             }
+            this.audio.playFlowerChangeTone(intensity);
         });
 
         // Jump audio
@@ -176,7 +194,14 @@ export class PlayerManager {
                 forceFlowerIntensity(flower, false);
             }
             else {
-                forceFlowerIntensity(flower, isGazing, this.gaze.calculateForcedFlowerIntensity());
+                // One-way clamp (flow-audit medium #1): gaze only ever
+                // suppresses the flower, never raises it — a player who keeps
+                // the flower dim (target below the forced curve) stays dim.
+                const forced = Math.min(
+                    this.gaze.calculateForcedFlowerIntensity(),
+                    getFlowerTargetIntensity(flower),
+                );
+                forceFlowerIntensity(flower, isGazing, forced);
             }
 
             // Get current intensity
@@ -204,10 +229,13 @@ export class PlayerManager {
         this.currentState.isMoving = isMoving;
         this.currentState.isGazing = gazeState.isGazing;
         this.currentState.gazeIntensity = gazeState.gazeIntensity;
+        this.currentState.gazeThresholdPulse = this.gaze.getThresholdPulse();
         this.currentState.pitch = this.gaze.getPitch();
         this.currentState.overrideActive = overrideState.isActive;
         this.currentState.overrideTriggered = overrideState.isTriggered;
-        this.currentState.overrideProgress = this.override.getHoldProgress();
+        // Feedback progress = hold progress while active, plus the low-intensity
+        // cooldown-denial pulse while the key is held during cooldown (break #2).
+        this.currentState.overrideProgress = this.override.getFeedbackProgress();
         this.currentState.flowerIntensity = flowerIntensity;
         this.currentState.isShiftHeld = isShiftHeld;
 
@@ -223,18 +251,12 @@ export class PlayerManager {
 
     /**
      * Get the override hint state (delegates to OverrideMechanic).
-     * Hint state is kept live each frame by the override update path.
+     * Hint state is kept live each frame by the override update path; the
+     * display window is owned by the mechanic itself (flow-audit break #2),
+     * so callers just render `shouldShow` — no external marking needed.
      */
     public getOverrideHintState(): OverrideHint {
         return this.override.getHintState();
-    }
-
-    /**
-     * Mark the override hint as shown (delegates to OverrideMechanic).
-     * Call once the hint has been displayed to the user.
-     */
-    public markOverrideHintShown(): void {
-        this.override.markHintShown();
     }
 
     /**

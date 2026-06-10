@@ -302,9 +302,13 @@ class ChimeraVoid {
             // INFO_CHIRP_PROBABILITY is a per-FRAME value; treat (value * 60) as a
             // per-SECOND rate and scale by delta so the chirp cadence is
             // frame-rate independent (reproduces the old ~2%/frame at 60fps).
+            // The flower multiplier (flow-audit break #8) makes a brighter
+            // flower chirp more often (0.5x dim -> 2x blazing).
             && Math.random() < GAMEPLAY.INFO_CHIRP_PROBABILITY * 60 * delta
+            * (GAMEPLAY.INFO_CHIRP_FLOWER_PROB_FLOOR
+                + playerState.flowerIntensity * GAMEPLAY.INFO_CHIRP_FLOWER_PROB_GAIN)
         ) {
-            this.audio.playInfoChirp();
+            this.audio.playInfoChirp(playerState.flowerIntensity);
         }
 
         // Cable Audio
@@ -342,7 +346,8 @@ class ChimeraVoid {
             },
         });
 
-        const weatherState = this.weather.update(delta, t);
+        // Room-weighted weather selection (flow-audit medium #3).
+        const weatherState = this.weather.update(delta, t, currentRoomType);
         this.audio.updateWeatherAudio(weatherState.weatherType, weatherState.weatherIntensity);
 
         // 6. Update Shaders & Visuals
@@ -354,14 +359,27 @@ class ChimeraVoid {
             playerState.flowerIntensity,
             this.player.getColorInversionValue(),
             playerState.overrideProgress,
+            playerState.gazeIntensity,
+            playerState.pitch,
+            playerState.gazeThresholdPulse,
+            currentRoomType,
+            playerPos.x,
         );
 
         // Audio tick
         this.audio.tick(delta);
 
-        // Sky Eye
-        if (this.skyEye)
-            this.skyEye.update(delta, playerPos, this.audio);
+        // Sky Eye (perceives the flower's brightness and the player's gaze —
+        // flow-audit break #4)
+        if (this.skyEye) {
+            this.skyEye.update(
+                delta,
+                playerPos,
+                this.audio,
+                playerState.flowerIntensity,
+                playerState.gazeIntensity,
+            );
+        }
 
         // Scanner Light
         if (this.scannerLight) {
@@ -373,7 +391,8 @@ class ChimeraVoid {
             this.scannerLight.target.updateMatrixWorld();
         }
 
-        // Override hint (HUD wiring): show the [SHIFT]-resistance hint once.
+        // Override hint (HUD wiring): visibility window is owned by the
+        // OverrideMechanic itself (flow-audit break #2).
         const hint = this.resolveOverrideHint();
 
         // Throttle behavior-tag regeneration for the debug HUD to ~1Hz (M13).
@@ -402,15 +421,15 @@ class ChimeraVoid {
     }
 
     /**
-     * Read the override hint state and mark it shown once displayed.
+     * Map the mechanic's hint state to the HUD display contract. The mechanic
+     * keeps shouldShow true for its configured display window and marks itself
+     * shown when it elapses (flow-audit break #2) — no marking here.
      */
     private resolveOverrideHint(): OverrideHintDisplay {
-        const hintState = this.player.getOverrideHintState();
-        if (hintState.shouldShow) {
-            this.player.markOverrideHintShown();
-            return { text: OVERRIDE_HINT_TEXT, visible: true };
-        }
-        return { text: OVERRIDE_HINT_TEXT, visible: false };
+        return {
+            text: OVERRIDE_HINT_TEXT,
+            visible: this.player.getOverrideHintState().shouldShow,
+        };
     }
 
     private render(): void {

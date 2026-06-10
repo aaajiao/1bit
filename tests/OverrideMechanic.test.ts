@@ -1,3 +1,4 @@
+import type { OverrideDenialReason } from '../src/player/OverrideMechanic';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { OVERRIDE } from '../src/config';
 import { OverrideMechanic } from '../src/player/OverrideMechanic';
@@ -259,6 +260,133 @@ describe('overrideMechanic', () => {
             // A subsequent update must not re-show it.
             poll(m, 0.1, false, { gazing: true });
             expect(m.getHintState().shouldShow).toBe(false);
+        });
+    });
+
+    describe('hint display window (flow-audit break #2)', () => {
+        // Meet both hint conditions in POLARIZED; the display window starts on
+        // the last poll (forcedTwice flips before updateHint within update()).
+        function meetHintConditions(mech: OverrideMechanic): void {
+            poll(mech, 6.0, false, { gazing: true });
+            poll(mech, 0.1, false, { gazing: true, forced: true });
+            poll(mech, 0.1, false, { gazing: true, forced: false });
+            poll(mech, 0.1, false, { gazing: true, forced: true });
+        }
+
+        it('should keep the hint visible across updates within the window', () => {
+            meetHintConditions(m);
+            // Advance well into, but not past, HINT_DISPLAY_DURATION (10s).
+            for (let i = 0; i < 5; i++) {
+                poll(m, 1.0, false, { gazing: false });
+                expect(m.getHintState().shouldShow).toBe(true);
+            }
+            expect(m.getHintState().hasBeenShown).toBe(false);
+        });
+
+        it('should keep showing while briefly stepping out of POLARIZED once started', () => {
+            meetHintConditions(m);
+            poll(m, 1.0, false, { gazing: false, room: RoomType.IN_BETWEEN });
+            expect(m.getHintState().shouldShow).toBe(true);
+        });
+
+        it('should mark itself shown once the window elapses', () => {
+            meetHintConditions(m);
+            poll(m, OVERRIDE.HINT_DISPLAY_DURATION + 0.1, false, { gazing: false });
+            expect(m.getHintState().shouldShow).toBe(false);
+            expect(m.getHintState().hasBeenShown).toBe(true);
+            // It must never come back this session.
+            poll(m, 0.1, false, { gazing: true, forced: true });
+            expect(m.getHintState().shouldShow).toBe(false);
+        });
+
+        it('should end the hint early on a successful override', () => {
+            meetHintConditions(m);
+            expect(m.getHintState().shouldShow).toBe(true);
+            poll(m, 1.0, true); // hold to trigger
+            expect(m.getHintState().shouldShow).toBe(false);
+            expect(m.getHintState().hasBeenShown).toBe(true);
+        });
+
+        it('should mark the hint shown by any successful override, even before conditions', () => {
+            poll(m, 1.0, true); // trigger with no hint conditions met
+            expect(m.getHintState().hasBeenShown).toBe(true);
+        });
+    });
+
+    describe('denied-input feedback (flow-audit break #2)', () => {
+        let reasons: OverrideDenialReason[];
+
+        beforeEach(() => {
+            reasons = [];
+            m.setOnOverrideDenied(reason => reasons.push(reason));
+        });
+
+        it('should fire wrong-room once per key press outside POLARIZED', () => {
+            poll(m, 0.1, true, { room: RoomType.INFO_OVERFLOW });
+            poll(m, 0.1, true, { room: RoomType.INFO_OVERFLOW }); // still held
+            expect(reasons).toEqual(['wrong-room']);
+
+            poll(m, 0.1, false, { room: RoomType.INFO_OVERFLOW }); // release
+            poll(m, 0.1, true, { room: RoomType.INFO_OVERFLOW }); // new press
+            expect(reasons).toEqual(['wrong-room', 'wrong-room']);
+        });
+
+        it('should fire no-gaze in POLARIZED when not gazing', () => {
+            poll(m, 0.1, true, { gazing: false });
+            expect(reasons).toEqual(['no-gaze']);
+            expect(m.getActiveDenial()).toBe('no-gaze');
+        });
+
+        it('should fire cooldown in POLARIZED while the cooldown runs', () => {
+            poll(m, 1.0, true); // trigger
+            poll(m, 0.016, false); // release -> cooldown starts
+            reasons.length = 0;
+
+            poll(m, 0.1, true); // re-press during cooldown
+            expect(reasons).toEqual(['cooldown']);
+        });
+
+        it('should not fire when activation succeeds', () => {
+            poll(m, 0.1, true);
+            expect(reasons).toEqual([]);
+            expect(m.getActiveDenial()).toBeNull();
+        });
+
+        it('should clear the denial when the key is released', () => {
+            poll(m, 0.1, true, { gazing: false });
+            expect(m.getActiveDenial()).toBe('no-gaze');
+            poll(m, 0.1, false, { gazing: false });
+            expect(m.getActiveDenial()).toBeNull();
+        });
+    });
+
+    describe('getFeedbackProgress (cooldown edge-pulse channel)', () => {
+        it('should equal hold progress while the override is active', () => {
+            poll(m, 0.5, true);
+            expect(m.getFeedbackProgress()).toBeCloseTo(0.5, 5);
+        });
+
+        it('should expose a low-intensity pulse proportional to the remaining cooldown', () => {
+            poll(m, 1.0, true); // trigger
+            poll(m, 0.016, false); // release -> cooldownRemaining = COOLDOWN
+
+            poll(m, 0.5, true); // held during cooldown; cooldown drains by 0.5
+            const expected = OVERRIDE.COOLDOWN_FEEDBACK_MAX
+                * (OVERRIDE.COOLDOWN - 0.5) / OVERRIDE.COOLDOWN;
+            expect(m.getFeedbackProgress()).toBeCloseTo(expected, 5);
+            expect(m.getFeedbackProgress()).toBeLessThanOrEqual(OVERRIDE.COOLDOWN_FEEDBACK_MAX);
+        });
+
+        it('should report 0 when the key is not held during cooldown', () => {
+            poll(m, 1.0, true);
+            poll(m, 0.016, false);
+            poll(m, 0.5, false);
+            expect(m.getFeedbackProgress()).toBe(0);
+        });
+
+        it('should report 0 for a wrong-room denial', () => {
+            poll(m, 0.5, true, { room: RoomType.IN_BETWEEN });
+            expect(m.getFeedbackProgress()).toBe(0);
         });
     });
 
