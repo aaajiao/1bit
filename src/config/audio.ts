@@ -10,6 +10,17 @@ export const AUDIO_MASTER = {
     /** Gaze filter range Hz */
     gazeFilterOpen: 20000,
     gazeFilterClosed: 400,
+    /**
+     * Exponential approach rate (1/s) of the gaze lowpass glide in
+     * LOG-frequency space (flow-audit enhancement #7). The old linear-Hz lerp
+     * spent most of its time inaudibly far above the 400Hz target, stretching
+     * the perceived "muffle" to 2-3x the promised 0.5s; in log space each step
+     * covers an equal fraction of the remaining OCTAVES. Time constant ~0.17s
+     * => ~95% of the perceptual distance inside 0.5s.
+     */
+    gazeFilterLerpSpeed: 6.0,
+    /** Relative (log-domain) convergence epsilon below which the filter snaps. */
+    gazeFilterEpsilon: 0.002,
 };
 
 /**
@@ -121,6 +132,13 @@ export const BINAURAL_SIDE_CONFIG = {
     detuneGain: 0.6,
     /** setTargetAtTime time constant (s) for side-driven beat retunes */
     glide: 0.15,
+    /**
+     * Audible half-width (meters) of the binaural field around the rift crack:
+     * beat intensity fades to 0 at this distance from the crack center, and
+     * the signed side displacement is normalized by it (RiftMechanic ->
+     * AudioController.updateBinauralPosition).
+     */
+    fieldWidth: 20,
 };
 
 /**
@@ -169,6 +187,63 @@ export const ROOM_AMBIENT_CONFIG = {
      * Prevents thrash when the player oscillates across a chunk seam.
      */
     retuneDebounceMs: 250,
+    /**
+     * Minimum interval (s, audio-clock) between one-shot transition whooshes
+     * (flow-audit medium #5): strafing along a room boundary re-crosses the
+     * seam every few hundred ms, and without a cooldown every crossing fires a
+     * full whoosh. The first crossing still plays immediately.
+     */
+    whooshMinInterval: 1.8,
+};
+
+/**
+ * Sunset-settlement audio convergence (flow-audit enhancement #9): when the
+ * snapshot lands, a temporary lowpass ceiling rides the existing gaze-filter
+ * pipeline (AudioEngine.applyTemporaryLowpass) so the world audibly recedes
+ * for a few seconds, then releases back to the live gaze target.
+ */
+export const SNAPSHOT_AUDIO_CONFIG = {
+    /** Temporary lowpass ceiling (Hz) while the snapshot lands. */
+    lowpassFreq: 700,
+    /** Seconds the ceiling holds (play-time; frozen while paused) before release. */
+    holdSeconds: 3.0,
+};
+
+/**
+ * Pre-sunset drone descent (flow-audit enhancement #8): over the foreshadow
+ * window (SUNSET_FORESHADOW.LEAD_SECONDS) the ambient drone slowly slides
+ * down in pitch — the audio half of the "ending is coming" signal.
+ */
+export const SUNSET_FORESHADOW_AUDIO = {
+    /** Fractional drone pitch drop at full foreshadow (sunset moment). */
+    droneDropFraction: 0.12,
+    /** setTargetAtTime time constant (s) for the descent glide. */
+    glide: 1.0,
+    /** Minimum foreshadow-level change before the drone frequency is rewritten. */
+    applyEpsilon: 0.005,
+};
+
+/**
+ * POLARIZED binary pulse layer (flow-audit medium #2): a metronome of
+ * alternating 440/880Hz ticks — this pitch or that one, nothing in between —
+ * scheduled like the rain ambient. Gazing compresses the interval
+ * (×1/(1 + gazeRateGain·gazeIntensity)) so the room's gaze pressure finally
+ * has an audible carrier ABOVE the 400Hz gaze-lowpass cutoff (the sub-40Hz
+ * drone sits entirely below it and never registered the filter).
+ */
+export const POLARIZED_BEAT_CONFIG = {
+    /** The two alternating pulse frequencies (Hz) — the binary pair. */
+    lowFreq: 440,
+    highFreq: 880,
+    /** Base interval (s) between pulses with no gaze. */
+    baseInterval: 0.75,
+    /** Gaze rate gain: interval = baseInterval / (1 + gazeRateGain * gazeIntensity). */
+    gazeRateGain: 0.3,
+    /** Per-pulse volume and length (s). */
+    volume: 0.05,
+    pulseDuration: 0.12,
+    /** Layer fade in/out time constant (s) on room enter/exit. */
+    fadeTime: 0.5,
 };
 
 /**

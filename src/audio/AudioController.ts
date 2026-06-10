@@ -14,8 +14,11 @@ import {
     FOOTSTEP_CONFIG,
     INFO_CHIRP_CONFIG,
     OVERRIDE_DENIED_CONFIG,
+    POLARIZED_BEAT_CONFIG,
     RIFT_AUDIO_CONFIG,
     ROOM_AMBIENT_CONFIG,
+    SNAPSHOT_AUDIO_CONFIG,
+    SUNSET_FORESHADOW_AUDIO,
     WEATHER_AUDIO_CONFIG,
 } from '../config';
 import { RoomType } from '../world/RoomConfig';
@@ -77,6 +80,29 @@ export class AudioController implements AudioSystemInterface {
     private retuneTimer: number | null = null;
     private pendingRoomType: RoomType | null = null;
 
+    /**
+     * Audio-clock time (s) of the last transition whoosh. -Infinity so the
+     * very first room change always whooshes (flow-audit medium #5 cooldown).
+     */
+    private lastRoomWhooshTime: number = -Infinity;
+
+    // POLARIZED binary pulse layer (flow-audit medium #2): rain-ambient style
+    // setTimeout scheduling; the interval re-reads the latest gaze intensity
+    // each tick so gazing audibly quickens the metronome.
+    private polarizedBeatTimer: number | null = null;
+    private polarizedBeatGain: GainNode | null = null;
+    private polarizedBeatHigh: boolean = false;
+    /** Latest gaze intensity (0 when not gazing), fed per frame by updateGaze. */
+    private polarizedGazeIntensity: number = 0;
+
+    // Ambient drone frequencies as last retuned (startAmbientDrone /
+    // retuneAmbientDrone), so the sunset foreshadow can descend RELATIVE to
+    // whatever room the drone is currently tuned to.
+    private droneBaseFreq: number = 35;
+    private dronePartnerFreq: number = 35.5;
+    /** Foreshadow level whose drone descent was last applied (write debounce). */
+    private appliedSunsetForeshadow: number = 0;
+
     constructor() {
         this.engine = new AudioEngine();
     }
@@ -119,6 +145,43 @@ export class AudioController implements AudioSystemInterface {
 
     updateGaze(isGazing: boolean, gazeIntensity: number): void {
         this.engine.updateGazeFilter(isGazing, gazeIntensity);
+        // Feed the POLARIZED pulse scheduler (flow-audit medium #2): each
+        // scheduled tick reads this to compress its next interval.
+        this.polarizedGazeIntensity = isGazing ? gazeIntensity : 0;
+    }
+
+    /**
+     * Sunset-settlement audio convergence (flow-audit enhancement #9): cap
+     * the master lowpass for a few seconds while the snapshot lands, riding
+     * the existing gaze-filter glide pipeline.
+     */
+    duckForSnapshot(): void {
+        this.engine.applyTemporaryLowpass(
+            SNAPSHOT_AUDIO_CONFIG.lowpassFreq,
+            SNAPSHOT_AUDIO_CONFIG.holdSeconds,
+        );
+    }
+
+    /**
+     * Pre-sunset drone descent (flow-audit enhancement #8): slide the ambient
+     * drone down by up to droneDropFraction across the foreshadow ramp
+     * (0 = none, 1 = sunset moment). Called per frame; writes are debounced
+     * to meaningful level changes so the steady state costs nothing.
+     */
+    updateSunsetForeshadow(level: number): void {
+        const f = Math.max(0, Math.min(1, level));
+        if (Math.abs(f - this.appliedSunsetForeshadow) < SUNSET_FORESHADOW_AUDIO.applyEpsilon)
+            return;
+        const ctx = this.engine.getContext();
+        if (!ctx || !this.ambientNode)
+            return;
+        this.appliedSunsetForeshadow = f;
+
+        const mult = 1 - f * SUNSET_FORESHADOW_AUDIO.droneDropFraction;
+        const now = ctx.currentTime;
+        const glide = SUNSET_FORESHADOW_AUDIO.glide;
+        this.ambientNode.osc1.frequency.setTargetAtTime(this.droneBaseFreq * mult, now, glide);
+        this.ambientNode.osc2.frequency.setTargetAtTime(this.dronePartnerFreq * mult, now, glide);
     }
 
     tick(deltaTime: number): void {
@@ -139,9 +202,9 @@ export class AudioController implements AudioSystemInterface {
         const filter = ctx.createBiquadFilter();
 
         osc1.type = 'sawtooth';
-        osc1.frequency.value = 35;
+        osc1.frequency.value = this.droneBaseFreq;
         osc2.type = 'sawtooth';
-        osc2.frequency.value = 35.5;
+        osc2.frequency.value = this.dronePartnerFreq;
 
         filter.type = 'lowpass';
         filter.frequency.value = 200;
@@ -952,8 +1015,15 @@ export class AudioController implements AudioSystemInterface {
             return;
 
         // One-shot transition whoosh fires immediately for responsive feedback,
-        // even while the ambient reconfiguration below is being debounced.
-        if (prevType !== null) {
+        // even while the ambient reconfiguration below is being debounced —
+        // but rate-limited (flow-audit medium #5) so strafing along a room
+        // boundary doesn't machine-gun the whoosh on every seam re-cross.
+        // Audio-clock time (ctx.currentTime) matches the footstep cooldown
+        // pattern and doesn't advance while the context is suspended (paused).
+        const ctx = this.engine.getContext();
+        if (prevType !== null && ctx !== null
+            && ctx.currentTime - this.lastRoomWhooshTime >= ROOM_AMBIENT_CONFIG.whooshMinInterval) {
+            this.lastRoomWhooshTime = ctx.currentTime;
             this.playRoomTransition();
         }
 
@@ -995,6 +1065,94 @@ export class AudioController implements AudioSystemInterface {
         else {
             this.stopBinauralBeat();
         }
+
+        // POLARIZED binary pulse layer (flow-audit medium #2): only POLARIZED
+        // runs the 440/880 metronome.
+        if (target === RoomType.POLARIZED) {
+            this.startPolarizedBeat();
+        }
+        else {
+            this.stopPolarizedBeat();
+        }
+    }
+
+    // ==================== POLARIZED Pulse Layer ====================
+
+    /**
+     * Start the POLARIZED binary pulse layer (flow-audit medium #2): short
+     * sine ticks alternating strictly between 440 and 880 Hz — this pitch or
+     * that one, nothing in between — scheduled with the same setTimeout-chain
+     * pattern as the rain ambient. Each tick recomputes its next interval
+     * from the LIVE gaze intensity (interval / (1 + 0.3·gaze)), so gazing
+     * audibly quickens the metronome. Sits above the 400Hz gaze-lowpass
+     * cutoff, so the gaze muffle finally registers in this room too.
+     */
+    private startPolarizedBeat(): void {
+        const ctx = this.engine.getContext();
+        const master = this.engine.getMasterGain();
+        if (!ctx || !master || this.polarizedBeatTimer !== null)
+            return;
+
+        const cfg = POLARIZED_BEAT_CONFIG;
+        this.polarizedBeatGain = ctx.createGain();
+        this.polarizedBeatGain.gain.setValueAtTime(0, ctx.currentTime);
+        this.polarizedBeatGain.gain.setTargetAtTime(1, ctx.currentTime, cfg.fadeTime);
+        this.polarizedBeatGain.connect(master);
+        this.polarizedBeatHigh = false;
+
+        const playPulse = (): void => {
+            // Suspended context (paused): skip the pulse but keep the
+            // scheduler alive, so a long pause never stacks pending pulses
+            // into one burst at resume.
+            if (!this.polarizedBeatGain || ctx.state !== 'running')
+                return;
+            const now = ctx.currentTime;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = this.polarizedBeatHigh ? cfg.highFreq : cfg.lowFreq;
+            this.polarizedBeatHigh = !this.polarizedBeatHigh;
+            gain.gain.setValueAtTime(cfg.volume, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + cfg.pulseDuration);
+            osc.connect(gain);
+            gain.connect(this.polarizedBeatGain);
+            osc.start(now);
+            osc.stop(now + cfg.pulseDuration + 0.05);
+        };
+
+        const schedule = (): void => {
+            if (this.polarizedBeatTimer === null)
+                return;
+            playPulse();
+            const interval = cfg.baseInterval
+                / (1 + cfg.gazeRateGain * this.polarizedGazeIntensity);
+            this.polarizedBeatTimer = window.setTimeout(schedule, interval * 1000);
+        };
+        this.polarizedBeatTimer = window.setTimeout(schedule, 0);
+    }
+
+    /**
+     * Stop the POLARIZED pulse layer: cancel the scheduler synchronously,
+     * fade the layer gain, and disconnect after the tail (rain/binaural
+     * teardown pattern — rapid re-entry never orphans a chain).
+     */
+    private stopPolarizedBeat(): void {
+        if (this.polarizedBeatTimer !== null) {
+            clearTimeout(this.polarizedBeatTimer);
+            this.polarizedBeatTimer = null;
+        }
+        if (!this.polarizedBeatGain)
+            return;
+        const ctx = this.engine.getContext();
+        const oldGain = this.polarizedBeatGain;
+        this.polarizedBeatGain = null;
+        if (ctx) {
+            oldGain.gain.setTargetAtTime(0, ctx.currentTime, 0.2);
+            setTimeout(() => oldGain.disconnect(), 400);
+        }
+        else {
+            oldGain.disconnect();
+        }
     }
 
     /**
@@ -1013,10 +1171,18 @@ export class AudioController implements AudioSystemInterface {
         if (audioConfig.harmonic === 'binaural')
             partner = base + ROOM_AMBIENT_CONFIG.binauralDroneDetune;
 
+        // Remember the room tuning, then retune THROUGH the current sunset
+        // foreshadow descent so a room change inside the lead window doesn't
+        // pop the drone back up to its undimmed pitch.
+        this.droneBaseFreq = base;
+        this.dronePartnerFreq = partner;
+        const foreshadowMult
+            = 1 - this.appliedSunsetForeshadow * SUNSET_FORESHADOW_AUDIO.droneDropFraction;
+
         const now = ctx.currentTime;
         const glide = ROOM_AMBIENT_CONFIG.droneRetuneGlide;
-        this.ambientNode.osc1.frequency.setTargetAtTime(base, now, glide);
-        this.ambientNode.osc2.frequency.setTargetAtTime(partner, now, glide);
+        this.ambientNode.osc1.frequency.setTargetAtTime(base * foreshadowMult, now, glide);
+        this.ambientNode.osc2.frequency.setTargetAtTime(partner * foreshadowMult, now, glide);
         // Keep the lowpass parked where the drone is meant to sit.
         this.ambientNode.filter.frequency.setTargetAtTime(
             ROOM_AMBIENT_CONFIG.droneFilterFreq,
@@ -1145,6 +1311,7 @@ export class AudioController implements AudioSystemInterface {
         this.stopRainAmbient();
         this.stopRoomNoiseBed();
         this.stopBinauralBeat();
+        this.stopPolarizedBeat();
         this.stopCableHum();
         this.stopRiftFog();
         this.stopRiftFall();

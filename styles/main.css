@@ -43,6 +43,22 @@ body {
     display: none !important;
 }
 
+/* Pause vs first-screen copy (flow-audit enhancement #15): once play has
+   started, Controls adds the 'paused' modifier on unlock so the title area
+   reads "已暂停 — 点击继续" instead of the first-run invite. Everything else
+   on the panel (controls list, last-run note, replay entry) stays visible. */
+#pause-note {
+    display: none;
+}
+
+#ui.paused #enter-note {
+    display: none;
+}
+
+#ui.paused #pause-note {
+    display: block;
+}
+
 /* Explicit unsupported-device notice on the start screen (flow-audit #9) */
 #input-warning {
     margin-top: 12px;
@@ -50,7 +66,40 @@ body {
     padding-top: 10px;
 }
 
-/* Touch flower-intensity controls (touch fallback mode only) */
+/* Last-run observation line + snapshot replay entry (flow-audit medium #8 /
+   enhancement #8). Low-key by design; the replay line re-enables pointer
+   events inside the otherwise click-through #ui panel. */
+#last-run-note {
+    margin-top: 12px;
+    font-size: 12px;
+    opacity: 0.65;
+}
+
+#replay-snapshot {
+    pointer-events: auto;
+    cursor: pointer;
+    font-size: 12px;
+    opacity: 0.65;
+    text-decoration: underline;
+}
+
+/* Touch controls (touch fallback mode only): shared 1-bit button look for
+   the flower +/- pair, the hold-to-resist entry, and the pause entry
+   (flow-audit C3: override + pause were unreachable on pure touch). */
+#touch-flower-controls button,
+#touch-override-button,
+#touch-pause-button {
+    background: black;
+    color: white;
+    border: 2px solid white;
+    font-family: "Courier New", Courier, monospace;
+    line-height: 1;
+    padding: 0;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
 #touch-flower-controls {
     position: fixed;
     right: 16px;
@@ -64,16 +113,33 @@ body {
 #touch-flower-controls button {
     width: 48px;
     height: 48px;
-    background: black;
-    color: white;
-    border: 2px solid white;
-    font-family: "Courier New", Courier, monospace;
     font-size: 22px;
-    line-height: 1;
-    padding: 0;
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
+}
+
+/* Hold-to-resist entry: sits just above the flower controls, hold = SHIFT */
+#touch-override-button {
+    position: fixed;
+    right: 16px;
+    bottom: 88px;
+    height: 48px;
+    padding: 0 14px;
+    font-size: 14px;
+    letter-spacing: 2px;
+    z-index: 10;
+    mix-blend-mode: difference;
+}
+
+/* Pause entry (ESC equivalent): small, out of both drag zones' hot paths */
+#touch-pause-button {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    width: 40px;
+    height: 40px;
+    font-size: 14px;
+    letter-spacing: 2px;
+    z-index: 10;
+    mix-blend-mode: difference;
 }
 
 /* Scanline effect */
@@ -106,4 +172,26 @@ body {
     font-size: 12px;
     z-index: 5;
     mix-blend-mode: difference;
+}
+
+/* Flower-adjustment fallback hint (flow-audit enhancement #1): fades in
+   after 60s of play without any intensity input ([scroll] / [−/+]), and is
+   dismissed for good by the first adjustment. */
+#flower-hint {
+    position: absolute;
+    bottom: 64px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    font-size: 14px;
+    letter-spacing: 2px;
+    z-index: 5;
+    mix-blend-mode: difference;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 1.5s ease;
+}
+
+#flower-hint.visible {
+    opacity: 0.65;
 }

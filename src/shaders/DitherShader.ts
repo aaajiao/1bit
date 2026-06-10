@@ -66,6 +66,16 @@ export const DitherShader: ShaderDefinition = {
         uGazeVignetteStrength: { value: 0.0 },
         uPitchLineV: { value: 0.5 },
         uPitchLineAlpha: { value: 0.0 },
+        // ===== Override payoff (flow-audit enhancements #4/#5) =====
+        // uRawBypass: 1 during the short crash window right after the override
+        //   triggers — the shader outputs the raw, un-dithered, un-tinted
+        //   tDiffuse render (the system cracks open), then the duotone
+        //   inversion flash plays as the aftershock.
+        // uOverrideSustain: 0-1 steady paper-white edge band while the key
+        //   stays held past the trigger (fast decay on release). Distinct from
+        //   the pulsing uOverrideProgress ramp / low-intensity cooldown denial.
+        uRawBypass: { value: 0.0 },
+        uOverrideSustain: { value: 0.0 },
     },
     vertexShader: `
         varying vec2 vUv;
@@ -111,6 +121,9 @@ export const DitherShader: ShaderDefinition = {
         uniform float uGazeVignetteStrength; // peak ink mix of the gaze vignette
         uniform float uPitchLineV;           // screen v of the 45° threshold marker
         uniform float uPitchLineAlpha;       // 0-1 marker opacity (proximity + pulse)
+        // Override payoff (flow-audit enhancements #4/#5)
+        uniform float uRawBypass;            // 1 = output raw tDiffuse (crash frame)
+        uniform float uOverrideSustain;      // 0-1 steady held-resistance edge band
         varying vec2 vUv;
 
         // Duotone-aware "inverse": swaps a color toward the opposite palette
@@ -220,6 +233,17 @@ export const DitherShader: ShaderDefinition = {
 
         void main() {
             vec4 color = texture2D(tDiffuse, vUv);
+
+            // Override raw-bypass crash frame (flow-audit enhancement #4): for
+            // ~0.1s after the trigger the whole 1-bit pipeline is skipped and
+            // the raw, un-dithered, un-tinted render leaks through — the system
+            // cracks open and shows the world underneath. The duotone inversion
+            // flash (uColorInversion below) then plays as the aftershock.
+            if (uRawBypass > 0.5) {
+                gl_FragColor = vec4(color.rgb, 1.0);
+                return;
+            }
+
             float gray = getLuminance(color.rgb);
 
             // Apply contrast (room-specific) BEFORE the brightness boost so that
@@ -334,7 +358,10 @@ export const DitherShader: ShaderDefinition = {
                 finalColor = duoInvert(finalColor);
             }
 
-            // Override progress feedback (edge pulse while holding)
+            // Override progress feedback (edge pulse while holding). Carries
+            // both the pre-trigger hold ramp and the low-intensity cooldown
+            // denial (flow-audit break #2); the post-trigger sustain lives on
+            // its own steady channel below (enhancement #5).
             if (uOverrideProgress > 0.0 && uOverrideProgress < 1.0) {
                 vec2 centered = vUv - 0.5;
                 float edgeDist = max(abs(centered.x), abs(centered.y));
@@ -348,6 +375,20 @@ export const DitherShader: ShaderDefinition = {
             if (uColorInversion > 0.0) {
                 vec3 inverted = duoInvert(finalColor);
                 finalColor = mix(finalColor, inverted, uColorInversion);
+            }
+
+            // Sustained-resistance edge band (flow-audit enhancement #5): while
+            // the key stays held past the trigger the screen edges hold a
+            // STEADY paper-white band — "still pressing = still resisting" —
+            // with a fast (~0.2s) CPU-side decay after release. Steady + paper
+            // (vs pulsing + inverted above) keeps the two states readable, and
+            // applying it after the inversion flash keeps the band same-phase
+            // white through the aftershock.
+            if (uOverrideSustain > 0.0) {
+                vec2 sustainCentered = vUv - 0.5;
+                float sustainDist = max(abs(sustainCentered.x), abs(sustainCentered.y));
+                float sustainBand = smoothstep(0.4, 0.5, sustainDist);
+                finalColor = mix(finalColor, uPaperColor, sustainBand * uOverrideSustain * 0.6);
             }
 
             // Weather effects

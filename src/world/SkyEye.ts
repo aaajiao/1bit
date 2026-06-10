@@ -1,12 +1,15 @@
 import type { AudioSystemInterface } from '../types';
 // 1-bit Chimera Void - Sky Eye System
 import * as THREE from 'three';
-import { SKY_EYE_AWARENESS } from '../config';
+import { SKY_EYE_AWARENESS, SKY_EYE_DOMINANCE } from '../config';
 import { removeAndDispose } from '../utils/dispose';
 import { hash } from '../utils/hash';
+import { RoomType } from './RoomConfig';
 
 interface RingUserData {
     speed?: number;
+    /** True for the extra dominance rings that unfold in POLARIZED. */
+    isDominanceRing?: boolean;
 }
 
 /** Constant salt for deterministic per-ring spin seeding (see createGeometry). */
@@ -97,6 +100,45 @@ export function computeEyeAwareness(
 }
 
 /**
+ * Advance the eye's room-dominance level (flow-audit enhancement #11) one
+ * frame toward 1 (in the dominant room) or 0 (elsewhere). Frame-rate
+ * independent: the exponential step 1 - exp(-rate * delta) composes exactly
+ * across arbitrary delta splits. Pure; exported for testing.
+ */
+export function stepEyeDominance(
+    current: number,
+    isDominantRoom: boolean,
+    delta: number,
+    rate: number = SKY_EYE_DOMINANCE.BLEND_RATE,
+): number {
+    const target = isDominantRoom ? 1 : 0;
+    return current + (target - current) * (1 - Math.exp(-rate * delta));
+}
+
+/**
+ * Derived presentation values for a dominance level in [0,1] (clamped).
+ * At 0 this reproduces the base eye exactly (scale 1, base height, extra
+ * rings folded away); at 1 the eye is SCALE_MULT bigger, HEIGHT_DROP lower,
+ * and the extra rings are fully unfolded. Pure; exported for testing.
+ */
+export interface EyeDominancePose {
+    /** Uniform ring-group scale. */
+    scale: number;
+    /** Eye height above the ground plane. */
+    height: number;
+    /** Scale of the extra outer rings (0 = folded away / hidden). */
+    extraRingScale: number;
+}
+
+export function computeEyeDominancePose(dominance: number, out: EyeDominancePose): EyeDominancePose {
+    const d = Math.max(0, Math.min(1, dominance));
+    out.scale = 1 + d * (SKY_EYE_DOMINANCE.SCALE_MULT - 1);
+    out.height = SKY_EYE_HEIGHT - d * SKY_EYE_DOMINANCE.HEIGHT_DROP;
+    out.extraRingScale = d;
+    return out;
+}
+
+/**
  * Giant eye floating in the sky, follows the player, blinks randomly
  */
 export class SkyEye {
@@ -117,6 +159,16 @@ export class SkyEye {
         pupilScale: 1,
         pupilCenterPull: 0,
         ringSpeedMult: 1,
+    };
+
+    // Room-dominance level (flow-audit enhancement #11): eases toward 1 while
+    // the player is in POLARIZED, back to 0 elsewhere.
+    private dominance: number = 0;
+    // Reused dominance-pose scratch (mutated in place; no per-frame alloc).
+    private _dominancePose: EyeDominancePose = {
+        scale: 1,
+        height: SKY_EYE_HEIGHT,
+        extraRingScale: 0,
     };
 
     constructor(scene: THREE.Scene) {
@@ -157,6 +209,25 @@ export class SkyEye {
             this.group.add(ring);
         }
 
+        // Extra outer dominance rings (flow-audit enhancement #11): folded away
+        // (hidden, scale ~0) by default; they unfold smoothly with the
+        // dominance level while the player is in POLARIZED. Same shared
+        // material, same deterministic spin seeding (continuing the index run).
+        for (let e = 1; e <= SKY_EYE_DOMINANCE.EXTRA_RINGS; e++) {
+            const i = 5 + e;
+            const ring = new THREE.Mesh(
+                new THREE.RingGeometry(i * 8, i * 8 + 1, 64),
+                mat,
+            );
+            (ring.userData as RingUserData) = {
+                speed: (hash(i, RING_SPIN_SALT) - 0.5) * 0.3,
+                isDominanceRing: true,
+            };
+            ring.visible = false;
+            ring.scale.setScalar(0.0001);
+            this.group.add(ring);
+        }
+
         // Pupil
         this.pupil = new THREE.Mesh(
             new THREE.CircleGeometry(5, 32),
@@ -172,6 +243,8 @@ export class SkyEye {
      * @param audio - Audio system for blink sound
      * @param flowerIntensity - 0-1 player flower intensity (bright = noticed)
      * @param gazeIntensity - 0-1 smoothed gaze intensity (stare-back response)
+     * @param currentRoomType - Player's room; in POLARIZED the eye dominates
+     *   the sky (flow-audit enhancement #11), easing back out on leaving.
      */
     update(
         delta: number,
@@ -179,6 +252,7 @@ export class SkyEye {
         audio: AudioSystemInterface,
         flowerIntensity: number = 0,
         gazeIntensity: number = 0,
+        currentRoomType: RoomType | null = null,
     ): void {
         const eyePos = this.group.position;
 
@@ -187,12 +261,35 @@ export class SkyEye {
         // reproduce the original base constants exactly.
         const aw = computeEyeAwareness(flowerIntensity, gazeIntensity, this._awareness);
 
+        // Room dominance (flow-audit enhancement #11): in POLARIZED the ring
+        // group swells, extra rings unfold, and the eye descends — the
+        // authority owns this sky. Smoothly eased both ways (delta-scaled).
+        this.dominance = stepEyeDominance(
+            this.dominance,
+            currentRoomType === RoomType.POLARIZED,
+            delta,
+        );
+        const pose = computeEyeDominancePose(this.dominance, this._dominancePose);
+        this.group.scale.x = pose.scale;
+        this.group.scale.z = pose.scale;
+        // y carries the blink squash: only write it while not blinking, so the
+        // blink's capture/restore of scale.y stays authoritative mid-blink.
+        if (!this.isBlinking) {
+            this.group.scale.y = pose.scale;
+        }
+        for (const child of this.group.children) {
+            if ((child.userData as RingUserData).isDominanceRing) {
+                child.visible = pose.extraRingScale > 0.001;
+                child.scale.setScalar(Math.max(pose.extraRingScale, 0.0001));
+            }
+        }
+
         // Damped follow: keep the eye overhead as the player explores the infinite
         // world, but never let it trail farther than the (awareness-tightened)
         // leash so it stays in view. The residual (player - eye) offset is what
         // the pupil tracks below.
         stepEyeFollow(eyePos, playerPosition.x, playerPosition.z, aw.followLerp, aw.maxLag);
-        eyePos.y = SKY_EYE_HEIGHT;
+        eyePos.y = pose.height;
 
         // Pupil tracking — follows the residual horizontal offset toward the
         // player; while being gazed at it pulls to center and dilates instead
@@ -227,6 +324,15 @@ export class SkyEye {
                 ring.rotation.x += userData.speed * 0.5 * aw.ringSpeedMult * delta;
             }
         });
+    }
+
+    /**
+     * The eye's live world position (read-only — do not mutate). Fed into the
+     * gaze direction check (flow-audit enhancement #13) so discipline only
+     * lands while the eye is actually in frame.
+     */
+    getPosition(): THREE.Vector3 {
+        return this.group.position;
     }
 
     /**

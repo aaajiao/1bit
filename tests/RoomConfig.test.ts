@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { PERFORMANCE, WORLD } from '../src/config';
 import {
+    DEFAULT_ROOM_FOG,
     getRoomTypeFromPosition,
+    IN_BETWEEN_EDGE_GHOSTS,
+    inBetweenEdgeFactor,
     lerpRoomShaderConfig,
     ROOM_CONFIGS,
+    ROOM_FOG,
     RoomType,
+    stepFogToward,
 } from '../src/world/RoomConfig';
 
 describe('roomConfig', () => {
@@ -121,6 +127,118 @@ describe('roomConfig', () => {
             lerpRoomShaderConfig(from, to, 0.5);
             expect(from).toEqual(fromCopy);
             expect(to).toEqual(toCopy);
+        });
+    });
+
+    // Flow-audit enhancement #12 — INFO_OVERFLOW's noise horizon.
+    describe('rOOM_FOG', () => {
+        it('covers every room with a valid near < far range', () => {
+            for (const room of Object.values(RoomType)) {
+                const fog = ROOM_FOG[room];
+                expect(fog).toBeDefined();
+                expect(fog.near).toBeGreaterThan(0);
+                expect(fog.near).toBeLessThan(fog.far);
+            }
+        });
+
+        it('iNFO_OVERFLOW closes the horizon in; every other room keeps the default', () => {
+            const info = ROOM_FOG[RoomType.INFO_OVERFLOW];
+            expect(info.near).toBeLessThan(DEFAULT_ROOM_FOG.near);
+            expect(info.far).toBeLessThan(DEFAULT_ROOM_FOG.far);
+            for (const room of [RoomType.FORCED_ALIGNMENT, RoomType.IN_BETWEEN, RoomType.POLARIZED]) {
+                expect(ROOM_FOG[room]).toEqual(DEFAULT_ROOM_FOG);
+            }
+        });
+
+        it('default fog matches the PERFORMANCE boot values (SceneSetup)', () => {
+            expect(DEFAULT_ROOM_FOG.near).toBe(PERFORMANCE.FOG_NEAR);
+            expect(DEFAULT_ROOM_FOG.far).toBe(PERFORMANCE.FOG_FAR);
+        });
+    });
+
+    describe('stepFogToward', () => {
+        it('moves both near and far toward the target', () => {
+            const fog = { near: 20, far: 110 };
+            stepFogToward(fog, ROOM_FOG[RoomType.INFO_OVERFLOW], 0.5);
+            expect(fog.near).toBeLessThan(20);
+            expect(fog.near).toBeGreaterThan(8);
+            expect(fog.far).toBeLessThan(110);
+            expect(fog.far).toBeGreaterThan(45);
+        });
+
+        it('converges to the target after enough time', () => {
+            const fog = { near: 20, far: 110 };
+            for (let i = 0; i < 600; i++)
+                stepFogToward(fog, { near: 8, far: 45 }, 1 / 60);
+            expect(fog.near).toBeCloseTo(8, 3);
+            expect(fog.far).toBeCloseTo(45, 3);
+        });
+
+        it('is frame-rate independent (two half steps equal one full step)', () => {
+            const target = { near: 8, far: 45 };
+            const one = { near: 20, far: 110 };
+            stepFogToward(one, target, 1.0);
+            const two = { near: 20, far: 110 };
+            stepFogToward(two, target, 0.5);
+            stepFogToward(two, target, 0.5);
+            expect(two.near).toBeCloseTo(one.near, 9);
+            expect(two.far).toBeCloseTo(one.far, 9);
+        });
+
+        it('does not move at delta 0 and never moves when already at the target', () => {
+            const fog = { near: 8, far: 45 };
+            stepFogToward(fog, { near: 8, far: 45 }, 1.0);
+            expect(fog.near).toBeCloseTo(8, 9);
+            expect(fog.far).toBeCloseTo(45, 9);
+
+            const frozen = { near: 20, far: 110 };
+            stepFogToward(frozen, { near: 8, far: 45 }, 0);
+            expect(frozen.near).toBeCloseTo(20, 9);
+            expect(frozen.far).toBeCloseTo(110, 9);
+        });
+    });
+
+    // Flow-audit enhancement #14 — boundary-bound z-fight densification.
+    describe('inBetweenEdgeFactor', () => {
+        const HALF = WORLD.CHUNK_SIZE / 2; // 40
+
+        it('returns 0 deep in the chunk interior (original ghost behavior)', () => {
+            expect(inBetweenEdgeFactor(0, 0)).toBe(0);
+            expect(inBetweenEdgeFactor(10, -10)).toBe(0);
+        });
+
+        it('saturates to 1 within INNER_DISTANCE of the footprint edge', () => {
+            const atInner = HALF - IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE;
+            expect(inBetweenEdgeFactor(atInner, 0)).toBe(1);
+            expect(inBetweenEdgeFactor(0, -(atInner + 1))).toBe(1);
+        });
+
+        it('ramps monotonically between OUTER_DISTANCE and INNER_DISTANCE', () => {
+            const { INNER_DISTANCE, OUTER_DISTANCE } = IN_BETWEEN_EDGE_GHOSTS;
+            let prev = -1;
+            for (let dist = OUTER_DISTANCE; dist >= INNER_DISTANCE; dist -= 1) {
+                const f = inBetweenEdgeFactor(HALF - dist, 0);
+                expect(f).toBeGreaterThanOrEqual(prev);
+                expect(f).toBeGreaterThanOrEqual(0);
+                expect(f).toBeLessThanOrEqual(1);
+                prev = f;
+            }
+            expect(prev).toBe(1);
+        });
+
+        it('uses the Chebyshev metric (either axis near the edge densifies)', () => {
+            const nearEdge = HALF - IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE;
+            expect(inBetweenEdgeFactor(nearEdge, 0)).toBe(inBetweenEdgeFactor(0, nearEdge));
+        });
+
+        it('the band is reachable by actual building placements (|local| <= 30)', () => {
+            // Building positions are bounded to ±(CHUNK_SIZE-20)/2 = ±30; the
+            // saturation point must lie inside that bound or the band is dead.
+            const layoutHalf = (WORLD.CHUNK_SIZE - 20) / 2;
+            const saturationPos = HALF - IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE;
+            expect(saturationPos).toBeLessThanOrEqual(layoutHalf);
+            // And the interior must still contain a zero-factor region.
+            expect(inBetweenEdgeFactor(0, 0)).toBe(0);
         });
     });
 });

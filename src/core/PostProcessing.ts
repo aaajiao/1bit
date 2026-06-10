@@ -75,6 +75,10 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
                 uGazeVignetteStrength: { value: 0.0 },
                 uPitchLineV: { value: 0.5 },
                 uPitchLineAlpha: { value: 0.0 },
+                // Override payoff (enhancements #4/#5): raw-bypass crash frame
+                // + sustained-hold edge band. Default 0 = inert.
+                uRawBypass: { value: 0.0 },
+                uOverrideSustain: { value: 0.0 },
             },
             vertexShader: DitherShader.vertexShader,
             fragmentShader: DitherShader.fragmentShader,

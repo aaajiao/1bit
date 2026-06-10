@@ -2,24 +2,30 @@
 // DOM-based overlay for displaying state snapshots at day/night transitions
 
 import type { StateSnapshot } from './StateSnapshotGenerator';
+import { SNAPSHOT_OVERLAY_CONFIG } from '../config';
 
 /**
- * Overlay display configuration
+ * Overlay display configuration. All durations are SECONDS of play time:
+ * the overlay is advanced by update(delta) from the main loop, which is
+ * gated while paused — so ESC/tab-hide freeze the display window instead of
+ * burning it (flow-audit medium #8; the old version ran on setTimeout wall
+ * clocks and a pause longer than the remaining window lost the settlement
+ * forever).
  */
 export interface OverlayConfig {
-    displayDuration: number; // Total display time (ms)
-    fadeInDuration: number; // Fade in time (ms)
-    fadeOutDuration: number; // Fade out time (ms)
-    textDelay: number; // Delay before text appears (ms)
-    textDuration: number; // How long text stays visible (ms)
+    displayDuration: number; // Total display time (s)
+    fadeInDuration: number; // Fade in time (s)
+    fadeOutDuration: number; // Fade out time (s)
+    textDelay: number; // Delay before text appears (s)
+    textDuration: number; // How long text stays visible (s)
 }
 
 const DEFAULT_CONFIG: OverlayConfig = {
-    displayDuration: 8000,
-    fadeInDuration: 1500,
-    fadeOutDuration: 1500,
-    textDelay: 1000,
-    textDuration: 5000,
+    displayDuration: 8,
+    fadeInDuration: 1.5,
+    fadeOutDuration: 1.5,
+    textDelay: 1,
+    textDuration: 5,
 };
 
 /**
@@ -32,12 +38,21 @@ export class SnapshotOverlay {
     private textEl: HTMLDivElement;
     private config: OverlayConfig;
     private isVisible: boolean = false;
-    private hideTimeoutId: number | null = null;
-    private textHideTimeoutId: number | null = null;
-    private animationFrameId: number | null = null;
+
+    // Play-time display clock (advanced by update(delta); frozen while paused).
+    private displayTime: number = 0;
     private patternTime: number = 0;
-    private textShowTimeoutId: number | null = null;
-    private readonly resizeHandler: () => void;
+    private textPhase: 'pending' | 'shown' | 'hidden' = 'pending';
+
+    // The pattern currently being rendered (null when hidden).
+    private activeSnapshot: StateSnapshot | null = null;
+    // Most recent snapshot shown (or seeded from persistence) — the replay
+    // entry on the pause menu re-shows this (flow-audit medium #8).
+    private lastSnapshot: StateSnapshot | null = null;
+
+    // Reused pixel buffer for the fixed-size pattern canvas (no per-frame
+    // ImageData allocation — flow-audit medium #9).
+    private readonly imageData: ImageData;
 
     constructor(config: Partial<OverlayConfig> = {}) {
         this.config = { ...DEFAULT_CONFIG, ...config };
@@ -53,15 +68,21 @@ export class SnapshotOverlay {
             height: 100%;
             pointer-events: none;
             opacity: 0;
-            transition: opacity ${this.config.fadeInDuration}ms ease-in-out;
+            transition: opacity ${this.config.fadeInDuration * 1000}ms ease-in-out;
             z-index: 1000;
             display: flex;
             align-items: center;
             justify-content: center;
         `;
 
-        // Create canvas for pattern
+        // Pattern canvas: FIXED small resolution, CSS-stretched to fullscreen.
+        // image-rendering: pixelated keeps the 1-bit cells sharp while the CPU
+        // only ever fills CANVAS_SIZE² pixels (flow-audit medium #9: the old
+        // window-sized ImageData cost ~130k evaluations + ~8MB of writes per
+        // frame at the narrative climax).
         this.canvas = document.createElement('canvas');
+        this.canvas.width = SNAPSHOT_OVERLAY_CONFIG.CANVAS_SIZE;
+        this.canvas.height = SNAPSHOT_OVERLAY_CONFIG.CANVAS_SIZE;
         this.canvas.style.cssText = `
             position: absolute;
             top: 0;
@@ -69,6 +90,7 @@ export class SnapshotOverlay {
             width: 100%;
             height: 100%;
             mix-blend-mode: multiply;
+            image-rendering: pixelated;
         `;
         this.container.appendChild(this.canvas);
 
@@ -98,22 +120,10 @@ export class SnapshotOverlay {
             throw new Error('Could not get 2D context');
         }
         this.ctx = ctx;
+        this.imageData = ctx.createImageData(this.canvas.width, this.canvas.height);
 
         // Add to DOM
         document.body.appendChild(this.container);
-
-        // Handle resize (store the bound handler so dispose() can remove it)
-        this.resizeHandler = () => this.resizeCanvas();
-        window.addEventListener('resize', this.resizeHandler);
-        this.resizeCanvas();
-    }
-
-    /**
-     * Resize canvas to match window
-     */
-    private resizeCanvas(): void {
-        this.canvas.width = window.innerWidth;
-        this.canvas.height = window.innerHeight;
     }
 
     /**
@@ -125,31 +135,81 @@ export class SnapshotOverlay {
         }
 
         this.isVisible = true;
-
-        // Start pattern animation
+        this.activeSnapshot = snapshot;
+        this.lastSnapshot = snapshot;
+        this.displayTime = 0;
         this.patternTime = 0;
-        this.startPatternAnimation(snapshot);
+        this.textPhase = 'pending';
 
-        // Show container
+        // Render the first pattern frame immediately so the overlay is never
+        // blank (e.g. shown from the pause menu while updates are gated).
+        this.renderPattern(snapshot.pattern);
+
+        // Show container; text appears after textDelay via update(delta).
         this.container.style.opacity = '1';
-
-        // Show text after delay
-        this.textShowTimeoutId = window.setTimeout(() => {
-            this.textEl.textContent = snapshot.text;
-            this.textEl.style.opacity = '1';
-        }, this.config.textDelay);
-
-        // Hide text before container
-        this.textHideTimeoutId = window.setTimeout(() => {
-            this.textEl.style.opacity = '0';
-        }, this.config.textDelay + this.config.textDuration);
-
-        // Hide overlay after display duration
-        this.hideTimeoutId = window.setTimeout(() => {
-            this.hide();
-        }, this.config.displayDuration);
+        this.textEl.textContent = snapshot.text;
+        this.textEl.style.opacity = '0';
 
         console.log('[SnapshotOverlay] Showing snapshot:', snapshot.tags.join(', '));
+    }
+
+    /**
+     * Re-show the most recent snapshot (pause-menu replay entry,
+     * flow-audit medium #8). Returns false when nothing is cached.
+     */
+    replayLast(): boolean {
+        if (!this.lastSnapshot)
+            return false;
+        this.show(this.lastSnapshot);
+        return true;
+    }
+
+    /**
+     * Most recent snapshot shown (or seeded), null when none exists yet.
+     */
+    getLastSnapshot(): StateSnapshot | null {
+        return this.lastSnapshot;
+    }
+
+    /**
+     * Seed the replay cache without showing the overlay (used to restore the
+     * previous session's persisted snapshot at boot).
+     */
+    seedLastSnapshot(snapshot: StateSnapshot): void {
+        this.lastSnapshot = snapshot;
+    }
+
+    /**
+     * Advance the display clock and re-render the pattern. Delta-driven and
+     * called from the (pause-gated) main update loop, so pausing freezes the
+     * remaining display window instead of expiring it (flow-audit medium #8).
+     */
+    update(delta: number): void {
+        if (!this.isVisible || !this.activeSnapshot)
+            return;
+
+        this.displayTime += delta;
+        this.patternTime += delta;
+
+        // Text window: fade in after textDelay, out after textDuration.
+        if (this.textPhase === 'pending' && this.displayTime >= this.config.textDelay) {
+            this.textPhase = 'shown';
+            this.textEl.style.opacity = '1';
+        }
+        else if (
+            this.textPhase === 'shown'
+            && this.displayTime >= this.config.textDelay + this.config.textDuration
+        ) {
+            this.textPhase = 'hidden';
+            this.textEl.style.opacity = '0';
+        }
+
+        if (this.displayTime >= this.config.displayDuration) {
+            this.hide();
+            return;
+        }
+
+        this.renderPattern(this.activeSnapshot.pattern);
     }
 
     /**
@@ -157,24 +217,7 @@ export class SnapshotOverlay {
      */
     hide(): void {
         this.isVisible = false;
-
-        // Cancel pending timeouts
-        if (this.textShowTimeoutId !== null) {
-            clearTimeout(this.textShowTimeoutId);
-            this.textShowTimeoutId = null;
-        }
-        if (this.hideTimeoutId !== null) {
-            clearTimeout(this.hideTimeoutId);
-            this.hideTimeoutId = null;
-        }
-        if (this.textHideTimeoutId !== null) {
-            clearTimeout(this.textHideTimeoutId);
-            this.textHideTimeoutId = null;
-        }
-        if (this.animationFrameId !== null) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
-        }
+        this.activeSnapshot = null;
 
         // Fade out
         this.container.style.opacity = '0';
@@ -182,26 +225,7 @@ export class SnapshotOverlay {
     }
 
     /**
-     * Start pattern rendering animation
-     */
-    private startPatternAnimation(snapshot: StateSnapshot): void {
-        const pattern = snapshot.pattern;
-
-        const animate = () => {
-            if (!this.isVisible)
-                return;
-
-            this.patternTime += 0.016; // ~60fps
-            this.renderPattern(pattern);
-
-            this.animationFrameId = requestAnimationFrame(animate);
-        };
-
-        animate();
-    }
-
-    /**
-     * Render the 1-bit pattern on canvas
+     * Render the 1-bit pattern on the fixed-size canvas
      */
     private renderPattern(pattern: {
         uPatternMode: number;
@@ -210,11 +234,11 @@ export class SnapshotOverlay {
         uPhase: number;
     }): void {
         const { width, height } = this.canvas;
-        const imageData = this.ctx.createImageData(width, height);
+        const imageData = this.imageData;
         const data = imageData.data;
 
-        // Scale down for performance
-        const scale = 4;
+        // One pattern evaluation per scale×scale block.
+        const scale = SNAPSHOT_OVERLAY_CONFIG.PATTERN_BLOCK_SCALE;
         const scaledWidth = Math.ceil(width / scale);
         const scaledHeight = Math.ceil(height / scale);
 
@@ -310,9 +334,7 @@ export class SnapshotOverlay {
      * Clean up resources
      */
     dispose(): void {
-        // hide() cancels all pending timeouts and the rAF loop.
         this.hide();
-        window.removeEventListener('resize', this.resizeHandler);
         if (this.container.parentNode) {
             this.container.parentNode.removeChild(this.container);
         }

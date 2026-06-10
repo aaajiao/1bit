@@ -170,5 +170,10 @@ export interface DayNightContext {
     shaderQuad: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
     audio: AudioSystemInterface;
     weather: WeatherSystemInterface;
-    onSunset?: () => void;
+    /**
+     * Sunset (day -> night) hook. Return true when a settlement snapshot was
+     * shown — DayNightCycle then skips its forced-static weather roll so the
+     * snapshot's visual language stays distinct (flow-audit enhancement #9).
+     */
+    onSunset?: () => boolean | void;
 }

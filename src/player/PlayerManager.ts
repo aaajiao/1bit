@@ -1,8 +1,10 @@
 import type { AudioSystemInterface } from '../types';
 import type { RoomType } from '../world/RoomConfig';
+import type { FlowerHintState } from './FlowerHintMechanic';
 import type { OverrideHint } from './OverrideMechanic';
 import * as THREE from 'three';
 import { Controls } from './Controls';
+import { FlowerHintMechanic } from './FlowerHintMechanic';
 import { forceFlowerIntensity, getFlowerIntensity, getFlowerTargetIntensity, overrideFlowerIntensity, setFlowerIntensity } from './FlowerProp';
 import { GazeMechanic } from './GazeMechanic';
 import { HandsModel } from './HandsModel';
@@ -10,6 +12,14 @@ import { OverrideMechanic } from './OverrideMechanic';
 
 export interface PlayerContext {
     currentRoomType: RoomType;
+    /**
+     * Sky-eye world position (flow-audit enhancement #13): attenuates the
+     * gaze intensity by view direction so discipline only lands while the
+     * eye is roughly in frame. Omit/null => no attenuation (legacy).
+     * One frame stale by design (the eye updates after the player in the
+     * fixed frame order) — negligible for the slow-drifting eye.
+     */
+    eyePosition?: { x: number; y: number; z: number } | null;
 }
 
 export interface PlayerState {
@@ -32,12 +42,18 @@ export class PlayerManager {
     public hands: HandsModel;
     public gaze: GazeMechanic;
     public override: OverrideMechanic;
+    public flowerHint: FlowerHintMechanic;
 
     // Cache for state
     private currentState: PlayerState;
 
     // Cached position to avoid per-frame allocations
     private _cachedPosition = new THREE.Vector3();
+
+    // Remaining seconds of action dulling (sunset-snapshot ritual,
+    // flow-audit enhancement #9). Play time: decremented in update(), which
+    // main.ts gates while paused.
+    private actionLockTimer = 0;
 
     constructor(
         camera: THREE.PerspectiveCamera,
@@ -49,6 +65,7 @@ export class PlayerManager {
         this.hands = new HandsModel(camera);
         this.gaze = new GazeMechanic(camera);
         this.override = new OverrideMechanic();
+        this.flowerHint = new FlowerHintMechanic();
 
         // Initialize state
         this.currentState = {
@@ -105,6 +122,9 @@ export class PlayerManager {
                 setFlowerIntensity(flower, intensity);
             }
             this.audio.playFlowerChangeTone(intensity);
+            // First deliberate adjustment dismisses the 60s fallback hint
+            // for the session (flow-audit enhancement #1).
+            this.flowerHint.notifyAdjusted();
         });
 
         // Jump audio
@@ -163,9 +183,26 @@ export class PlayerManager {
     }
 
     /**
+     * Dull the player's ACTIONS (movement, jump, flower adjust, override)
+     * for `seconds` of play time — used while the sunset snapshot lands so an
+     * accidental input can't stomp the settlement (flow-audit enhancement
+     * #9). Look stays live; overlapping calls keep the longer window.
+     */
+    public suppressActions(seconds: number): void {
+        this.actionLockTimer = Math.max(this.actionLockTimer, seconds);
+    }
+
+    /**
      * Update all player systems
      */
     public update(delta: number, time: number, context: PlayerContext): PlayerState {
+        // 0. Advance the action-dulling window (snapshot ritual) and sync it
+        // into Controls before any input is consumed this frame.
+        if (this.actionLockTimer > 0) {
+            this.actionLockTimer = Math.max(0, this.actionLockTimer - delta);
+        }
+        this.controls.setActionsSuppressed(this.actionLockTimer > 0);
+
         // 1. Update controls (movement)
         const isMoving = this.controls.update(time * 1000); // Controls expects ms
 
@@ -174,8 +211,8 @@ export class PlayerManager {
             this.audio.playFootstep();
         }
 
-        // 2. Update gaze
-        const gazeState = this.gaze.update(delta);
+        // 2. Update gaze (direction-checked against the sky eye when provided)
+        const gazeState = this.gaze.update(delta, context.eyePosition ?? null);
 
         // Update audio gaze filter
         this.audio.updateGaze(gazeState.isGazing, gazeState.gazeIntensity);
@@ -221,7 +258,12 @@ export class PlayerManager {
             gazeState.isGazing && flowerIntensity < 0.3,
         );
 
-        // 5. Update Hands
+        // 5. Advance the 60s no-interaction fallback-hint idle timer
+        // (flow-audit enhancement #1). Play time only: main gates this whole
+        // update while paused.
+        this.flowerHint.update(delta);
+
+        // 6. Update Hands
         this.hands.animate(delta, isMoving, time * 1000);
 
         // Update cached state (reuse position object)
@@ -250,6 +292,38 @@ export class PlayerManager {
     }
 
     /**
+     * Raw-bypass crash-frame value (enhancement #4) for the uRawBypass
+     * uniform: 1 for ~0.1s right after the override triggers.
+     */
+    public getRawBypassValue(): number {
+        return this.override.getRawBypassValue();
+    }
+
+    /**
+     * Sustained-hold feedback (enhancement #5) for the uOverrideSustain
+     * uniform: 1 while the key stays held past the trigger, fast decay after.
+     */
+    public getOverrideSustain(): number {
+        return this.override.getSustainValue();
+    }
+
+    /**
+     * Accumulated per-run resistance residue (enhancement #6) for the
+     * uMisregister channel. Cleared at sunset via resetOverrideResidue().
+     */
+    public getOverrideResidue(): number {
+        return this.override.getMisregisterResidue();
+    }
+
+    /**
+     * Clear the per-run resistance residue (enhancement #6) — called by the
+     * sunset settlement, where the run ends and the world forgets.
+     */
+    public resetOverrideResidue(): void {
+        this.override.resetResidue();
+    }
+
+    /**
      * Get the override hint state (delegates to OverrideMechanic).
      * Hint state is kept live each frame by the override update path; the
      * display window is owned by the mechanic itself (flow-audit break #2),
@@ -257,6 +331,15 @@ export class PlayerManager {
      */
     public getOverrideHintState(): OverrideHint {
         return this.override.getHintState();
+    }
+
+    /**
+     * Get the flower-adjustment fallback-hint state (flow-audit enhancement
+     * #1). Same rendering contract as the override hint: callers just render
+     * `shouldShow` — the mechanic owns the idle window and the dismissal.
+     */
+    public getFlowerHintState(): FlowerHintState {
+        return this.flowerHint.getState();
     }
 
     /**

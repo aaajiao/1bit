@@ -1,6 +1,6 @@
 // 1-bit Chimera Void - Room Configuration
 // Defines mental state rooms and their shader/audio parameters
-import { WORLD } from '../config/constants';
+import { PERFORMANCE, SPAWN, WORLD } from '../config/constants';
 
 /**
  * Room type enumeration representing different mental states
@@ -321,20 +321,72 @@ export const FORCED_ALIGNMENT_SIDE_NOISE = {
     right: 0.7,
     /** Distance (m) from the crack center at which the side blend saturates */
     halfRange: WORLD.CHUNK_SIZE / 2,
+    /**
+     * Distance (m) inside the chunk footprint edge over which the side noise
+     * eases back to the mid baseline ((left + right) / 2). Each FA chunk has
+     * its own crack, so without this an FA→FA seam jumps right→left (0.7→0.4)
+     * in a single step (flow-audit C1 #3); pulling both sides to the same mid
+     * value AT the seam makes the field continuous across neighbors, while a
+     * short 5m ramp keeps the tidy-left/broken-right reading intact everywhere
+     * else.
+     */
+    seamBlendRange: 5,
 } as const;
 
 /**
  * FORCED_ALIGNMENT noise density for a world x position: signed distance from
  * the rift crack center (= the chunk center, same round convention as
  * worldToChunkCoord / RiftMechanic — the single chunk-coord source of truth).
+ * Within seamBlendRange of the footprint edge the value eases to the mid
+ * baseline so adjacent FA chunks meet seamlessly (see seamBlendRange doc).
  * Pure, per-frame safe.
  */
 export function faSideNoiseDensity(worldX: number): number {
+    const { left, right, halfRange, seamBlendRange } = FORCED_ALIGNMENT_SIDE_NOISE;
     const crackCenterX = worldToChunkCoord(worldX) * WORLD.CHUNK_SIZE;
-    const side = Math.max(-1, Math.min(1, (worldX - crackCenterX) / FORCED_ALIGNMENT_SIDE_NOISE.halfRange));
+    const offset = worldX - crackCenterX;
+    const side = Math.max(-1, Math.min(1, offset / halfRange));
     const t = (side + 1) * 0.5;
-    return FORCED_ALIGNMENT_SIDE_NOISE.left
-        + t * (FORCED_ALIGNMENT_SIDE_NOISE.right - FORCED_ALIGNMENT_SIDE_NOISE.left);
+    const raw = left + t * (right - left);
+
+    // Seam smoothing: |offset| <= halfRange by the round convention, so the
+    // distance to the nearest footprint edge is simply halfRange - |offset|.
+    const distToSeam = halfRange - Math.abs(offset);
+    if (distToSeam >= seamBlendRange)
+        return raw;
+    const mid = (left + right) * 0.5;
+    const s = Math.max(0, distToSeam) / seamBlendRange;
+    return mid + (raw - mid) * s;
+}
+
+/**
+ * The room's LIVE shader target with its reactive overrides applied (flow-audit
+ * breaks #7/#8): INFO_OVERFLOW's flower-driven noise/jitter and
+ * FORCED_ALIGNMENT's side-asymmetric noise replace the static baseline. The
+ * transition blender (world/RoomTransition) glides toward this target — and at
+ * steady state exactly equals it — so reactive deltas ease in/out with the
+ * transition instead of popping when the room gate flips.
+ *
+ * Rooms without reactive parameters return the SHARED static config; callers
+ * must treat the result as read-only.
+ */
+export function reactiveRoomShaderConfig(
+    roomType: RoomType,
+    flowerIntensity: number,
+    playerX: number,
+): RoomShaderConfig {
+    const base = ROOM_CONFIGS[roomType].shader;
+    if (roomType === RoomType.INFO_OVERFLOW) {
+        return {
+            ...base,
+            uNoiseDensity: noiseDensityForIntensity(flowerIntensity),
+            uTemporalJitter: infoOverflowJitterForIntensity(flowerIntensity),
+        };
+    }
+    if (roomType === RoomType.FORCED_ALIGNMENT) {
+        return { ...base, uNoiseDensity: faSideNoiseDensity(playerX) };
+    }
+    return base;
 }
 
 /**
@@ -362,6 +414,107 @@ export const ROOM_WEATHER_WEIGHTS: Record<RoomType, WeatherTypeWeights> = {
     [RoomType.IN_BETWEEN]: DEFAULT_WEATHER_WEIGHTS,
     [RoomType.POLARIZED]: { static: 0, rain: 0, glitch: 1 },
 };
+
+/**
+ * Per-room scene-fog targets (flow-audit enhancement #12: INFO_OVERFLOW's
+ * "noise horizon"). The fog color matches the mid-grey background, and under
+ * INFO_OVERFLOW's dense Bayer dither (uNoiseDensity 0.85+) that mid grey
+ * renders as a roiling ink/paper noise field — so pulling near/far in to
+ * 8/45 makes the far world literally dissolve into noise ~30-45m out,
+ * instead of fading into calm distance. Every other room keeps the global
+ * PERFORMANCE fog so only the overload room closes in.
+ */
+export interface RoomFogConfig {
+    near: number;
+    far: number;
+}
+
+/** Default fog — identical to the boot values in PERFORMANCE (SceneSetup). */
+export const DEFAULT_ROOM_FOG: RoomFogConfig = {
+    near: PERFORMANCE.FOG_NEAR,
+    far: PERFORMANCE.FOG_FAR,
+};
+
+export const ROOM_FOG: Record<RoomType, RoomFogConfig> = {
+    [RoomType.INFO_OVERFLOW]: { near: 8, far: 45 },
+    [RoomType.FORCED_ALIGNMENT]: DEFAULT_ROOM_FOG,
+    [RoomType.IN_BETWEEN]: DEFAULT_ROOM_FOG,
+    [RoomType.POLARIZED]: DEFAULT_ROOM_FOG,
+};
+
+/**
+ * Exponential approach rate (1/s) of the displayed fog toward the current
+ * room's target. ~2.0 gives a 0.5s time constant, matching the feel of the
+ * shader-config transition (ROOM_TRANSITION.TRANSITION_SPEED).
+ */
+export const ROOM_FOG_BLEND_RATE = 2.0;
+
+/**
+ * Ease the displayed fog `current` toward `target` (mutates in place; THREE.Fog
+ * satisfies the shape structurally). Frame-rate independent: the exponential
+ * step 1 - exp(-rate * delta) composes exactly across arbitrary delta splits.
+ * Pure logic; exported for testing.
+ */
+export function stepFogToward(
+    current: RoomFogConfig,
+    target: RoomFogConfig,
+    delta: number,
+    rate: number = ROOM_FOG_BLEND_RATE,
+): void {
+    const k = 1 - Math.exp(-rate * delta);
+    current.near += (target.near - current.near) * k;
+    current.far += (target.far - current.far) * k;
+}
+
+/**
+ * IN_BETWEEN boundary-artifact densification (flow-audit enhancement #14):
+ * the z-fight ghost clones must cluster where the chunk meets its neighbors,
+ * so the "misread by both systems" shimmer foreshadows the boundary itself.
+ * Distances are measured from a building's chunk-local position to the chunk
+ * footprint edge (CHUNK_SIZE/2). Building positions are bounded to ±30 of an
+ * 80m chunk, so the closest possible approach to the edge is 10m — INNER must
+ * stay above that for the band to actually saturate.
+ */
+export const IN_BETWEEN_EDGE_GHOSTS = {
+    /** Edge distance (m) at or under which densification saturates (factor 1). */
+    INNER_DISTANCE: 12,
+    /** Edge distance (m) at or past which there is no densification (factor 0). */
+    OUTER_DISTANCE: 24,
+    /** Extra ghost clones per building at full edge factor (interior keeps 1-2). */
+    EXTRA_GHOSTS: 2,
+    /** Ghost offset amplitude multiplier at full edge factor (interior = 1). */
+    OFFSET_MULT: 4,
+} as const;
+
+/**
+ * Edge-proximity factor in [0,1] for a building at chunk-local (localX,
+ * localZ): 0 deep in the chunk interior, ramping to 1 within
+ * INNER_DISTANCE of the footprint edge (Chebyshev metric, matching the
+ * square chunk). Pure, per-chunk-build safe; exported for testing.
+ */
+export function inBetweenEdgeFactor(
+    localX: number,
+    localZ: number,
+    chunkSize: number = WORLD.CHUNK_SIZE,
+): number {
+    const { INNER_DISTANCE, OUTER_DISTANCE } = IN_BETWEEN_EDGE_GHOSTS;
+    const distToEdge = chunkSize / 2 - Math.max(Math.abs(localX), Math.abs(localZ));
+    const t = (OUTER_DISTANCE - distToEdge) / (OUTER_DISTANCE - INNER_DISTANCE);
+    return t < 0 ? 0 : t > 1 ? 1 : t;
+}
+
+/**
+ * Copy a shader config: fresh object plus fresh color tuples (the only nested
+ * values), so a frozen transition snapshot can never alias a live or shared
+ * config (e.g. the ROOM_CONFIGS baselines reactiveRoomShaderConfig may return).
+ */
+export function cloneRoomShaderConfig(config: RoomShaderConfig): RoomShaderConfig {
+    return {
+        ...config,
+        inkColor: [...config.inkColor],
+        paperColor: [...config.paperColor],
+    };
+}
 
 /**
  * Interpolate shader config between two rooms for smooth transitions
@@ -433,4 +586,58 @@ export function getRoomTypeFromPosition(cx: number, cz: number): RoomType {
     if (hash < 0.75)
         return RoomType.IN_BETWEEN;
     return RoomType.POLARIZED;
+}
+
+/**
+ * Rooms quiet enough to open a run in (flow-audit medium #7): the first
+ * minute should be a quiet awakening, not INFO_OVERFLOW's data chatter or
+ * FORCED_ALIGNMENT's rift. Lives here (not config/) with the other per-room
+ * knobs, avoiding a config -> world import cycle.
+ */
+export const QUIET_SPAWN_ROOMS: ReadonlySet<RoomType> = new Set([
+    RoomType.IN_BETWEEN,
+    RoomType.POLARIZED,
+]);
+
+/**
+ * Find the chunk nearest the origin (Euclidean on chunk coords, ties broken
+ * by deterministic scan order) whose room is quiet enough to spawn in.
+ * Scans the square [-maxRadiusChunks, maxRadiusChunks]² via the same room
+ * attribution as everything else (getRoomTypeFromPosition); the radius cap
+ * guards against pathological seeds, with the origin chunk as the fallback.
+ * Pure and deterministic.
+ */
+export function findQuietSpawnChunk(
+    maxRadiusChunks: number = SPAWN.SCAN_RADIUS_CHUNKS,
+): { cx: number; cz: number } {
+    let best: { cx: number; cz: number } | null = null;
+    let bestDistSq = Infinity;
+    for (let cz = -maxRadiusChunks; cz <= maxRadiusChunks; cz++) {
+        for (let cx = -maxRadiusChunks; cx <= maxRadiusChunks; cx++) {
+            if (!QUIET_SPAWN_ROOMS.has(getRoomTypeFromPosition(cx, cz)))
+                continue;
+            const distSq = cx * cx + cz * cz;
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                best = { cx, cz };
+            }
+        }
+    }
+    return best ?? { cx: 0, cz: 0 };
+}
+
+/**
+ * World-space spawn point inside the nearest quiet chunk (flow-audit medium
+ * #7): the chunk center (the floor is CENTERED on cx*CHUNK_SIZE — see
+ * worldToChunkCoord) plus the historical (8, 8) safe-spawn clearance, which
+ * stays well inside the footprint so the offset point keeps the same room.
+ */
+export function findQuietSpawnPosition(
+    maxRadiusChunks: number = SPAWN.SCAN_RADIUS_CHUNKS,
+): { x: number; z: number } {
+    const { cx, cz } = findQuietSpawnChunk(maxRadiusChunks);
+    return {
+        x: cx * WORLD.CHUNK_SIZE + SPAWN.SPAWN_OFFSET,
+        z: cz * WORLD.CHUNK_SIZE + SPAWN.SPAWN_OFFSET,
+    };
 }

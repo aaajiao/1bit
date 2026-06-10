@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 import type { PlayerManager } from '../player/PlayerManager';
 import type { AudioSystemInterface } from '../types';
+import { BINAURAL_SIDE_CONFIG } from '../config/audio';
 import { RIFT_PHYSICS } from '../config/physics';
 import { CHUNK_SIZE } from './ChunkManager';
 import { getRoomTypeFromPosition, RoomType, worldToChunkCoord } from './RoomConfig';
@@ -31,7 +32,7 @@ export class RiftMechanic {
         // Update binaural position for audio context: SIGNED x offset from the
         // rift crack center (flow-audit break #7) so the beat hears which side
         // the player stands on — negative = tidy left, positive = broken right.
-        audio.updateBinauralPosition(cameraPosition.x - chunkCenterX, 20);
+        audio.updateBinauralPosition(cameraPosition.x - chunkCenterX, BINAURAL_SIDE_CONFIG.fieldWidth);
 
         // RIFT AUDIO: Fog Sound
         // Start if not already playing (internal check handles redundancy)

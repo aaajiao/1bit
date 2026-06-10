@@ -103,6 +103,78 @@ describe('dayNightCycle play clock', () => {
     });
 });
 
+describe('sunset foreshadow ramp (flow-audit enhancement #8)', () => {
+    beforeEach(() => {
+        // Keep eclipse/weather rolls quiet (see the play-clock suite above).
+        vi.spyOn(Math, 'random').mockReturnValue(11 / 12);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('stays 0 through most of the day, then ramps over the lead window', () => {
+        const { context } = makeContext();
+        const cycle = new DayNightCycle();
+
+        // Default cycle is 300s => sunset at 150s; lead window opens at 120s.
+        advance(cycle, context, 120);
+        expect(cycle.getSunsetForeshadow(30)).toBe(0);
+
+        advance(cycle, context, 15); // 135s: halfway into the 30s lead
+        expect(cycle.getSunsetForeshadow(30)).toBeCloseTo(0.5, 5);
+
+        advance(cycle, context, 14.5); // 149.5s: 0.5s before sunset
+        expect(cycle.getSunsetForeshadow(30)).toBeCloseTo(1 - 0.5 / 30, 5);
+    });
+
+    it('drops back to 0 once night begins', () => {
+        const { context } = makeContext();
+        const cycle = new DayNightCycle();
+        advance(cycle, context, 150.5); // just past sunset
+        expect(cycle.getSunsetForeshadow(30)).toBe(0);
+    });
+
+    it('returns 0 for a non-positive lead window', () => {
+        const cycle = new DayNightCycle();
+        expect(cycle.getSunsetForeshadow(0)).toBe(0);
+        expect(cycle.getSunsetForeshadow(-5)).toBe(0);
+    });
+});
+
+describe('sunset weather roll vs snapshot (flow-audit enhancement #9)', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    /**
+     * Drive a cycle to the sunset crossing with quiet randoms, then make every
+     * random small enough that the 30% forced-static roll WOULD fire on the
+     * crossing frame (0.2 < 0.3; the eclipse roll needs < 0.015 so stays off).
+     */
+    function crossSunset(onSunsetResult: boolean | undefined): { forceWeather: ReturnType<typeof vi.fn> } {
+        const random = vi.spyOn(Math, 'random').mockReturnValue(11 / 12);
+        const { context, onSunset } = makeContext();
+        onSunset.mockReturnValue(onSunsetResult);
+        const cycle = new DayNightCycle();
+        advance(cycle, context, 149.5);
+        random.mockReturnValue(0.2);
+        cycle.update(STEP, context); // crosses 150s => sunset
+        expect(onSunset).toHaveBeenCalledTimes(1);
+        return { forceWeather: (context.weather as unknown as { forceWeather: ReturnType<typeof vi.fn> }).forceWeather };
+    }
+
+    it('fires the forced-static roll on a snapshotless sunset', () => {
+        const { forceWeather } = crossSunset(undefined);
+        expect(forceWeather).toHaveBeenCalledWith('static', expect.any(Number));
+    });
+
+    it('skips the forced-static roll when the sunset showed a snapshot', () => {
+        const { forceWeather } = crossSunset(true);
+        expect(forceWeather).not.toHaveBeenCalled();
+    });
+});
+
 describe('sunset snapshot minimum-duration gate', () => {
     it('rejects runs shorter than the configured threshold', () => {
         const collector = new RunStatsCollector();

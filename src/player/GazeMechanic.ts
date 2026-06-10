@@ -24,6 +24,52 @@ export interface GazeConfig {
     intensityCurve: number; // How quickly intensity ramps up
 }
 
+/** Minimal point shape for the eye position (THREE.Vector3 satisfies it). */
+export interface Point3 {
+    x: number;
+    y: number;
+    z: number;
+}
+
+/**
+ * Direction-attenuation factor for the gaze intensity (flow-audit enhancement
+ * #13): the dot product between the camera's forward direction and the unit
+ * vector from the camera to the sky eye, clamped to [0,1] — 1 when looking
+ * straight at the eye, fading as it leaves the view, hard 0 once the eye is
+ * behind the view plane (dot < 0). Discipline only lands while the eye is
+ * roughly in frame, so the punishment's attribution is legible.
+ *
+ * The camera forward is derived analytically for the game's YXZ rotation
+ * order with zero roll (the Controls contract). Pure; exported for testing.
+ *
+ * @param camPos - Camera world position.
+ * @param yaw - Camera rotation.y (radians).
+ * @param pitch - Camera rotation.x (radians).
+ * @param eyePos - Sky-eye world position.
+ */
+export function gazeDirectionFactor(
+    camPos: Point3,
+    yaw: number,
+    pitch: number,
+    eyePos: Point3,
+): number {
+    const dx = eyePos.x - camPos.x;
+    const dy = eyePos.y - camPos.y;
+    const dz = eyePos.z - camPos.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-6)
+        return 1; // degenerate: eye exactly on the camera — no attenuation
+
+    // Forward = R_y(yaw) * R_x(pitch) * (0,0,-1) with roll 0 (YXZ order).
+    const cosPitch = Math.cos(pitch);
+    const fx = -Math.sin(yaw) * cosPitch;
+    const fy = Math.sin(pitch);
+    const fz = -Math.cos(yaw) * cosPitch;
+
+    const dot = (fx * dx + fy * dy + fz * dz) / len;
+    return dot < 0 ? 0 : Math.min(1, dot);
+}
+
 /**
  * Manages gaze detection and response
  */
@@ -86,8 +132,13 @@ export class GazeMechanic {
     /**
      * Update gaze detection
      * @param delta - Delta time in seconds
+     * @param eyePosition - Optional sky-eye world position (flow-audit
+     *   enhancement #13). When provided, gazeIntensity is attenuated by the
+     *   camera-to-eye direction factor (zero once the eye is behind the view
+     *   plane) so discipline only lands while the eye is roughly in frame.
+     *   The pitch threshold remains the sole isGazing determinant.
      */
-    update(delta: number): GazeState {
+    update(delta: number, eyePosition: Point3 | null = null): GazeState {
         // Get camera pitch (rotation.x in YXZ order)
         // Positive pitch = looking up, negative = looking down
         const pitch = this.camera.rotation.x;
@@ -101,6 +152,17 @@ export class GazeMechanic {
             const normalizedPitch = (pitch - this.config.pitchThreshold)
                 / (this.config.maxPitch - this.config.pitchThreshold);
             gazeIntensity = Math.min(1, normalizedPitch) ** (1 / this.config.intensityCurve);
+
+            // Direction attenuation (enhancement #13): scale by how directly
+            // the camera faces the eye; no eye position => legacy behavior.
+            if (eyePosition) {
+                gazeIntensity *= gazeDirectionFactor(
+                    this.camera.position,
+                    this.camera.rotation.y,
+                    pitch,
+                    eyePosition,
+                );
+            }
         }
 
         // Update state

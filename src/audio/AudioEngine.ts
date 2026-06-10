@@ -22,6 +22,12 @@ export class AudioEngine {
     private gazeFilterTargetFreq: number = AUDIO_MASTER.gazeFilterOpen;
     private gazeFilterCurrentFreq: number = AUDIO_MASTER.gazeFilterOpen;
 
+    // Temporary lowpass ceiling (snapshot ritual, flow-audit enhancement #9):
+    // while the timer runs, the effective filter target is capped at this
+    // frequency; the glide itself reuses the gaze-filter interpolation below.
+    private lowpassCeilingFreq: number = Infinity;
+    private lowpassCeilingTimeLeft: number = 0;
+
     /**
      * Initialize audio context (must be called after user interaction)
      */
@@ -130,17 +136,41 @@ export class AudioEngine {
     }
 
     /**
+     * Apply a temporary lowpass ceiling for `holdSeconds` of play time
+     * (snapshot ritual, flow-audit enhancement #9). The effective filter
+     * target becomes min(gaze target, ceiling) and glides there through the
+     * shared log-domain interpolation in tick(); when the hold expires the
+     * ceiling lifts and the filter glides back to the live gaze target.
+     * The timer only advances inside tick(), so pausing freezes the hold.
+     */
+    applyTemporaryLowpass(freq: number, holdSeconds: number): void {
+        this.lowpassCeilingFreq = freq;
+        this.lowpassCeilingTimeLeft = holdSeconds;
+    }
+
+    /**
      * Tick gaze filter interpolation (call every frame)
      */
     tick(deltaTime: number): void {
         if (!this.gazeLowPassFilter || !this.audioContext)
             return;
 
-        // Skip writing the filter frequency once it has converged to the target.
-        const epsilon = 0.5;
-        if (Math.abs(this.gazeFilterTargetFreq - this.gazeFilterCurrentFreq) < epsilon) {
-            if (this.gazeFilterCurrentFreq !== this.gazeFilterTargetFreq) {
-                this.gazeFilterCurrentFreq = this.gazeFilterTargetFreq;
+        // Advance the temporary-ceiling hold (play time: frozen while paused).
+        if (this.lowpassCeilingTimeLeft > 0) {
+            this.lowpassCeilingTimeLeft -= deltaTime;
+            if (this.lowpassCeilingTimeLeft <= 0) {
+                this.lowpassCeilingTimeLeft = 0;
+                this.lowpassCeilingFreq = Infinity;
+            }
+        }
+        const target = Math.min(this.gazeFilterTargetFreq, this.lowpassCeilingFreq);
+
+        // Skip writing the filter frequency once it has converged to the target
+        // (relative epsilon — equal perceptual margin at any frequency).
+        const logRatio = Math.log(target / this.gazeFilterCurrentFreq);
+        if (Math.abs(logRatio) < AUDIO_MASTER.gazeFilterEpsilon) {
+            if (this.gazeFilterCurrentFreq !== target) {
+                this.gazeFilterCurrentFreq = target;
                 this.gazeLowPassFilter.frequency.setValueAtTime(
                     this.gazeFilterCurrentFreq,
                     this.audioContext.currentTime,
@@ -149,9 +179,14 @@ export class AudioEngine {
             return;
         }
 
-        const lerpSpeed = 3.0;
-        this.gazeFilterCurrentFreq
-            += (this.gazeFilterTargetFreq - this.gazeFilterCurrentFreq) * lerpSpeed * deltaTime;
+        // Exponential approach in LOG-frequency space (flow-audit enhancement
+        // #7): the old linear-Hz lerp spent most of its time inaudibly far
+        // above the 400Hz closed target, stretching the perceived "muffle" to
+        // 2-3x the promised 0.5s. Each frame now covers an equal fraction of
+        // the REMAINING octaves; 1 - exp(-rate*dt) keeps the step exact and
+        // frame-rate independent.
+        const k = 1 - Math.exp(-AUDIO_MASTER.gazeFilterLerpSpeed * deltaTime);
+        this.gazeFilterCurrentFreq *= Math.exp(logRatio * k);
 
         this.gazeLowPassFilter.frequency.setValueAtTime(
             this.gazeFilterCurrentFreq,

@@ -9,6 +9,7 @@ import {
     infoOverflowJitterForIntensity,
     lerpRoomShaderConfig,
     noiseDensityForIntensity,
+    reactiveRoomShaderConfig,
     ROOM_CONFIGS,
     ROOM_WEATHER_WEIGHTS,
     RoomType,
@@ -84,6 +85,12 @@ describe('infoOverflowJitterForIntensity (INFO_OVERFLOW flower -> temporal jitte
 describe('faSideNoiseDensity (FORCED_ALIGNMENT signed side -> noise density)', () => {
     const SIZE = WORLD.CHUNK_SIZE;
     const HALF = FORCED_ALIGNMENT_SIDE_NOISE.halfRange;
+    const BLEND = FORCED_ALIGNMENT_SIDE_NOISE.seamBlendRange;
+    const { left, right } = FORCED_ALIGNMENT_SIDE_NOISE;
+    const MID = (left + right) / 2;
+    // Side value at the inner edge of the seam-blend zone (|offset| = HALF-BLEND):
+    // the most tidy/broken reading the smoothed field actually reaches.
+    const EDGE_DELTA = (BLEND / (2 * HALF)) * (right - left);
 
     it('returns the room baseline (0.55) exactly on the crack center', () => {
         // Chunk centers sit at k * CHUNK_SIZE under the round convention.
@@ -95,14 +102,29 @@ describe('faSideNoiseDensity (FORCED_ALIGNMENT signed side -> noise density)', (
         }
     });
 
-    it('reaches the tidy LEFT value at the far-left footprint edge', () => {
-        expect(faSideNoiseDensity(-HALF)).toBeCloseTo(FORCED_ALIGNMENT_SIDE_NOISE.left, 9);
-        expect(faSideNoiseDensity(2 * SIZE - HALF)).toBeCloseTo(FORCED_ALIGNMENT_SIDE_NOISE.left, 9);
+    it('is most tidy LEFT / broken RIGHT at the seam-blend inner edges', () => {
+        expect(faSideNoiseDensity(-(HALF - BLEND))).toBeCloseTo(left + EDGE_DELTA, 9);
+        expect(faSideNoiseDensity(HALF - BLEND)).toBeCloseTo(right - EDGE_DELTA, 9);
+        // Same shape inside a far-away chunk footprint.
+        expect(faSideNoiseDensity(2 * SIZE - (HALF - BLEND))).toBeCloseTo(left + EDGE_DELTA, 9);
+        expect(faSideNoiseDensity(2 * SIZE + (HALF - BLEND))).toBeCloseTo(right - EDGE_DELTA, 9);
     });
 
-    it('approaches the broken RIGHT value toward the far-right footprint edge', () => {
-        expect(faSideNoiseDensity(HALF - 0.001)).toBeCloseTo(FORCED_ALIGNMENT_SIDE_NOISE.right, 4);
-        expect(faSideNoiseDensity(2 * SIZE + HALF - 0.001)).toBeCloseTo(FORCED_ALIGNMENT_SIDE_NOISE.right, 4);
+    it('eases back to the mid baseline at the footprint edges (seam smoothing)', () => {
+        expect(faSideNoiseDensity(-HALF)).toBeCloseTo(MID, 9);
+        expect(faSideNoiseDensity(HALF - 1e-6)).toBeCloseTo(MID, 5);
+        expect(faSideNoiseDensity(2 * SIZE - HALF)).toBeCloseTo(MID, 9);
+    });
+
+    it('is continuous across an FA-FA chunk seam (no right -> left jump)', () => {
+        // Without seam smoothing this seam jumped 0.7 -> 0.4 in a single step.
+        const seamX = SIZE / 2; // boundary between chunk 0 and chunk 1 footprints
+        const eps = 0.01;
+        const before = faSideNoiseDensity(seamX - eps);
+        const after = faSideNoiseDensity(seamX + eps);
+        expect(Math.abs(before - after)).toBeLessThan(0.01);
+        expect(before).toBeCloseTo(MID, 2);
+        expect(after).toBeCloseTo(MID, 2);
     });
 
     it('interpolates linearly with the signed offset inside the footprint', () => {
@@ -112,13 +134,47 @@ describe('faSideNoiseDensity (FORCED_ALIGNMENT signed side -> noise density)', (
         expect(faSideNoiseDensity(-HALF / 2)).toBeCloseTo(0.475, 9);
     });
 
-    it('is monotonically non-decreasing left-to-right within one footprint', () => {
-        let prev = faSideNoiseDensity(-HALF);
-        for (let x = -HALF; x < HALF; x += 1) {
+    it('is monotonically non-decreasing left-to-right between the seam-blend zones', () => {
+        let prev = faSideNoiseDensity(-(HALF - BLEND));
+        for (let x = -(HALF - BLEND); x <= HALF - BLEND; x += 1) {
             const cur = faSideNoiseDensity(x);
             expect(cur).toBeGreaterThanOrEqual(prev);
             prev = cur;
         }
+    });
+
+    it('keeps the seam-blend zone a small fraction of the footprint (side reading intact)', () => {
+        expect(BLEND).toBeGreaterThan(0);
+        expect(BLEND).toBeLessThanOrEqual(HALF / 4);
+    });
+});
+
+describe('reactiveRoomShaderConfig (live per-room target for the transition blend)', () => {
+    it('replaces INFO_OVERFLOW noise/jitter with the flower-reactive values', () => {
+        const out = reactiveRoomShaderConfig(RoomType.INFO_OVERFLOW, 0.7, 0);
+        expect(out.uNoiseDensity).toBeCloseTo(noiseDensityForIntensity(0.7), 9);
+        expect(out.uTemporalJitter).toBeCloseTo(infoOverflowJitterForIntensity(0.7), 9);
+        // Everything else stays on the room baseline.
+        expect(out.uContrast).toBe(ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader.uContrast);
+        expect(out.uFlowerThresholdGain).toBe(ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader.uFlowerThresholdGain);
+    });
+
+    it('replaces FORCED_ALIGNMENT noise with the side-asymmetric value', () => {
+        const out = reactiveRoomShaderConfig(RoomType.FORCED_ALIGNMENT, 0.5, 20);
+        expect(out.uNoiseDensity).toBeCloseTo(faSideNoiseDensity(20), 9);
+        expect(out.uTemporalJitter).toBe(ROOM_CONFIGS[RoomType.FORCED_ALIGNMENT].shader.uTemporalJitter);
+    });
+
+    it('returns the static baseline for rooms without reactive parameters', () => {
+        expect(reactiveRoomShaderConfig(RoomType.IN_BETWEEN, 1, 99)).toEqual(ROOM_CONFIGS[RoomType.IN_BETWEEN].shader);
+        expect(reactiveRoomShaderConfig(RoomType.POLARIZED, 1, 99)).toEqual(ROOM_CONFIGS[RoomType.POLARIZED].shader);
+    });
+
+    it('does not mutate the shared static configs', () => {
+        const before = JSON.stringify(ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader);
+        reactiveRoomShaderConfig(RoomType.INFO_OVERFLOW, 1, 0);
+        reactiveRoomShaderConfig(RoomType.FORCED_ALIGNMENT, 1, 33);
+        expect(JSON.stringify(ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader)).toBe(before);
     });
 });
 

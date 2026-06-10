@@ -22,6 +22,12 @@ export class Controls {
     private overrideKeyHeld: boolean = false;
     private overrideKeyCode: string = 'ShiftLeft'; // Default to left shift
 
+    // Action dulling (sunset-snapshot ritual, flow-audit enhancement #9):
+    // while true, movement/jump/flower/override inputs are ignored but LOOK
+    // stays live. Held WASD flags keep updating underneath, so movement
+    // resumes naturally the moment the window ends.
+    private actionsSuppressed: boolean = false;
+
     // Flower intensity control via scroll wheel
     private targetFlowerIntensity: number = 0.5;
     private onFlowerIntensityChange: ((intensity: number) => void) | null = null;
@@ -42,6 +48,12 @@ export class Controls {
     private currentGroundLevel: number = 2.0;
 
     private isLocked: boolean = false;
+
+    // True once play has started at least once this page load. Distinguishes
+    // the first screen from a PAUSE: on unlock the #ui 'paused' modifier
+    // swaps "点击进入嵌合体废墟" for "已暂停 — 点击继续" (flow-audit
+    // enhancement #15: ESC looked identical to the start screen).
+    private hasStartedOnce: boolean = false;
 
     // Touch fallback mode (Android/iPad — flow-audit break #9)
     private useTouchFallback: boolean = false;
@@ -65,6 +77,17 @@ export class Controls {
     // Minimal flower-intensity entry for touch devices (+/- buttons).
     private flowerButtons: HTMLElement | null = null;
 
+    // Touch override entry (hold-to-resist, the SHIFT equivalent) and pause
+    // entry (the ESC equivalent) — without them the POLARIZED climax and the
+    // pause path are unreachable on pure touch devices (flow-audit C3).
+    private overrideButton: HTMLElement | null = null;
+    private pauseButton: HTMLElement | null = null;
+
+    // Notifies the pause state machine after exitTouchMode() (touch mode has
+    // no pointerlockchange event for PauseController to observe). Wired by
+    // main.ts to PauseController.syncPauseState().
+    private onPauseRequest: (() => void) | null = null;
+
     // Bound event handlers (arrow functions for proper 'this' binding)
     private handleKeyDown = (e: KeyboardEvent): void => this.onKeyDown(e);
     private handleKeyUp = (e: KeyboardEvent): void => this.onKeyUp(e);
@@ -78,6 +101,16 @@ export class Controls {
     private handleVisibilityChange = (): void => {
         if (document.hidden) {
             this.resetInputState();
+            // Touch fallback has no pointerlockchange, so without this a
+            // hidden tab desyncs the trio paused/isActive/#ui: PauseController
+            // pauses, but play stays "active" with no pause screen — a frozen
+            // frame whose only exit is a clean tap (drags suppress the
+            // synthetic click). Exit to the pause screen instead, converging
+            // the hidden-tab flow with desktop's pointer-lock-loss flow:
+            // show the paused copy, tap anywhere to re-enter.
+            if (this.useTouchFallback && this.isActive) {
+                this.exitTouchMode();
+            }
         }
     };
 
@@ -161,6 +194,8 @@ export class Controls {
 
         if (this.useTouchFallback) {
             this.createFlowerButtons();
+            this.createOverrideButton();
+            this.createPauseButton();
         }
     }
 
@@ -195,6 +230,102 @@ export class Controls {
 
         document.body.appendChild(container);
         this.flowerButtons = container;
+    }
+
+    /**
+     * Hold-to-resist entry for touch devices (flow-audit C3): a low-key
+     * button with the SHIFT hold semantics — pressed = override key held,
+     * released = key up. Hidden until the game starts.
+     */
+    private createOverrideButton(): void {
+        const btn = document.createElement('button');
+        btn.id = 'touch-override-button';
+        btn.type = 'button';
+        btn.textContent = '反抗';
+        btn.classList.add('hidden');
+
+        const press = (e: Event): void => {
+            // Keep the press out of the joystick/look drag handlers, and
+            // suppress the synthetic click (which would bubble to the
+            // document-level enter-game handler).
+            e.stopPropagation();
+            e.preventDefault();
+            this.overrideKeyHeld = true;
+        };
+        const release = (e: Event): void => {
+            e.stopPropagation();
+            this.overrideKeyHeld = false;
+        };
+        // Pointer events fire for touch AND mouse/pen (before the touch
+        // events), so press/release pair up on every input type; the touch
+        // listeners double them idempotently and carry the preventDefault
+        // that stops the drag-zone capture + synthetic click.
+        btn.addEventListener('touchstart', press, { passive: false });
+        btn.addEventListener('touchend', release);
+        btn.addEventListener('touchcancel', release);
+        btn.addEventListener('pointerdown', press);
+        btn.addEventListener('pointerup', release);
+        btn.addEventListener('pointerleave', release);
+
+        document.body.appendChild(btn);
+        this.overrideButton = btn;
+    }
+
+    /**
+     * Pause entry for touch devices (flow-audit C3): a small corner button —
+     * the ESC equivalent. Returns to the start/pause screen; tapping anywhere
+     * re-enters exactly like the initial entry.
+     */
+    private createPauseButton(): void {
+        const btn = document.createElement('button');
+        btn.id = 'touch-pause-button';
+        btn.type = 'button';
+        btn.textContent = 'II';
+        btn.classList.add('hidden');
+
+        const onPress = (e: Event): void => {
+            // stopPropagation + preventDefault keep this tap from reaching the
+            // document-level click handler, which would instantly re-enter.
+            e.stopPropagation();
+            e.preventDefault();
+            this.exitTouchMode();
+        };
+        // preventDefault in touchstart suppresses the synthetic click, so
+        // touch devices fire once; mouse-driven taps use the click path.
+        btn.addEventListener('touchstart', onPress, { passive: false });
+        btn.addEventListener('click', onPress);
+
+        document.body.appendChild(btn);
+        this.pauseButton = btn;
+    }
+
+    /**
+     * Leave touch play (the ESC equivalent, flow-audit C3): deactivate input,
+     * restore the start/pause screen, and notify the pause state machine
+     * (touch mode has no pointerlockchange event for it to observe).
+     */
+    private exitTouchMode(): void {
+        this.isActive = false;
+        this.isLocked = false;
+        this.resetInputState();
+        const ui = document.getElementById('ui');
+        if (ui) {
+            ui.classList.remove('hidden');
+            // Touch play has started by definition here: this is a pause,
+            // so show the paused copy (flow-audit enhancement #15).
+            ui.classList.toggle('paused', this.hasStartedOnce);
+        }
+        this.setTouchControlsVisible(false);
+        if (this.onPauseRequest) {
+            this.onPauseRequest();
+        }
+    }
+
+    /** Show/hide the in-game touch controls (flower / override / pause). */
+    private setTouchControlsVisible(visible: boolean): void {
+        this.flowerButtons?.classList.toggle('hidden', !visible);
+        this.overrideButton?.classList.toggle('hidden', !visible);
+        this.pauseButton?.classList.toggle('hidden', !visible);
     }
 
     /**
@@ -234,6 +365,8 @@ export class Controls {
                 this.adjustFlowerIntensity(INPUT.FLOWER_STEP);
                 break;
             case 'Space':
+                if (this.actionsSuppressed)
+                    break;
                 if (this.canJump || this.jumpCount < this.config.maxJumps) {
                     // Determine if this is a double jump (air jump)
                     const isDoubleJump = !this.canJump && this.jumpCount > 0;
@@ -284,6 +417,9 @@ export class Controls {
      * Helper to adjust flower intensity
      */
     private adjustFlowerIntensity(delta: number): void {
+        // Dulled during the snapshot ritual (covers wheel, Q/E, touch buttons).
+        if (this.actionsSuppressed)
+            return;
         this.targetFlowerIntensity = Math.max(0, Math.min(1, this.targetFlowerIntensity + delta));
         if (this.onFlowerIntensityChange) {
             this.onFlowerIntensityChange(this.targetFlowerIntensity);
@@ -322,6 +458,7 @@ export class Controls {
             // Note: cursor cannot be hidden on iPadOS (system limitation)
             this.isActive = true;
             this.isLocked = true;
+            this.hasStartedOnce = true;
 
             // Initialize pointer position from click to avoid initial jump
             if (e) {
@@ -329,12 +466,12 @@ export class Controls {
                 this.lastPointerY = e.clientY;
             }
 
-            // Hide UI, reveal the touch flower controls
+            // Hide UI, reveal the in-game touch controls
             const ui = document.getElementById('ui');
             if (ui) {
                 ui.classList.add('hidden');
             }
-            this.flowerButtons?.classList.remove('hidden');
+            this.setTouchControlsVisible(true);
         }
         else {
             // Desktop mode: request pointer lock (with rejection retry)
@@ -372,11 +509,17 @@ export class Controls {
 
     private onPointerLockChange(): void {
         this.isLocked = document.pointerLockElement === this.domElement;
+        if (this.isLocked) {
+            this.hasStartedOnce = true;
+        }
 
-        // Toggle UI
+        // Toggle UI. After play has started once, an unlock is a PAUSE, not
+        // the first screen: the 'paused' modifier swaps the title-area copy
+        // (flow-audit enhancement #15).
         const ui = document.getElementById('ui');
         if (ui) {
             ui.classList.toggle('hidden', this.isLocked);
+            ui.classList.toggle('paused', !this.isLocked && this.hasStartedOnce);
         }
     }
 
@@ -519,9 +662,10 @@ export class Controls {
         velocity.z -= velocity.z * config.friction * delta;
         velocity.y -= config.gravity * delta;
 
-        // Don't apply movement input while behind the start/pause menu (H3).
+        // Don't apply movement input while behind the start/pause menu (H3)
+        // or during the snapshot ritual's action dulling (enhancement #9).
         // Friction/gravity/ground collision still run so physics stays stable.
-        const movementEnabled = this.isLocked;
+        const movementEnabled = this.isLocked && !this.actionsSuppressed;
 
         // Direction: digital keyboard axes plus the analog touch joystick
         // (flow-audit break #9). Normalize only above unit length so keyboard
@@ -598,9 +742,13 @@ export class Controls {
             document.removeEventListener('pointerdown', this.handlePointerDown);
             document.removeEventListener('pointermove', this.handlePointerMove);
             document.removeEventListener('pointerup', this.handlePointerUp);
-            // Remove the touch flower buttons (their listeners go with them).
+            // Remove the touch buttons (their listeners go with them).
             this.flowerButtons?.remove();
             this.flowerButtons = null;
+            this.overrideButton?.remove();
+            this.overrideButton = null;
+            this.pauseButton?.remove();
+            this.pauseButton = null;
         }
         else {
             // Desktop mode cleanup
@@ -613,7 +761,16 @@ export class Controls {
      * Check if override key is currently held
      */
     isOverrideKeyHeld(): boolean {
-        return this.overrideKeyHeld;
+        return this.overrideKeyHeld && !this.actionsSuppressed;
+    }
+
+    /**
+     * Toggle the action-dulling window (snapshot ritual, enhancement #9):
+     * movement/jump/flower/override are ignored while suppressed; look stays
+     * live. PlayerManager syncs this each frame from its play-time timer.
+     */
+    setActionsSuppressed(suppressed: boolean): void {
+        this.actionsSuppressed = suppressed;
     }
 
     /**
@@ -631,6 +788,15 @@ export class Controls {
     }
 
     /**
+     * Set the pause-request callback (flow-audit C3): fired after the touch
+     * pause button deactivates touch play, so the pause state machine can
+     * re-sync (no pointerlockchange event exists in touch fallback mode).
+     */
+    setOnPauseRequest(callback: () => void): void {
+        this.onPauseRequest = callback;
+    }
+
+    /**
      * Get camera reference for external use (e.g., gaze detection)
      */
     getCamera(): THREE.PerspectiveCamera {
@@ -642,6 +808,14 @@ export class Controls {
      */
     isPointerLocked(): boolean {
         return this.isLocked;
+    }
+
+    /**
+     * Whether the touch fallback path (coarse pointer / no pointer lock) is
+     * active — consumers can adapt hint text to the touch controls.
+     */
+    isTouchFallback(): boolean {
+        return this.useTouchFallback;
     }
 
     /**

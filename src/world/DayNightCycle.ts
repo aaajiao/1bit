@@ -56,9 +56,12 @@ export class DayNightCycle {
         if (newIsDay !== this.isDay) {
             this.isDay = newIsDay;
 
-            // Trigger snapshot on sunset (day -> night)
+            // Trigger snapshot on sunset (day -> night). The callback reports
+            // whether a settlement snapshot was actually shown so the weather
+            // roll below can stand aside for it.
+            let snapshotShown = false;
             if (!newIsDay && context.onSunset) {
-                context.onSunset();
+                snapshotShown = context.onSunset() === true;
             }
 
             // Randomize for next cycle
@@ -71,8 +74,10 @@ export class DayNightCycle {
             // Play transition sound
             context.audio.playDayNightTransition(!newIsDay);
 
-            // Transition weather chance
-            if (!newIsDay && Math.random() < 0.3) {
+            // Transition weather chance. Skipped on a snapshot sunset
+            // (flow-audit enhancement #9): the settlement's visual language
+            // must stay distinct from weather static.
+            if (!newIsDay && !snapshotShown && Math.random() < 0.3) {
                 context.weather.forceWeather('static', 15 + Math.random() * 15);
             }
             else if (newIsDay && Math.random() < 0.2) {
@@ -95,6 +100,21 @@ export class DayNightCycle {
 
             console.log(`Day/Night: ${newIsDay ? 'DAY' : 'NIGHT'}`);
         }
+    }
+
+    /**
+     * Pre-sunset foreshadow ramp (flow-audit enhancement #8): 0 for most of
+     * the cycle, rising linearly to 1 across the final `leadSeconds` of the
+     * DAY phase, and 0 again at night. A pure query on the delta-driven
+     * cycle clock — no new wall clock is involved, so it pauses with play.
+     */
+    getSunsetForeshadow(leadSeconds: number): number {
+        if (!this.isDay || leadSeconds <= 0)
+            return 0;
+        const remaining = this.cycleDuration / 2 - this.cycleTime;
+        if (remaining >= leadSeconds)
+            return 0;
+        return 1 - Math.max(0, remaining) / leadSeconds;
     }
 
     /**

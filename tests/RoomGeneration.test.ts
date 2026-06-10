@@ -82,11 +82,14 @@ describe('roomGeneration', () => {
             expect(counts.FLUID).toBeGreaterThan(counts.TREE);
         });
 
-        it('pOLARIZED is rigid BLOCKS-dominant and bans TREE', () => {
+        it('pOLARIZED is rigid BLOCKS-dominant and bans TREE and FLUID (no curves)', () => {
+            // Flow-audit enhancement #11: the room is all straight lines — the
+            // former FLUID slice folds into BLOCKS.
             const counts = sampleStyles(RoomType.POLARIZED);
             expect(counts.TREE).toBe(0);
+            expect(counts.FLUID).toBe(0);
             expect(counts.BLOCKS).toBeGreaterThan(counts.SPIKES);
-            expect(counts.BLOCKS).toBeGreaterThan(counts.FLUID);
+            expect(counts.BLOCKS + counts.SPIKES).toBe(1000);
         });
 
         it('fORCED_ALIGNMENT is regimented BLOCKS/SPIKES only (no TREE, no FLUID)', () => {

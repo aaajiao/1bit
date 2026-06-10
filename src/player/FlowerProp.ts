@@ -1,6 +1,6 @@
 // 1-bit Chimera Void - Flower Prop (Hand-held flower)
 import * as THREE from 'three';
-import { GAZE } from '../config';
+import { FLOWER_INTRO, GAZE } from '../config';
 import { hash } from '../utils/hash';
 import { getSharedAssets } from '../world/SharedAssets';
 
@@ -21,6 +21,9 @@ interface FlowerGroupUserData {
     forcedIntensity: number; // The intensity to force to when gazing
     wasBeingForced: boolean; // Previous-frame forcing state (transition detection)
     recoveryDelay: number; // Seconds left before post-gaze recovery may begin
+    introPulseTimer: number; // Seconds left of the opening guidance pulse (enhancement #1)
+    introPulsePhase: number; // Accumulated sway phase of the guidance pulse (rad)
+    introPulseBaseline: number; // Target to settle back to when the pulse ends
 }
 
 export interface FlowerGroup extends THREE.Group {
@@ -148,6 +151,12 @@ export function createFlowerProp(): FlowerGroup {
         forcedIntensity: 0.1, // Default forced intensity when gazing
         wasBeingForced: false, // Previous-frame forcing state
         recoveryDelay: 0, // No pending post-gaze recovery hold
+        // Opening guidance pulse (flow-audit enhancement #1): armed at
+        // creation; main gates updates while paused, so the countdown only
+        // runs once play actually starts (pointer lock / touch activation).
+        introPulseTimer: FLOWER_INTRO.PULSE_DURATION,
+        introPulsePhase: 0,
+        introPulseBaseline: 0.5, // = the default target above
     };
 
     return flowerGroup;
@@ -164,6 +173,9 @@ export function setFlowerIntensity(flowerGroup: FlowerGroup, intensity: number):
     // Deliberate player input (scroll wheel) cancels the post-gaze recovery
     // hold — the flower should respond to the player immediately.
     flowerGroup.userData.recoveryDelay = 0;
+    // The first deliberate adjustment also ends the opening guidance pulse
+    // (flow-audit enhancement #1): the lesson landed, hand the light back.
+    flowerGroup.userData.introPulseTimer = 0;
 }
 
 /**
@@ -210,6 +222,9 @@ export function overrideFlowerIntensity(flowerGroup: FlowerGroup): void {
     flowerGroup.userData.isBeingForced = false;
     flowerGroup.userData.wasBeingForced = false;
     flowerGroup.userData.recoveryDelay = 0;
+    // A successful override is the most deliberate input there is — it also
+    // ends the opening guidance pulse (flow-audit enhancement #1).
+    flowerGroup.userData.introPulseTimer = 0;
 }
 
 /**
@@ -236,6 +251,35 @@ export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: num
         ud.recoveryDelay = GAZE.FLOWER_RECOVERY_DELAY;
     }
     ud.wasBeingForced = ud.isBeingForced;
+
+    // Opening guidance pulse (flow-audit enhancement #1): for the first
+    // FLOWER_INTRO.PULSE_DURATION seconds of play the target intensity sways
+    // between PULSE_MIN and PULSE_MAX — the wordless "this light is yours to
+    // adjust" cue. Any gaze forcing or pending recovery hold aborts it (the
+    // world's grip outranks the teaching beat); deliberate player input
+    // cancels it in setFlowerIntensity / overrideFlowerIntensity.
+    if (ud.introPulseTimer > 0) {
+        if (ud.isBeingForced || ud.recoveryDelay > 0) {
+            ud.introPulseTimer = 0;
+            ud.targetIntensity = ud.introPulseBaseline;
+        }
+        else {
+            ud.introPulseTimer = Math.max(0, ud.introPulseTimer - delta);
+            ud.introPulsePhase += delta * FLOWER_INTRO.PULSE_SPEED;
+            if (ud.introPulseTimer > 0) {
+                const center = (FLOWER_INTRO.PULSE_MIN + FLOWER_INTRO.PULSE_MAX) / 2;
+                const amplitude = (FLOWER_INTRO.PULSE_MAX - FLOWER_INTRO.PULSE_MIN) / 2;
+                // Phase offset π/2: the sway starts exactly at PULSE_MAX (the
+                // default target), so the first pulsed frame doesn't pop.
+                ud.targetIntensity = center
+                    + amplitude * Math.sin(ud.introPulsePhase + Math.PI / 2);
+            }
+            else {
+                // Natural expiry: settle back to the pre-pulse baseline.
+                ud.targetIntensity = ud.introPulseBaseline;
+            }
+        }
+    }
 
     // Determine target intensity based on gaze forcing
     let effectiveTarget = ud.targetIntensity;

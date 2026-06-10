@@ -12,6 +12,19 @@ export interface DitherUniforms {
     weatherType: { value: number };
     weatherIntensity: { value: number };
     weatherTime: { value: number };
+    // Per-room dither character (blended by world/RoomTransition, synced each
+    // frame by core/ShaderUniformUpdater).
+    uNoiseDensity: { value: number };
+    uThresholdBias: { value: number };
+    uTemporalJitter: { value: number };
+    uContrast: { value: number };
+    uGlitchAmount: { value: number };
+    uGlitchSpeed: { value: number };
+    // Globals & player state.
+    uColorInversion: { value: number };
+    uOverrideProgress: { value: number };
+    uTime: { value: number };
+    uFlowerIntensity: { value: number };
     // 1-bit duotone palette (per-room) + tone-fix brightness lift.
     // Vector3 RGB (0-1); defaults to black ink / white paper for monochrome parity.
     uInkColor: { value: THREE.Vector3 };
@@ -39,6 +52,13 @@ export interface DitherUniforms {
     uGazeVignetteStrength: { value: number };
     uPitchLineV: { value: number };
     uPitchLineAlpha: { value: number };
+    // Override payoff (flow-audit enhancements #4/#5).
+    // uRawBypass: >0.5 = crash frame, the shader early-returns the raw,
+    //   un-dithered tDiffuse for ~0.1s after a successful override.
+    // uOverrideSustain: 0-1 steady paper-white edge band while the override
+    //   key stays held past the trigger (fast decay on release).
+    uRawBypass: { value: number };
+    uOverrideSustain: { value: number };
 }
 
 export interface CableUniforms {

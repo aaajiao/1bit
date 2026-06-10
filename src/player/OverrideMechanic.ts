@@ -76,6 +76,16 @@ export class OverrideMechanic {
     private activeDenial: OverrideDenialReason | null = null;
     private wasKeyHeld: boolean = false;
 
+    // Sustained-hold feedback level (flow-audit enhancement #5): 1 while the
+    // key stays held past the trigger ("still pressing" gets a steady picture),
+    // decaying to 0 over OVERRIDE.SUSTAIN_RELEASE_SECONDS once released.
+    private sustainLevel: number = 0;
+
+    // Per-run resistance residue (flow-audit enhancement #6): each successful
+    // override adds OVERRIDE.RESIDUE_STEP of permanent misregistration
+    // (clamped at OVERRIDE.RESIDUE_MAX). Cleared at sunset via resetResidue().
+    private misregisterResidue: number = 0;
+
     // Callbacks
     private onOverrideStart: (() => void) | null = null;
     private onOverrideTrigger: (() => void) | null = null;
@@ -221,6 +231,12 @@ export class OverrideMechanic {
                 // full duration regardless of when the key is released (M3).
                 this.effectTimer = 0;
                 this.effectActive = true;
+                // The system remembers the resistance (enhancement #6): each
+                // success leaves a small permanent-for-this-run misregistration.
+                this.misregisterResidue = Math.min(
+                    OVERRIDE.RESIDUE_MAX,
+                    this.misregisterResidue + OVERRIDE.RESIDUE_STEP,
+                );
                 // A successful resistance ends the teaching moment: the hint is
                 // no longer needed this session (flow-audit break #2).
                 this.markHintShown();
@@ -259,6 +275,19 @@ export class OverrideMechanic {
             }
         }
         this.wasKeyHeld = isKeyHeld;
+
+        // Sustained-hold edge band (enhancement #5): full strength while the
+        // key stays held past the trigger, fast decay once released — "still
+        // pressing = still resisting" gets a steady on-screen counterpart.
+        if (this.state.isTriggered && isKeyHeld) {
+            this.sustainLevel = 1;
+        }
+        else if (this.sustainLevel > 0) {
+            this.sustainLevel = Math.max(
+                0,
+                this.sustainLevel - delta / OVERRIDE.SUSTAIN_RELEASE_SECONDS,
+            );
+        }
 
         return this.getState();
     }
@@ -386,6 +415,45 @@ export class OverrideMechanic {
     }
 
     /**
+     * Raw-bypass crash-frame value for the uRawBypass uniform (enhancement
+     * #4): 1 during the first OVERRIDE.RAW_BYPASS_DURATION seconds of the
+     * trigger effect (the shader shows the raw, un-dithered tDiffuse render),
+     * 0 otherwise. The duotone inversion flash then plays as the aftershock.
+     */
+    getRawBypassValue(): number {
+        return this.effectActive && this.effectTimer < OVERRIDE.RAW_BYPASS_DURATION ? 1 : 0;
+    }
+
+    /**
+     * Sustained-hold feedback for the uOverrideSustain uniform (enhancement
+     * #5): 1 while the key stays held past the trigger, decaying over
+     * OVERRIDE.SUSTAIN_RELEASE_SECONDS after release. Distinct visual
+     * language from uOverrideProgress (steady paper-white band vs the pulsing
+     * inverted ramp / low-intensity cooldown denial).
+     */
+    getSustainValue(): number {
+        return this.sustainLevel;
+    }
+
+    /**
+     * Accumulated per-run misregistration residue for the uMisregister
+     * channel (enhancement #6): +RESIDUE_STEP per successful override,
+     * clamped at RESIDUE_MAX. POLARIZED's zero jitter is never pristine
+     * again until the next sunset settles the run.
+     */
+    getMisregisterResidue(): number {
+        return this.misregisterResidue;
+    }
+
+    /**
+     * Clear the per-run resistance residue (enhancement #6). Called at
+     * sunset, where the run settles and the world forgets.
+     */
+    resetResidue(): void {
+        this.misregisterResidue = 0;
+    }
+
+    /**
      * Reset mechanic state
      */
     reset(): void {
@@ -404,6 +472,8 @@ export class OverrideMechanic {
         this.hintVisibleTimer = 0;
         this.activeDenial = null;
         this.wasKeyHeld = false;
+        this.sustainLevel = 0;
+        this.misregisterResidue = 0;
         // Keep hint.hasBeenShown for subsequent runs
     }
 
