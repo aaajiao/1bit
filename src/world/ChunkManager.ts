@@ -18,7 +18,7 @@ import { createDynamicCable, disposeCableMaterial } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createInfoFloorMesh, createMoireFloorMesh, createSeamFloorMesh, disposeFloorPool } from './FloorTile';
 import { createTree } from './FloraFactory';
-import { getRoomTypeFromPosition, lerpRoomShaderConfig, ROOM_CONFIGS, RoomType } from './RoomConfig';
+import { getRoomTypeFromPosition, lerpRoomShaderConfig, ROOM_CONFIGS, RoomType, worldToChunkCoord } from './RoomConfig';
 import {
     anomalyAt,
     applyLayout,
@@ -783,8 +783,13 @@ export class ChunkManager {
      * Should be called from main update loop
      */
     updatePlayerRoom(playerX: number, playerZ: number): void {
-        const cx = Math.floor(playerX / CHUNK_SIZE);
-        const cz = Math.floor(playerZ / CHUNK_SIZE);
+        // Round convention: chunk floors are CENTERED on (cx*CHUNK_SIZE,
+        // cz*CHUNK_SIZE) — see createChunk — so the chunk whose visible floor
+        // is under the player is the ROUNDED coordinate. Math.floor here would
+        // misattribute the room by half a chunk relative to the floor seams
+        // the player can actually see.
+        const cx = worldToChunkCoord(playerX, CHUNK_SIZE);
+        const cz = worldToChunkCoord(playerZ, CHUNK_SIZE);
         const key = `${cx},${cz}`;
 
         const chunk = this.activeChunks[key];

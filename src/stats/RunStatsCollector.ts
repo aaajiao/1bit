@@ -1,6 +1,7 @@
 // 1-bit Chimera Void - Run Stats Collector
 // Non-invasive runtime behavior sampling for state snapshot generation
 
+import { GAMEPLAY } from '../config';
 import { RoomType } from '../world/RoomConfig';
 
 /**
@@ -33,12 +34,13 @@ export interface RunStats {
 }
 
 /**
- * Normalized metrics (0-1 range) for tag generation
+ * Normalized metrics for tag generation (0-1 ratios unless noted as raw)
  */
 export interface NormalizedMetrics {
     avgFlower: number; // 0-1
     gazeRatio: number; // 0-1
     overrideRatio: number; // 0-1
+    overrideSuccesses: number; // Raw count (not a ratio)
     roomRatios: Record<string, number>; // { INFO: 0-1, FORCED: 0-1, etc. }
     crackRatio: number; // 0-1
     spreadX: number; // 0-? (absolute distance)
@@ -221,6 +223,7 @@ export class RunStatsCollector {
             avgFlower,
             gazeRatio,
             overrideRatio,
+            overrideSuccesses: s.overrideSuccesses,
             roomRatios,
             crackRatio,
             spreadX,
@@ -266,12 +269,21 @@ export class RunStatsCollector {
             tags.push('NEUTRAL_SEEKER');
         }
 
-        // Resistance tag
-        if (metrics.overrideRatio > 0.05) {
+        // Resistance tag: a single successful override counts, regardless of hold ratio
+        if (metrics.overrideSuccesses >= 1 || metrics.overrideRatio > 0.05) {
             tags.push('RESISTER');
         }
 
         return tags;
+    }
+
+    /**
+     * Whether this run has accumulated enough play time for a sunset snapshot.
+     * Runs below the threshold (e.g. a sunset landing right after entry) skip
+     * the snapshot and roll silently into the next run cycle.
+     */
+    hasMinimumSnapshotDuration(): boolean {
+        return this.stats.duration >= GAMEPLAY.MIN_RUN_DURATION_FOR_SNAPSHOT;
     }
 
     /**

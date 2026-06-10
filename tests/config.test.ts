@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AUDIO_MASTER, CABLE_AUDIO_CONFIG, FOOTSTEP_CONFIG } from '../src/config/audio';
-import { OVERRIDE } from '../src/config/constants';
+import { GAMEPLAY, OVERRIDE } from '../src/config/constants';
 import { PHYSICS_CONFIG, RIFT_PHYSICS } from '../src/config/physics';
 
 describe('physics Config', () => {
@@ -27,6 +27,15 @@ describe('override Config', () => {
         // Flash timings must be monotonically increasing within the effect.
         expect(OVERRIDE.FLASH_ON_DURATION).toBeLessThan(OVERRIDE.FLASH_HOLD_END);
         expect(OVERRIDE.FLASH_HOLD_END).toBeLessThan(OVERRIDE.FLASH_OFF_END);
+    });
+});
+
+describe('gameplay Config', () => {
+    it('should have a valid snapshot minimum-run-duration gate', () => {
+        expect(GAMEPLAY.MIN_RUN_DURATION_FOR_SNAPSHOT).toBeGreaterThan(0);
+        // The gate must stay below the shortest possible day half-cycle
+        // (cycleDuration 240-360s => half-cycle >= 120s) or every run would be skipped.
+        expect(GAMEPLAY.MIN_RUN_DURATION_FOR_SNAPSHOT).toBeLessThan(120);
     });
 });
 

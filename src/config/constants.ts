@@ -11,6 +11,8 @@ export const GAMEPLAY = {
     HINT_GAZE_TIME_THRESHOLD: 5.0,
     /** Hint condition: flower forced down count */
     HINT_FORCED_DOWN_COUNT: 2,
+    /** Minimum play time (seconds) before a sunset produces a snapshot */
+    MIN_RUN_DURATION_FOR_SNAPSHOT: 30.0,
 } as const;
 
 /**

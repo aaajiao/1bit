@@ -1,5 +1,6 @@
 // 1-bit Chimera Void - Room Configuration
 // Defines mental state rooms and their shader/audio parameters
+import { WORLD } from '../config/constants';
 
 /**
  * Room type enumeration representing different mental states
@@ -282,6 +283,30 @@ export function lerpRoomShaderConfig(
         uScanIntensity: lerp(from.uScanIntensity, to.uScanIntensity),
         uMisregister: lerp(from.uMisregister, to.uMisregister),
     };
+}
+
+/**
+ * World coordinate -> chunk coordinate, matching the floor geometry convention:
+ * chunk k's floor mesh is CENTERED on k*chunkSize (ChunkManager.createChunk),
+ * so its visible footprint is [k*size - size/2, k*size + size/2). Math.round
+ * maps a world coordinate to the chunk whose floor is actually under it;
+ * Math.floor would be offset by half a chunk from the visible seams.
+ * JS rounds .5 toward +Infinity for negative inputs too, so the footprint is
+ * half-open ([k*size - size/2, k*size + size/2)) for every k.
+ */
+export function worldToChunkCoord(worldCoord: number, chunkSize: number = WORLD.CHUNK_SIZE): number {
+    return Math.round(worldCoord / chunkSize);
+}
+
+/**
+ * Get room type at a world position, attributed via the same footprint
+ * convention as the visible floor geometry (see worldToChunkCoord).
+ */
+export function getRoomTypeAtWorldPosition(x: number, z: number, chunkSize: number = WORLD.CHUNK_SIZE): RoomType {
+    return getRoomTypeFromPosition(
+        worldToChunkCoord(x, chunkSize),
+        worldToChunkCoord(z, chunkSize),
+    );
 }
 
 /**

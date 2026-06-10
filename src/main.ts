@@ -322,17 +322,21 @@ class ChimeraVoid {
             playerState.overrideTriggered,
         );
 
-        this.dayNight.update(t, delta, {
+        this.dayNight.update(delta, {
             scene: this.scene,
             shaderQuad: this.postProcessing.shaderQuad,
             audio: this.audio,
             weather: this.weather,
             onSunset: () => {
-                // Personalize the snapshot from this run's normalized metrics
-                // (snapshot personalization wiring).
-                const metrics = this.runStats.normalize();
-                const tags = this.runStats.generateTags();
-                this.snapshotOverlay.show(this.snapshotGenerator.generateFromMetrics(metrics, tags));
+                // Skip the snapshot for runs below the minimum play time
+                // (flow-audit #5: spurious "empty run" snapshots).
+                if (this.runStats.hasMinimumSnapshotDuration()) {
+                    // Personalize the snapshot from this run's normalized metrics
+                    // (snapshot personalization wiring).
+                    const metrics = this.runStats.normalize();
+                    const tags = this.runStats.generateTags();
+                    this.snapshotOverlay.show(this.snapshotGenerator.generateFromMetrics(metrics, tags));
+                }
                 // Reset for the next run AFTER the overlay snapshot is captured (M11).
                 this.runStats.reset();
             },
