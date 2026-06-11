@@ -6,7 +6,8 @@ import type {
     DynamicCable,
     FlickerGroup,
 } from '../types';
-import type { RoomShaderConfig } from './RoomConfig';
+import type { BehaviorProfile, RoomShaderConfig } from './RoomConfig';
+import type { ScarPoint } from './ScarField';
 import type { SharedAssets } from './SharedAssets';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
@@ -18,7 +19,7 @@ import { createDynamicCable, disposeCableMaterial } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createInfoFloorMesh, createMoireFloorMesh, createSeamFloorMesh, disposeFloorPool } from './FloorTile';
 import { createTree } from './FloraFactory';
-import { getRoomTypeFromPosition, IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, ROOM_CONFIGS, RoomType, worldToChunkCoord } from './RoomConfig';
+import { IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, riftLineXForWorldX, ROOM_CONFIGS, RoomType, worldToChunkCoord } from './RoomConfig';
 import {
     anomalyAt,
     applyLayout,
@@ -32,7 +33,9 @@ import {
     snapToGrid,
     subPaletteIndex,
 } from './RoomGeneration';
+import { RoomLedger } from './RoomLedger';
 import { RoomTransition } from './RoomTransition';
+import { scarDistortionFor, scarSeverityAt, scarsNearChunk } from './ScarField';
 import { getSharedAssets } from './SharedAssets';
 
 // Configuration (sourced from centralized constants; re-exported for consumers)
@@ -87,22 +90,42 @@ export class ChunkManager {
     // Current room state
     private currentRoomType: RoomType;
 
+    // Session room ledger (F1 "the world reads you"): cluster -> room
+    // assignments, pinned on first generation, gently biased by the live
+    // behavior profile for clusters generated after the profile forms.
+    private readonly roomLedger = new RoomLedger();
+
     // Displayed shader config blender: freeze-from transition semantics with
     // the reactive per-room overrides baked into the target (flow-audit
     // medium #4). Advanced once per frame from updatePlayerRoom.
     private readonly roomTransition: RoomTransition;
+
+    // Boot-time snapshot of the cross-session scars (F2). Held by reference:
+    // ScarStore's mutators replace its arrays wholesale (pure helpers), so
+    // this list stays FROZEN for the session — scars recorded now distort
+    // the world from the NEXT session on, keeping within-session chunk
+    // regeneration deterministic.
+    private readonly bootScars: readonly ScarPoint[];
 
     /**
      * @param scene - Scene the chunk group is added to.
      * @param initialRoomType - Room the player actually spawns in (flow-audit
      *   medium #7: the spawn point is no longer the INFO_OVERFLOW origin), so
      *   the first frame doesn't open mid-blend from the wrong room's palette.
+     * @param bootScars - Persisted cross-run scars (stats/ScarStorage), read
+     *   once at boot; buildings near a scar point are permanently distorted
+     *   (world/ScarField) — the geometry there never recovered.
      */
-    constructor(scene: THREE.Scene, initialRoomType: RoomType = RoomType.INFO_OVERFLOW) {
+    constructor(
+        scene: THREE.Scene,
+        initialRoomType: RoomType = RoomType.INFO_OVERFLOW,
+        bootScars: readonly ScarPoint[] = [],
+    ) {
         this.floorMaterial = createFloorMaterial();
         this.assets = getSharedAssets();
         this.currentRoomType = initialRoomType;
         this.roomTransition = new RoomTransition(initialRoomType);
+        this.bootScars = bootScars;
 
         scene.add(this.chunkGroup);
     }
@@ -141,8 +164,10 @@ export class ChunkManager {
         const chunk = new THREE.Group() as Chunk;
         chunk.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
 
-        // Assign room type based on position
-        const roomType = getRoomTypeFromPosition(cx, cz);
+        // Assign room type via the session ledger (F1): neutral hash draw
+        // until the live profile forms, behavior-biased afterwards, pinned
+        // per cluster either way so revisited terrain never changes room.
+        const roomType = this.roomLedger.getRoomTypeForChunk(cx, cz);
 
         chunk.userData = {
             cables: [],
@@ -164,7 +189,11 @@ export class ChunkManager {
         // Floor - select type based on room
         let floor: THREE.Object3D;
         if (roomType === RoomType.FORCED_ALIGNMENT) {
-            const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial, 4, cx, cz);
+            // One rift per 2x2-chunk cluster: the crack runs along the cluster
+            // center x (the seam between the cluster's chunk columns), so each
+            // FA chunk carries the crack half overlapping its own footprint.
+            const crackLocalX = riftLineXForWorldX(cx * CHUNK_SIZE, CHUNK_SIZE) - cx * CHUNK_SIZE;
+            const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial, 4, cx, cz, crackLocalX);
             floor = crackedSystem.group;
             chunkData.disposables.push(...crackedSystem.disposables);
 
@@ -218,6 +247,13 @@ export class ChunkManager {
             ? baseCount
             : Math.max(1, Math.round(baseCount * biomeDensityFactor(biome)));
         const nodes: CableNode[] = [];
+
+        // Cross-run scars (F2): the subset of persisted scars whose influence
+        // reaches this chunk, filtered ONCE per chunk build (in-memory boot
+        // snapshot — never localStorage on this path). Usually empty.
+        const nearScars = this.bootScars.length > 0
+            ? scarsNearChunk(this.bootScars, cx, cz)
+            : this.bootScars;
 
         // Per-chunk composition: half-extent the raw positions are bounded to.
         const layoutHalf = (CHUNK_SIZE - 20) / 2;
@@ -353,6 +389,32 @@ export class ChunkManager {
                 maxHeight *= scaleFactor;
             }
 
+            // CROSS-RUN SCAR (F2): buildings near a place the player once
+            // successfully resisted lean, settle and dislocate permanently —
+            // hash-deterministic, severity growing with the aggregated count
+            // (ScarField). Applied LAST so it overrides even the FORCED_
+            // ALIGNMENT rigid grid (the scar is the one thing the system
+            // could not regiment back). Transforms only: dispose (traversal)
+            // and LOD (world-position distance) are unaffected. initialPos
+            // is re-captured so the wander animation orbits the scarred pose
+            // instead of snapping back to the clean one.
+            if (nearScars.length > 0) {
+                const severity = scarSeverityAt(
+                    nearScars,
+                    cx * CHUNK_SIZE + buildGroup.position.x,
+                    cz * CHUNK_SIZE + buildGroup.position.z,
+                );
+                if (severity > 0) {
+                    const scar = scarDistortionFor(severity, i, cx, cz);
+                    buildGroup.rotation.x += scar.tiltX;
+                    buildGroup.rotation.z += scar.tiltZ;
+                    buildGroup.position.x += scar.offsetX;
+                    buildGroup.position.z += scar.offsetZ;
+                    buildGroup.position.y -= scar.sink;
+                    (buildGroup.userData as BuildingUserData).initialPos.copy(buildGroup.position);
+                }
+            }
+
             // INFO_OVERFLOW buildingFlicker: on a CAPPED subset of fragments,
             // pre-build 2-3 hash-seeded variant child meshes (shared geo/material)
             // and let the animator toggle .visible — NEVER rebuilding geometry.
@@ -412,9 +474,11 @@ export class ChunkManager {
         if (meshChildren.length === 0)
             return;
 
-        // Edge factor 0-1 from the building's chunk-local position: 0 deep in
-        // the interior (original behavior), 1 at the footprint edge band.
-        const edge = inBetweenEdgeFactor(buildGroup.position.x, buildGroup.position.z);
+        // Edge factor 0-1 from the building's cluster-local position: 0 deep
+        // in the CLUSTER interior (original behavior), 1 at the cluster
+        // footprint edge band — rooms are 2x2-chunk clusters, so only the
+        // true room boundary shimmers (inner chunk seams stay calm).
+        const edge = inBetweenEdgeFactor(buildGroup.position.x, buildGroup.position.z, cx, cz);
 
         // 1 or 2 base ghosts, deterministic by seed; the edge band adds up to
         // EXTRA_GHOSTS more (cycling over the snapshot of source meshes).
@@ -783,6 +847,24 @@ export class ChunkManager {
      */
     getCurrentRoomType(): RoomType {
         return this.currentRoomType;
+    }
+
+    /**
+     * Ledger-attributed room of a chunk (pins the cluster on first query).
+     * The single room-attribution surface consumers (RiftMechanic) must use
+     * so they always agree with the GENERATED world, bias included — the
+     * pure getRoomTypeFromPosition only matches before a profile forms.
+     */
+    getRoomTypeForChunk(cx: number, cz: number): RoomType {
+        return this.roomLedger.getRoomTypeForChunk(cx, cz);
+    }
+
+    /**
+     * Feed the latest live behavior profile into the room ledger (F1).
+     * Called at a low cadence by RoomFlowUpdater; null = not formed yet.
+     */
+    setLiveProfile(profile: BehaviorProfile | null): void {
+        this.roomLedger.setProfile(profile);
     }
 
     /**

@@ -64,13 +64,30 @@ export function createFloorMesh(chunkSize: number, material: THREE.Material): TH
     return floor;
 }
 
+// Abyss-fog particle count for a full (chunk-interior) crack. When the crack
+// line sits on a chunk footprint edge (the cluster-shared rift: both adjacent
+// chunks emit fog into the SAME crack volume), each chunk spawns half so the
+// combined density matches a single interior crack.
+const ABYSS_FOG_PARTICLES = 400;
+
 /**
- * Creates a floor with a central crack/rift for FORCED_ALIGNMENT rooms
- * The crack splits the floor into two halves with pure black abyss in between
- * Now features jagged texturing and geometry
+ * Creates a floor with a crack/rift for FORCED_ALIGNMENT rooms.
+ * The crack splits the floor into two parts with pure black abyss in between.
+ * Features jagged texturing and geometry.
+ *
+ * The crack line may sit anywhere inside the chunk, including ON a footprint
+ * edge (crackLocalX = ±chunkSize/2): rooms are 2x2-chunk clusters and the one
+ * shared rift runs along the cluster center, which is the seam between the
+ * cluster's two chunk columns — so each FA chunk carries the half of the
+ * crack that overlaps its own floor, and a side with no remaining floor strip
+ * is skipped entirely.
+ *
  * @param chunkSize - Size of the chunk
  * @param material - Floor material
- * @param crackWidth - Base width of the central crack (default 4 meters)
+ * @param crackWidth - Base width of the crack (default 4 meters)
+ * @param cx - Chunk X coordinate (deterministic jagged-edge seed)
+ * @param cz - Chunk Z coordinate (deterministic jagged-edge seed)
+ * @param crackLocalX - Chunk-local x of the crack center line (default 0)
  */
 export function createCrackedFloorMesh(
     chunkSize: number,
@@ -78,6 +95,7 @@ export function createCrackedFloorMesh(
     crackWidth: number = 4,
     cx: number = 0,
     cz: number = 0,
+    crackLocalX: number = 0,
 ): { group: THREE.Group; fog?: THREE.InstancedMesh; disposables: THREE.Material[] } {
     const group = new THREE.Group();
     const disposables: THREE.Material[] = [];
@@ -85,78 +103,96 @@ export function createCrackedFloorMesh(
     // Deterministic per-chunk RNG so re-entering a chunk looks identical
     const rand = makeSeededRandom(cx, cz);
 
-    // Calculate half-floor dimensions
-    const halfFloorWidth = (chunkSize - crackWidth) / 2;
+    // Floor strip widths on each side of the crack, clamped to the chunk
+    // footprint (a crack on the footprint edge leaves one side empty).
+    const halfChunk = chunkSize / 2;
     const halfCrackWidth = crackWidth / 2;
+    const leftFloorWidth = Math.max(0, crackLocalX - halfCrackWidth + halfChunk);
+    const rightFloorWidth = Math.max(0, halfChunk - (crackLocalX + halfCrackWidth));
 
     // Geometry with segments for vertex manipulation (jagged edge)
     const segmentsZ = 32; // More segments along Z for jagged detail
     const segmentsX = 4;
 
-    // --- Left Floor Half (Negative X) ---
-    const leftGeo = new THREE.PlaneGeometry(halfFloorWidth, chunkSize, segmentsX, segmentsZ);
-    const leftPos = leftGeo.attributes.position;
+    // --- Left Floor Part (negative-x side of the crack) ---
+    if (leftFloorWidth > 0) {
+        const leftGeo = new THREE.PlaneGeometry(leftFloorWidth, chunkSize, segmentsX, segmentsZ);
+        const leftPos = leftGeo.attributes.position;
 
-    for (let i = 0; i < leftPos.count; i++) {
-        const x = leftPos.getX(i);
-        const z = -leftPos.getY(i); // Plane is created in XY, mapped to XZ. Y in geo is -Z in world
+        for (let i = 0; i < leftPos.count; i++) {
+            const x = leftPos.getX(i);
+            const z = -leftPos.getY(i); // Plane is created in XY, mapped to XZ. Y in geo is -Z in world
 
-        // Right edge of left floor is at x = halfFloorWidth / 2
-        // We want to perturb vertices near this edge
-        if (x > halfFloorWidth / 2 - 0.1) {
-            // Jagged noise: mix of sine waves
-            const noise = Math.sin(z * 0.5) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
-            // Subtract from X (move left, widening gap randomly) or add (narrowing)
-            // But we want to keep a minimum gap, so let's mostly erode
-            leftPos.setX(i, x - Math.abs(noise) * 0.8);
+            // Right edge of left floor is at x = leftFloorWidth / 2
+            // We want to perturb vertices near this edge
+            if (x > leftFloorWidth / 2 - 0.1) {
+                // Jagged noise: mix of sine waves
+                const noise = Math.sin(z * 0.5) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
+                // Subtract from X (move left, widening gap randomly) or add (narrowing)
+                // But we want to keep a minimum gap, so let's mostly erode
+                leftPos.setX(i, x - Math.abs(noise) * 0.8);
+            }
         }
+        leftPos.needsUpdate = true;
+        leftGeo.computeVertexNormals();
+
+        const leftFloor = new THREE.Mesh(leftGeo, material);
+        leftFloor.rotation.x = -Math.PI / 2;
+        leftFloor.position.x = -halfChunk + leftFloorWidth / 2;
+        leftFloor.receiveShadow = true;
+        group.add(leftFloor);
     }
-    leftPos.needsUpdate = true;
-    leftGeo.computeVertexNormals();
 
-    const leftFloor = new THREE.Mesh(leftGeo, material);
-    leftFloor.rotation.x = -Math.PI / 2;
-    leftFloor.position.x = -(halfCrackWidth + halfFloorWidth / 2);
-    leftFloor.receiveShadow = true;
-    group.add(leftFloor);
+    // --- Right Floor Part (positive-x side of the crack) ---
+    if (rightFloorWidth > 0) {
+        const rightGeo = new THREE.PlaneGeometry(rightFloorWidth, chunkSize, segmentsX, segmentsZ);
+        const rightPos = rightGeo.attributes.position;
 
-    // --- Right Floor Half (Positive X) ---
-    const rightGeo = new THREE.PlaneGeometry(halfFloorWidth, chunkSize, segmentsX, segmentsZ);
-    const rightPos = rightGeo.attributes.position;
+        for (let i = 0; i < rightPos.count; i++) {
+            const x = rightPos.getX(i);
+            const z = -rightPos.getY(i);
 
-    for (let i = 0; i < rightPos.count; i++) {
-        const x = rightPos.getX(i);
-        const z = -rightPos.getY(i);
-
-        // Left edge of right floor is at x = -halfFloorWidth / 2
-        if (x < -halfFloorWidth / 2 + 0.1) {
-            const noise = Math.sin(z * 0.5 + 123.4) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
-            // Add to X (move right, widening gap)
-            rightPos.setX(i, x + Math.abs(noise) * 0.8);
+            // Left edge of right floor is at x = -rightFloorWidth / 2
+            if (x < -rightFloorWidth / 2 + 0.1) {
+                const noise = Math.sin(z * 0.5 + 123.4) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
+                // Add to X (move right, widening gap)
+                rightPos.setX(i, x + Math.abs(noise) * 0.8);
+            }
         }
+        rightPos.needsUpdate = true;
+        rightGeo.computeVertexNormals();
+
+        const rightFloor = new THREE.Mesh(rightGeo, material);
+        rightFloor.rotation.x = -Math.PI / 2;
+        rightFloor.position.x = halfChunk - rightFloorWidth / 2;
+        rightFloor.receiveShadow = true;
+        group.add(rightFloor);
     }
-    rightPos.needsUpdate = true;
-    rightGeo.computeVertexNormals();
 
-    const rightFloor = new THREE.Mesh(rightGeo, material);
-    rightFloor.rotation.x = -Math.PI / 2;
-    rightFloor.position.x = halfCrackWidth + halfFloorWidth / 2;
-    rightFloor.receiveShadow = true;
-    group.add(rightFloor);
-
-    // Abyss plane (pure black) - per-chunk material, must be disposed explicitly
+    // Abyss plane (pure black) - per-chunk material, must be disposed explicitly.
+    // Centered under the crack and clipped to the chunk footprint; the
+    // neighboring chunk of a shared edge crack covers the other half.
+    const abyssHalfWidth = halfCrackWidth + 3; // historical crackWidth + 6 total
+    const abyssMinX = Math.max(-halfChunk, crackLocalX - abyssHalfWidth);
+    const abyssMaxX = Math.min(halfChunk, crackLocalX + abyssHalfWidth);
     const abyssMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
     disposables.push(abyssMaterial);
     const abyssFloor = new THREE.Mesh(
-        new THREE.PlaneGeometry(crackWidth + 6, chunkSize),
+        new THREE.PlaneGeometry(abyssMaxX - abyssMinX, chunkSize),
         abyssMaterial,
     );
     abyssFloor.rotation.x = -Math.PI / 2;
+    abyssFloor.position.x = (abyssMinX + abyssMaxX) / 2;
     abyssFloor.position.y = -8; // Deep abyss
     group.add(abyssFloor);
 
     // --- Abyss Fog ---
-    const fog = createAbyssFog(chunkSize, crackWidth, rand);
+    // Edge cracks are shared with the x-neighbor chunk (same crack volume), so
+    // each contributes half the particles to keep the combined density stable.
+    const isSharedEdgeCrack = leftFloorWidth <= 0 || rightFloorWidth <= 0;
+    const fogParticles = isSharedEdgeCrack ? ABYSS_FOG_PARTICLES / 2 : ABYSS_FOG_PARTICLES;
+    const fog = createAbyssFog(chunkSize, crackWidth, rand, fogParticles);
+    fog.position.x = crackLocalX; // rise out of the crack, wherever it sits
     fog.position.y = -5; // Start fog deep down
     group.add(fog);
     // Fog material is per-chunk; the InstancedMesh GPU buffer is freed by the
@@ -174,8 +210,8 @@ export function createAbyssFog(
     chunkSize: number,
     crackWidth: number,
     rand: () => number = Math.random,
+    particleCount: number = ABYSS_FOG_PARTICLES,
 ): THREE.InstancedMesh {
-    const particleCount = 400;
     const geometry = new THREE.PlaneGeometry(1.5, 1.5);
     const material = new THREE.MeshBasicMaterial({
         color: 0x333333, // Dark grey fog

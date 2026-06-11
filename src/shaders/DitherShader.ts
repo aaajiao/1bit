@@ -76,6 +76,19 @@ export const DitherShader: ShaderDefinition = {
         //   the pulsing uOverrideProgress ramp / low-intensity cooldown denial.
         uRawBypass: { value: 0.0 },
         uOverrideSustain: { value: 0.0 },
+        // ===== F5 dither language =====
+        // uDitherScale: stress-driven sampling-grid divisor (core/StressLevel);
+        //   1.0 = the historical grain, ~2.5 = coarse under full pressure.
+        // uDitherModeFrom/To + uDitherModeBlend: per-room pattern crossfade
+        //   (ids from world/RoomConfig.DITHER_MODE, baked through the
+        //   RoomTransition pipeline; transitions blend pattern OUTPUTS).
+        // tBlueNoise: 64x64 best-candidate ordered threshold texture,
+        //   generated once at boot (shaders/BlueNoiseTexture.ts).
+        uDitherScale: { value: 1.0 },
+        uDitherModeFrom: { value: 0 },
+        uDitherModeTo: { value: 0 },
+        uDitherModeBlend: { value: 1.0 },
+        tBlueNoise: { value: null },
     },
     vertexShader: `
         varying vec2 vUv;
@@ -124,6 +137,12 @@ export const DitherShader: ShaderDefinition = {
         // Override payoff (flow-audit enhancements #4/#5)
         uniform float uRawBypass;            // 1 = output raw tDiffuse (crash frame)
         uniform float uOverrideSustain;      // 0-1 steady held-resistance edge band
+        // F5 dither language: stress grain + per-room pattern crossfade
+        uniform float uDitherScale;     // >=1 sampling-coord divisor (coarser grain)
+        uniform int uDitherModeFrom;    // pattern id of the crossfade's from side
+        uniform int uDitherModeTo;      // pattern id of the room's own side
+        uniform float uDitherModeBlend; // 0=from, 1=to (blends pattern OUTPUTS)
+        uniform sampler2D tBlueNoise;   // 64x64 ordered blue-noise thresholds
         varying vec2 vUv;
 
         // Duotone-aware "inverse": swaps a color toward the opposite palette
@@ -171,6 +190,63 @@ export const DitherShader: ShaderDefinition = {
             if (x==0){ if(y==0)return 0.0; if(y==1)return 0.5; }
             if (x==1){ if(y==0)return 0.75; if(y==1)return 0.25; }
             return 0.5;
+        }
+
+        // ===== DITHER PATTERN LANGUAGE (F5) =====
+
+        // Blue-noise ordered threshold: 64x64 best-candidate rank texture,
+        // CPU-generated once at boot, hash-seeded (shaders/BlueNoiseTexture).
+        // MUST match config BLUE_NOISE.SIZE; RepeatWrapping tiles it for us.
+        const float BLUE_NOISE_SIZE = 64.0;
+        float blueNoiseThreshold(vec2 coord) {
+            vec2 uv = (floor(coord) + 0.5) / BLUE_NOISE_SIZE;
+            return texture2D(tBlueNoise, uv).r;
+        }
+
+        // Low-frequency value noise for the IN_BETWEEN territory field.
+        float territoryHash(vec2 p) {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+        float territoryNoise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            float a = territoryHash(i);
+            float b = territoryHash(i + vec2(1.0, 0.0));
+            float c = territoryHash(i + vec2(0.0, 1.0));
+            float d = territoryHash(i + vec2(1.0, 1.0));
+            return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+        }
+
+        // Threshold of ONE dither pattern mode (DITHER_MODE in RoomConfig:
+        // 0=Bayer, 1=blue-noise, 2=dual conflict, 3=mirrored Bayer). Room
+        // transitions crossfade the OUTPUT of two modes, never the ids.
+        float patternThreshold(int mode, vec2 coord) {
+            if (mode == 1) {
+                // INFO_OVERFLOW: dense but structureless — overload without
+                // the Bayer grid's crystalline order.
+                return blueNoiseThreshold(coord);
+            }
+            if (mode == 2) {
+                // IN_BETWEEN: two systems contest the frame — a slow-drifting
+                // low-frequency field hands each region to Bayer or
+                // blue-noise, with a narrow soft front line between them.
+                float region = territoryNoise(vUv * 5.0 + vec2(mod(uTime, 3600.0) * 0.03, 0.0));
+                float side = smoothstep(0.45, 0.55, region);
+                return mix(bayer4x4(coord), blueNoiseThreshold(coord), side);
+            }
+            if (mode == 3) {
+                // FORCED_ALIGNMENT: the two halves of the view disagree — the
+                // right side mirrors the left's Bayer phase/orientation (even
+                // the pattern takes sides across the rift).
+                vec2 c = coord;
+                if (vUv.x > 0.5) {
+                    c.x = -c.x - 1.0; // mirrored phase: pattern reads right-to-left
+                    c.y += 2.0;       // half-cell slip: the rows disagree too
+                }
+                return bayer4x4(c);
+            }
+            return bayer4x4(coord);
         }
 
         // ===== EDGE DETECTION =====
@@ -278,20 +354,40 @@ export const DitherShader: ShaderDefinition = {
                 jitteredCoord.y += cos(animTime * 8.0 + pixelCoord.y * 0.1) * uTemporalJitter * 2.0;
             }
 
+            // Stress coarsens the grain (F5 "分辨率即情绪"): divide the
+            // sampling coords BEFORE the patterns' int/floor quantization, so
+            // fractional scales land between cell sizes continuously. The
+            // POLARIZED hard-threshold branch never samples a pattern, so the
+            // scale (like every pattern knob) is inert there by construction.
+            vec2 scaledCoord = jitteredCoord / max(uDitherScale, 1.0);
+
             if (enableDepthDither) {
                 float pseudoDepth = length(vUv - 0.5) * 2.0;
                 pseudoDepth = smoothstep(0.0, 1.0, pseudoDepth);
-                float fineThreshold = bayer8x8(jitteredCoord);
-                float coarseThreshold = bayer2x2(jitteredCoord);
+                float fineThreshold = bayer8x8(scaledCoord);
+                float coarseThreshold = bayer2x2(scaledCoord);
                 threshold = mix(fineThreshold, coarseThreshold, smoothstep(ditherTransition - 0.2, ditherTransition + 0.2, pseudoDepth));
             } else {
                 // For POLARIZED room (zeroDither), use hard threshold
                 if (uNoiseDensity < 0.01) {
                     threshold = 0.5; // Pure 1-bit, no dithering
                 } else {
-                    threshold = bayer4x4(jitteredCoord);
+                    // Per-room pattern crossfade (F5): during room transitions
+                    // blend the OUTPUT of the from/to patterns, never the ids.
+                    float pattern;
+                    if (uDitherModeFrom == uDitherModeTo || uDitherModeBlend >= 1.0) {
+                        pattern = patternThreshold(uDitherModeTo, scaledCoord);
+                    } else if (uDitherModeBlend <= 0.0) {
+                        pattern = patternThreshold(uDitherModeFrom, scaledCoord);
+                    } else {
+                        pattern = mix(
+                            patternThreshold(uDitherModeFrom, scaledCoord),
+                            patternThreshold(uDitherModeTo, scaledCoord),
+                            uDitherModeBlend
+                        );
+                    }
                     // Apply noise density - scales the dither pattern
-                    threshold = mix(0.5, threshold, uNoiseDensity);
+                    threshold = mix(0.5, pattern, uNoiseDensity);
                 }
             }
 

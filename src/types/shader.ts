@@ -59,6 +59,21 @@ export interface DitherUniforms {
     //   key stays held past the trigger (fast decay on release).
     uRawBypass: { value: number };
     uOverrideSustain: { value: number };
+    // F5 dither language (分辨率即情绪 + 每房间抖动图案).
+    // uDitherScale: >=1 stress-driven sampling-grid divisor, CPU-smoothed in
+    //   core/StressLevel (attack fast / release slow); coarsens the halftone
+    //   under pressure. Inert in POLARIZED's zero-dither hard threshold.
+    // uDitherModeFrom/To + uDitherModeBlend: per-room pattern crossfade —
+    //   ids from world/RoomConfig.DITHER_MODE, blended through the
+    //   RoomTransition pipeline; the shader mixes the two patterns' OUTPUTS,
+    //   never the ids.
+    // tBlueNoise: 64x64 best-candidate ordered threshold texture
+    //   (shaders/BlueNoiseTexture, generated once at boot, hash-seeded).
+    uDitherScale: { value: number };
+    uDitherModeFrom: { value: number };
+    uDitherModeTo: { value: number };
+    uDitherModeBlend: { value: number };
+    tBlueNoise: { value: THREE.Texture | null };
 }
 
 export interface CableUniforms {

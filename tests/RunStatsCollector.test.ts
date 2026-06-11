@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { LIVE_PROFILE } from '../src/config';
 import { RunStatsCollector } from '../src/stats/RunStatsCollector';
-import { RoomType } from '../src/world/RoomConfig';
+import { riftLineXForWorldX, RoomType } from '../src/world/RoomConfig';
+
+// The FORCED_ALIGNMENT crack of the origin cluster: the rift line is the
+// cluster CENTER (riftLineXForWorldX), never the world origin x=0.
+const CRACK_X = riftLineXForWorldX(0);
 
 describe('runStatsCollector', () => {
     let collector: RunStatsCollector;
@@ -61,6 +66,25 @@ describe('runStatsCollector', () => {
             const stats = collector.getStats();
             expect(stats.xPositionMin).toBe(-100);
             expect(stats.xPositionMax).toBe(200);
+        });
+
+        it('accumulates onCrackTime when standing on the cluster rift line in FA', () => {
+            // Within ±5m of the cluster's rift line (riftLineXForWorldX).
+            collector.update(2.0, 0.5, false, 0, RoomType.FORCED_ALIGNMENT, CRACK_X - 2, false, false);
+            collector.update(3.0, 0.5, false, 0, RoomType.FORCED_ALIGNMENT, CRACK_X + 2, false, false);
+            expect(collector.getStats().onCrackTime).toBe(5.0);
+        });
+
+        it('does NOT accumulate onCrackTime at the world origin (no rift passes x=0)', () => {
+            // x=0 is 35-45m from any cluster's rift line — the "orderly side".
+            expect(Math.abs(0 - riftLineXForWorldX(0))).toBeGreaterThanOrEqual(5);
+            collector.update(5.0, 0.5, false, 0, RoomType.FORCED_ALIGNMENT, 0, false, false);
+            expect(collector.getStats().onCrackTime).toBe(0);
+        });
+
+        it('does NOT accumulate onCrackTime on the rift line outside FORCED_ALIGNMENT', () => {
+            collector.update(5.0, 0.5, false, 0, RoomType.IN_BETWEEN, CRACK_X, false, false);
+            expect(collector.getStats().onCrackTime).toBe(0);
         });
     });
 
@@ -170,6 +194,80 @@ describe('runStatsCollector', () => {
             expect(collector.getDuration()).toBe(0);
             expect(collector.getStats().gazeEvents).toBe(0);
             expect(collector.getStats().overrideAttempts).toBe(0);
+        });
+    });
+
+    describe('getLiveProfile (F1 "the world reads you")', () => {
+        it('returns null before the profile has formed (duration < MIN_DURATION)', () => {
+            for (let i = 0; i < LIVE_PROFILE.MIN_DURATION - 1; i++) {
+                collector.update(1.0, 0.8, true, 0.5, RoomType.FORCED_ALIGNMENT, 0, true, false);
+            }
+            expect(collector.getLiveProfile()).toBeNull();
+        });
+
+        it('forms a fully-saturated profile from a maximal run', () => {
+            // 1s steps: gazing every frame, override held every frame, and
+            // standing on the FORCED_ALIGNMENT crack line (the cluster rift).
+            for (let i = 0; i < LIVE_PROFILE.MIN_DURATION + 5; i++) {
+                collector.update(1.0, 0.9, true, 0.5, RoomType.FORCED_ALIGNMENT, CRACK_X, true, false);
+            }
+            const profile = collector.getLiveProfile();
+            expect(profile).not.toBeNull();
+            expect(profile!.avgFlower).toBeCloseTo(0.9, 5);
+            expect(profile!.gazeRatio).toBeCloseTo(1, 5);
+            expect(profile!.overrideActivity).toBe(1); // ratio 1 >> saturation
+            expect(profile!.crackAffinity).toBe(1); // ratio 1 >> saturation
+        });
+
+        it('forms an all-quiet profile from a do-nothing run', () => {
+            for (let i = 0; i < LIVE_PROFILE.MIN_DURATION + 5; i++) {
+                collector.update(1.0, 0.5, false, 0, RoomType.IN_BETWEEN, 100, false, false);
+            }
+            const profile = collector.getLiveProfile();
+            expect(profile).not.toBeNull();
+            expect(profile!.avgFlower).toBeCloseTo(0.5, 5);
+            expect(profile!.gazeRatio).toBe(0);
+            expect(profile!.overrideActivity).toBe(0);
+            expect(profile!.crackAffinity).toBe(0);
+        });
+
+        it('normalizes partial override/crack ratios against their saturation knobs', () => {
+            // 2s of override hold + 6s on the crack across a 40s run:
+            // overrideRatio 0.05 == saturation -> 1; crackRatio 0.15 -> 0.5.
+            collector.update(2.0, 0.5, false, 0, RoomType.FORCED_ALIGNMENT, CRACK_X, true, false);
+            collector.update(4.0, 0.5, false, 0, RoomType.FORCED_ALIGNMENT, CRACK_X, false, false);
+            collector.update(34.0, 0.5, false, 0, RoomType.IN_BETWEEN, 100, false, false);
+
+            const profile = collector.getLiveProfile();
+            expect(profile).not.toBeNull();
+            expect(profile!.overrideActivity).toBeCloseTo(
+                (2 / 40) / LIVE_PROFILE.OVERRIDE_SATURATION,
+                5,
+            );
+            expect(profile!.crackAffinity).toBeCloseTo(
+                (6 / 40) / LIVE_PROFILE.CRACK_SATURATION,
+                5,
+            );
+        });
+
+        it('keeps every field in [0, 1]', () => {
+            for (let i = 0; i < 60; i++) {
+                collector.update(1.0, 1.0, true, 1.5, RoomType.FORCED_ALIGNMENT, 0, true, true);
+            }
+            const profile = collector.getLiveProfile()!;
+            for (const v of Object.values(profile)) {
+                expect(v).toBeGreaterThanOrEqual(0);
+                expect(v).toBeLessThanOrEqual(1);
+            }
+        });
+
+        it('returns to null after reset (next run starts unformed)', () => {
+            for (let i = 0; i < LIVE_PROFILE.MIN_DURATION + 5; i++) {
+                collector.update(1.0, 0.5, false, 0, null, 0, false, false);
+            }
+            expect(collector.getLiveProfile()).not.toBeNull();
+            collector.reset();
+            expect(collector.getLiveProfile()).toBeNull();
         });
     });
 });

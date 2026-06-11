@@ -1,8 +1,9 @@
 // 1-bit Chimera Void - Run Stats Collector
 // Non-invasive runtime behavior sampling for state snapshot generation
 
-import { GAMEPLAY } from '../config';
-import { RoomType } from '../world/RoomConfig';
+import type { BehaviorProfile } from '../world/RoomConfig';
+import { GAMEPLAY, LIVE_PROFILE } from '../config';
+import { riftLineXForWorldX, RoomType } from '../world/RoomConfig';
 
 /**
  * Raw runtime statistics collected during a run
@@ -65,8 +66,10 @@ export type BehaviorTag
 /**
  * Maps a dominant room type to its behavior tag.
  * Module-level constant so generateTags() does not reallocate it every call.
+ * Exported so the share card (F6) can invert it (tag -> room duotone accent)
+ * without duplicating the mapping.
  */
-const ROOM_TAG_MAP: Record<string, BehaviorTag> = {
+export const ROOM_TAG_MAP: Record<string, BehaviorTag> = {
     [RoomType.INFO_OVERFLOW]: 'INFO_MAZE',
     [RoomType.FORCED_ALIGNMENT]: 'CRACK_WALKER',
     [RoomType.IN_BETWEEN]: 'INBETWEENER',
@@ -165,8 +168,14 @@ export class RunStatsCollector {
         this.stats.xPositionMin = Math.min(this.stats.xPositionMin, playerX);
         this.stats.xPositionMax = Math.max(this.stats.xPositionMax, playerX);
 
-        // Track time on crack (neutral zone in FORCED_ALIGNMENT)
-        if (Math.abs(playerX) < 5.0 && currentRoom === RoomType.FORCED_ALIGNMENT) {
+        // Track time on crack (neutral zone in FORCED_ALIGNMENT). The crack
+        // is the cluster's rift line (riftLineXForWorldX, the single source
+        // of the crack base point) — NOT the world origin x=0, which no rift
+        // ever passes through.
+        if (
+            Math.abs(playerX - riftLineXForWorldX(playerX)) < 5.0
+            && currentRoom === RoomType.FORCED_ALIGNMENT
+        ) {
             this.stats.onCrackTime += deltaTime;
         }
 
@@ -275,6 +284,34 @@ export class RunStatsCollector {
         }
 
         return tags;
+    }
+
+    /**
+     * Live, lightweight normalized behavior profile of the run so far (F1
+     * "the world reads you"), computed on the fly from already-collected
+     * fields — no new sampling. Returns null while the profile has not yet
+     * formed (duration < LIVE_PROFILE.MIN_DURATION), so boot-time generation
+     * and the spawn scan stay exactly neutral. Consumed (low frequency) by
+     * the room ledger via RoomConfig.biasedRoomWeights.
+     */
+    getLiveProfile(): BehaviorProfile | null {
+        const s = this.stats;
+        if (s.duration < LIVE_PROFILE.MIN_DURATION)
+            return null;
+
+        const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+        return {
+            // Same default as normalize(): 0.5 (the flower's boot intensity,
+            // inside the bias deadzone) until the first 2s sample lands.
+            avgFlower: clamp01(s.samples > 0 ? s.flowerIntensitySum / s.samples : 0.5),
+            gazeRatio: clamp01(s.gazeTimeTotal / s.duration),
+            overrideActivity: clamp01(
+                s.overrideTimeTotal / s.duration / LIVE_PROFILE.OVERRIDE_SATURATION,
+            ),
+            crackAffinity: clamp01(
+                s.onCrackTime / s.duration / LIVE_PROFILE.CRACK_SATURATION,
+            ),
+        };
     }
 
     /**

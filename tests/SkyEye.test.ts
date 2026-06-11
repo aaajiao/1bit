@@ -1,9 +1,10 @@
 import type { EyeAwareness, EyeDominancePose } from '../src/world/SkyEye';
 import { describe, expect, it } from 'vitest';
-import { SKY_EYE_AWARENESS, SKY_EYE_DOMINANCE } from '../src/config';
+import { SKY_EYE_AWARENESS, SKY_EYE_DOMINANCE, SKY_EYE_FAMILIARITY } from '../src/config';
 import {
     computeEyeAwareness,
     computeEyeDominancePose,
+    familiarEyeBase,
     SKY_EYE_FOLLOW_LERP,
     SKY_EYE_HEIGHT,
     SKY_EYE_MAX_LAG,
@@ -154,6 +155,70 @@ describe('skyEye computeEyeAwareness', () => {
         const result = computeEyeAwareness(0.5, 0.5, out);
         expect(result).toBe(out);
         expect(out.followLerp).toBeGreaterThan(0);
+    });
+});
+
+// F2 "the eye knows you" — returning visitors are followed more tightly.
+describe('skyEye familiarity (familiarEyeBase)', () => {
+    function freshOut(): EyeAwareness {
+        return {
+            followLerp: -1,
+            maxLag: -1,
+            pupilGain: -1,
+            blinkRate: -1,
+            pupilScale: -1,
+            pupilCenterPull: -1,
+            ringSpeedMult: -1,
+        };
+    }
+
+    it('reproduces the original base constants exactly on a first visit (0 runs)', () => {
+        const base = familiarEyeBase(0);
+        expect(base.followLerp).toBe(SKY_EYE_FOLLOW_LERP);
+        expect(base.maxLag).toBe(SKY_EYE_MAX_LAG);
+    });
+
+    it('tightens monotonically with completed runs and saturates at the cap', () => {
+        let prev = familiarEyeBase(0);
+        for (let runs = 1; runs <= SKY_EYE_FAMILIARITY.CAP_RUNS; runs++) {
+            const base = familiarEyeBase(runs);
+            expect(base.followLerp).toBeGreaterThan(prev.followLerp);
+            expect(base.maxLag).toBeLessThan(prev.maxLag);
+            prev = base;
+        }
+        const atCap = familiarEyeBase(SKY_EYE_FAMILIARITY.CAP_RUNS);
+        const beyond = familiarEyeBase(SKY_EYE_FAMILIARITY.CAP_RUNS * 100);
+        expect(beyond).toEqual(atCap);
+        expect(atCap.followLerp).toBeCloseTo(
+            SKY_EYE_FOLLOW_LERP * (1 + SKY_EYE_FAMILIARITY.FOLLOW_LERP_GAIN),
+            9,
+        );
+        expect(atCap.maxLag).toBeCloseTo(
+            SKY_EYE_MAX_LAG * (1 - SKY_EYE_FAMILIARITY.MAX_LAG_SHRINK),
+            9,
+        );
+    });
+
+    it('tolerates negative counts (clamped to the first-visit base)', () => {
+        expect(familiarEyeBase(-3)).toEqual(familiarEyeBase(0));
+    });
+
+    it('composes with the awareness gains: familiar base feeds computeEyeAwareness', () => {
+        const base = familiarEyeBase(SKY_EYE_FAMILIARITY.CAP_RUNS);
+        // Neutral player state on a familiar base = exactly the familiar base.
+        const neutral = computeEyeAwareness(0, 0, freshOut(), base.followLerp, base.maxLag);
+        expect(neutral.followLerp).toBeCloseTo(base.followLerp, 9);
+        expect(neutral.maxLag).toBeCloseTo(base.maxLag, 9);
+        // Full flower multiplies on top of the familiar base (not the default).
+        const bright = computeEyeAwareness(1, 0, freshOut(), base.followLerp, base.maxLag);
+        expect(bright.followLerp).toBeCloseTo(
+            base.followLerp * (1 + SKY_EYE_AWARENESS.FOLLOW_LERP_FLOWER_GAIN),
+            9,
+        );
+        expect(bright.maxLag).toBeCloseTo(
+            base.maxLag * (1 - SKY_EYE_AWARENESS.MAX_LAG_FLOWER_SHRINK),
+            9,
+        );
     });
 });
 

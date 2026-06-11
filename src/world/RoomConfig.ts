@@ -22,6 +22,27 @@ export enum RoomType {
  */
 export type ColorRGB = [number, number, number];
 
+/**
+ * Dither pattern modes (F5 "每房间抖动图案") — numeric ids consumed by the
+ * DitherShader (uDitherModeFrom / uDitherModeTo). Room transitions crossfade
+ * the OUTPUT of two patterns (uDitherModeBlend), never these ids.
+ * - BAYER: the classic ordered 4x4 grid (also POLARIZED's nominal mode —
+ *   moot, since zero dither never samples a pattern).
+ * - BLUE_NOISE: 64x64 best-candidate texture — dense but structureless,
+ *   overload without order (INFO_OVERFLOW).
+ * - DUAL_CONFLICT: Bayer and blue-noise contest the frame, interleaved by a
+ *   slow low-frequency territory field — two systems fighting for the right
+ *   to render you (IN_BETWEEN).
+ * - MIRROR_BAYER: Bayer whose phase/orientation mirrors across the screen
+ *   center — the two sides disagree down to the pattern (FORCED_ALIGNMENT).
+ */
+export const DITHER_MODE = {
+    BAYER: 0,
+    BLUE_NOISE: 1,
+    DUAL_CONFLICT: 2,
+    MIRROR_BAYER: 3,
+} as const;
+
 export interface RoomShaderConfig {
     uNoiseDensity: number; // 0-1, dither pattern density
     uThresholdBias: number; // -0.5 to 0.5, black/white balance offset
@@ -51,6 +72,14 @@ export interface RoomShaderConfig {
     //   INFO_OVERFLOW so a brighter flower DIRTIES the frame instead — the
     //   room's "more input != more clarity" lesson (flow-audit break #8).
     uFlowerThresholdGain: number;
+    // F5 dither pattern crossfade (ids from DITHER_MODE). The shader renders
+    //   mix(pattern(ditherModeFrom), pattern(ditherMode), ditherModeBlend).
+    //   Settled rooms carry the identity triple (mode, mode, 1); ONLY
+    //   lerpRoomShaderConfig produces partial blends mid-transition — pattern
+    //   ids are categorical and are never numerically interpolated.
+    ditherMode: number;
+    ditherModeFrom: number;
+    ditherModeBlend: number;
 }
 
 /**
@@ -97,6 +126,10 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uMisregister: 0.0,
             // REVERSED: brighter flower lowers clarity here (see interface doc).
             uFlowerThresholdGain: -0.1,
+            // Blue-noise grain: overload without structure (F5).
+            ditherMode: DITHER_MODE.BLUE_NOISE,
+            ditherModeFrom: DITHER_MODE.BLUE_NOISE,
+            ditherModeBlend: 1.0,
         },
         audio: {
             baseFrequency: 60,
@@ -127,6 +160,10 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uScanIntensity: 0.6,
             uMisregister: 0.0,
             uFlowerThresholdGain: 0.1,
+            // Mirrored Bayer: even the pattern takes sides across the rift (F5).
+            ditherMode: DITHER_MODE.MIRROR_BAYER,
+            ditherModeFrom: DITHER_MODE.MIRROR_BAYER,
+            ditherModeBlend: 1.0,
         },
         audio: {
             baseFrequency: 55,
@@ -158,6 +195,10 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             // Subtle duotone misregistration — "misread by both systems".
             uMisregister: 0.5,
             uFlowerThresholdGain: 0.1,
+            // Bayer vs blue-noise territory war: two systems contest the frame (F5).
+            ditherMode: DITHER_MODE.DUAL_CONFLICT,
+            ditherModeFrom: DITHER_MODE.DUAL_CONFLICT,
+            ditherModeBlend: 1.0,
         },
         audio: {
             baseFrequency: 50,
@@ -188,6 +229,11 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             uScanIntensity: 0.0,
             uMisregister: 0.0,
             uFlowerThresholdGain: 0.1,
+            // Nominal only: the zero-dither hard threshold never samples a
+            // pattern, so POLARIZED's purity is untouched by the F5 modes.
+            ditherMode: DITHER_MODE.BAYER,
+            ditherModeFrom: DITHER_MODE.BAYER,
+            ditherModeBlend: 1.0,
         },
         audio: {
             baseFrequency: 40,
@@ -311,8 +357,10 @@ export function infoOverflowJitterForIntensity(intensity: number): number {
 /**
  * FORCED_ALIGNMENT side asymmetry (flow-audit break #7): noise density slides
  * from a tidy LEFT of the rift crack to a broken RIGHT. The blend saturates at
- * halfRange (the chunk footprint half-width), and the crack-center value is the
- * room's baseline 0.55 by construction ((left + right) / 2).
+ * halfRange (the CLUSTER footprint half-width — rooms are 2x2-chunk clusters
+ * and the rift line is the cluster center, see riftLineXForWorldX), and the
+ * crack-center value is the room's baseline 0.55 by construction
+ * ((left + right) / 2).
  */
 export const FORCED_ALIGNMENT_SIDE_NOISE = {
     /** uNoiseDensity at (and beyond) the far LEFT of the crack — tidy side */
@@ -320,37 +368,38 @@ export const FORCED_ALIGNMENT_SIDE_NOISE = {
     /** uNoiseDensity at (and beyond) the far RIGHT of the crack — broken side */
     right: 0.7,
     /** Distance (m) from the crack center at which the side blend saturates */
-    halfRange: WORLD.CHUNK_SIZE / 2,
+    halfRange: (WORLD.CHUNK_SIZE * WORLD.CLUSTER_CHUNKS) / 2,
     /**
-     * Distance (m) inside the chunk footprint edge over which the side noise
-     * eases back to the mid baseline ((left + right) / 2). Each FA chunk has
-     * its own crack, so without this an FA→FA seam jumps right→left (0.7→0.4)
-     * in a single step (flow-audit C1 #3); pulling both sides to the same mid
-     * value AT the seam makes the field continuous across neighbors, while a
-     * short 5m ramp keeps the tidy-left/broken-right reading intact everywhere
-     * else.
+     * Distance (m) inside the cluster footprint edge over which the side
+     * noise eases back to the mid baseline ((left + right) / 2). Each FA
+     * CLUSTER has its own crack, so without this an FA→FA cluster seam jumps
+     * right→left (0.7→0.4) in a single step (flow-audit C1 #3); pulling both
+     * sides to the same mid value AT the seam makes the field continuous
+     * across neighbors, while a short 5m ramp keeps the tidy-left/broken-right
+     * reading intact everywhere else.
      */
     seamBlendRange: 5,
 } as const;
 
 /**
  * FORCED_ALIGNMENT noise density for a world x position: signed distance from
- * the rift crack center (= the chunk center, same round convention as
- * worldToChunkCoord / RiftMechanic — the single chunk-coord source of truth).
- * Within seamBlendRange of the footprint edge the value eases to the mid
- * baseline so adjacent FA chunks meet seamlessly (see seamBlendRange doc).
- * Pure, per-frame safe.
+ * the rift crack center (= the CLUSTER center, same conversion chain as
+ * RiftMechanic / ChunkManager — riftLineXForWorldX is the single source of
+ * the crack base point). Within seamBlendRange of the cluster footprint edge
+ * the value eases to the mid baseline so adjacent FA clusters meet seamlessly
+ * (see seamBlendRange doc). Pure, per-frame safe.
  */
 export function faSideNoiseDensity(worldX: number): number {
     const { left, right, halfRange, seamBlendRange } = FORCED_ALIGNMENT_SIDE_NOISE;
-    const crackCenterX = worldToChunkCoord(worldX) * WORLD.CHUNK_SIZE;
+    const crackCenterX = riftLineXForWorldX(worldX);
     const offset = worldX - crackCenterX;
     const side = Math.max(-1, Math.min(1, offset / halfRange));
     const t = (side + 1) * 0.5;
     const raw = left + t * (right - left);
 
-    // Seam smoothing: |offset| <= halfRange by the round convention, so the
-    // distance to the nearest footprint edge is simply halfRange - |offset|.
+    // Seam smoothing: |offset| <= halfRange because the rift line is the
+    // cluster center, so the distance to the nearest cluster footprint edge
+    // is simply halfRange - |offset|.
     const distToSeam = halfRange - Math.abs(offset);
     if (distToSeam >= seamBlendRange)
         return raw;
@@ -467,13 +516,60 @@ export function stepFogToward(
 }
 
 /**
+ * F3 silhouette-figure density per room (world/FigureSystem): the
+ * probability a chunk HOSTS any figure at all, and the conditional
+ * probability a hosting chunk carries a second one (hard cap 2 per chunk).
+ * Expected figures per chunk = host * (1 + second); with RENDER_DISTANCE=2
+ * (a 5x5 chunk window) even the densest room stays around ~16 expected
+ * on-screen figures (target <= 20) — a far-off presence, never a crowd.
+ */
+export interface RoomFigureDensity {
+    /** Probability a chunk hosts at least one figure. */
+    host: number;
+    /** Probability a hosting chunk hosts a second figure (cap 2). */
+    second: number;
+}
+
+export const ROOM_FIGURE_DENSITY: Record<RoomType, RoomFigureDensity> = {
+    [RoomType.INFO_OVERFLOW]: { host: 0.5, second: 0.3 }, // densest: the overloaded crowd
+    [RoomType.FORCED_ALIGNMENT]: { host: 0.45, second: 0.3 }, // ranks along the rift
+    [RoomType.IN_BETWEEN]: { host: 0.35, second: 0.25 }, // medium: the liminal few
+    [RoomType.POLARIZED]: { host: 0.15, second: 0.1 }, // sparse: most were driven out
+};
+
+/**
+ * FORCED_ALIGNMENT figure placement (F3): figures keep a clearance from the
+ * rift line and stand FACING it. The rift line is the cluster center x
+ * (riftLineXForWorldX), i.e. the seam between a cluster's chunk columns, so
+ * any single chunk's figures are all on one side of the crack: left-column
+ * chunks (crack at local +x) form tidy ranks — one shared distance from the
+ * crack, z snapped to a grid, exact facing — while right-column chunks
+ * (crack at local -x) scatter with untidy facing. Tidy left / broken right
+ * matches the room's side-asymmetric noise (FORCED_ALIGNMENT_SIDE_NOISE).
+ */
+export const FA_FIGURE_PLACEMENT = {
+    /** Min |x| distance (m) from the rift line — nobody stands on the crack. */
+    CRACK_CLEARANCE: 15,
+    /** Tidy-side rank distance (m) from the crack; must be >= CRACK_CLEARANCE. */
+    ROW_DISTANCE: 19,
+    /** Tidy-side rank grid spacing (m) along z. */
+    ROW_SNAP: 8,
+    /** Broken-side scatter depth (m) beyond the clearance. */
+    SCATTER_DEPTH: 20,
+    /** Broken-side facing jitter (rad) off the exact crack-facing. */
+    SCATTER_FACING_JITTER: 0.35,
+} as const;
+
+/**
  * IN_BETWEEN boundary-artifact densification (flow-audit enhancement #14):
- * the z-fight ghost clones must cluster where the chunk meets its neighbors,
- * so the "misread by both systems" shimmer foreshadows the boundary itself.
- * Distances are measured from a building's chunk-local position to the chunk
- * footprint edge (CHUNK_SIZE/2). Building positions are bounded to ±30 of an
- * 80m chunk, so the closest possible approach to the edge is 10m — INNER must
- * stay above that for the band to actually saturate.
+ * the z-fight ghost clones must gather where the ROOM meets its neighbors, so
+ * the "misread by both systems" shimmer foreshadows the boundary itself.
+ * Rooms are 2x2-chunk clusters, so distances are measured from a building's
+ * position to the CLUSTER footprint edge — the inner chunk seams of a cluster
+ * are not boundaries and stay calm. Building positions are bounded to ±30 of
+ * an 80m chunk, so in the cluster's outer band the closest possible approach
+ * to the cluster edge is 10m — INNER must stay above that for the band to
+ * actually saturate.
  */
 export const IN_BETWEEN_EDGE_GHOSTS = {
     /** Edge distance (m) at or under which densification saturates (factor 1). */
@@ -488,17 +584,25 @@ export const IN_BETWEEN_EDGE_GHOSTS = {
 
 /**
  * Edge-proximity factor in [0,1] for a building at chunk-local (localX,
- * localZ): 0 deep in the chunk interior, ramping to 1 within
- * INNER_DISTANCE of the footprint edge (Chebyshev metric, matching the
- * square chunk). Pure, per-chunk-build safe; exported for testing.
+ * localZ) inside chunk (cx, cz): 0 deep in the CLUSTER interior, ramping to 1
+ * within INNER_DISTANCE of the cluster footprint edge (Chebyshev metric,
+ * matching the square cluster). The chunk coords locate the chunk within its
+ * 2x2 cluster so the building's cluster-local position can be derived. Pure,
+ * per-chunk-build safe; exported for testing.
  */
 export function inBetweenEdgeFactor(
     localX: number,
     localZ: number,
+    cx: number,
+    cz: number,
     chunkSize: number = WORLD.CHUNK_SIZE,
 ): number {
     const { INNER_DISTANCE, OUTER_DISTANCE } = IN_BETWEEN_EDGE_GHOSTS;
-    const distToEdge = chunkSize / 2 - Math.max(Math.abs(localX), Math.abs(localZ));
+    // Cluster-local position: world position minus the cluster center.
+    const clusterLocalX = cx * chunkSize + localX - clusterCenterWorld(chunkToCluster(cx), chunkSize);
+    const clusterLocalZ = cz * chunkSize + localZ - clusterCenterWorld(chunkToCluster(cz), chunkSize);
+    const halfCluster = (chunkSize * WORLD.CLUSTER_CHUNKS) / 2;
+    const distToEdge = halfCluster - Math.max(Math.abs(clusterLocalX), Math.abs(clusterLocalZ));
     const t = (OUTER_DISTANCE - distToEdge) / (OUTER_DISTANCE - INNER_DISTANCE);
     return t < 0 ? 0 : t > 1 ? 1 : t;
 }
@@ -517,6 +621,18 @@ export function cloneRoomShaderConfig(config: RoomShaderConfig): RoomShaderConfi
 }
 
 /**
+ * The visually dominant pattern of a (possibly mid-blend) config: the side
+ * holding at least half the crossfade. Used when a mid-blend snapshot is
+ * frozen into a NEW transition's from-side — a three-way pattern blend can't
+ * be represented by the (from, to, blend) triple, so the snapshot's minority
+ * pattern is dropped (a sub-half texture mix; the numeric dither scalars
+ * still freeze exactly, so room crossings stay tonally continuous). Pure.
+ */
+export function dominantDitherMode(config: RoomShaderConfig): number {
+    return config.ditherModeBlend >= 0.5 ? config.ditherMode : config.ditherModeFrom;
+}
+
+/**
  * Interpolate shader config between two rooms for smooth transitions
  */
 export function lerpRoomShaderConfig(
@@ -532,6 +648,20 @@ export function lerpRoomShaderConfig(
         lerp(a[1], b[1]),
         lerp(a[2], b[2]),
     ];
+    // Dither pattern ids are categorical — the shader crossfades the two
+    // patterns' OUTPUTS (uDitherModeBlend), never the ids. At the clamped
+    // endpoints pass that endpoint's own triple through (exact identity,
+    // including a frozen snapshot's partial mix); mid-blend, crossfade from
+    // each side's dominant pattern with the lerp factor itself.
+    const ditherMode = tc <= 0
+        ? from.ditherMode
+        : tc >= 1 ? to.ditherMode : dominantDitherMode(to);
+    const ditherModeFrom = tc <= 0
+        ? from.ditherModeFrom
+        : tc >= 1 ? to.ditherModeFrom : dominantDitherMode(from);
+    const ditherModeBlend = tc <= 0
+        ? from.ditherModeBlend
+        : tc >= 1 ? to.ditherModeBlend : tc;
     return {
         uNoiseDensity: lerp(from.uNoiseDensity, to.uNoiseDensity),
         uThresholdBias: lerp(from.uThresholdBias, to.uThresholdBias),
@@ -545,6 +675,9 @@ export function lerpRoomShaderConfig(
         uScanIntensity: lerp(from.uScanIntensity, to.uScanIntensity),
         uMisregister: lerp(from.uMisregister, to.uMisregister),
         uFlowerThresholdGain: lerp(from.uFlowerThresholdGain, to.uFlowerThresholdGain),
+        ditherMode,
+        ditherModeFrom,
+        ditherModeBlend,
     };
 }
 
@@ -562,6 +695,40 @@ export function worldToChunkCoord(worldCoord: number, chunkSize: number = WORLD.
 }
 
 /**
+ * Chunk coordinate -> room-cluster coordinate, the SINGLE source of cluster
+ * conversion (the cluster analogue of worldToChunkCoord). Rooms are assigned
+ * per WORLD.CLUSTER_CHUNKS x WORLD.CLUSTER_CHUNKS chunk cluster, so a room is
+ * a 160m place rather than an 80m island. Math.floor groups chunk coords into
+ * contiguous runs of CLUSTER_CHUNKS for negative coordinates too: chunks
+ * {2k, 2k+1} -> cluster k for every integer k (e.g. {-2, -1} -> -1).
+ */
+export function chunkToCluster(chunkCoord: number): number {
+    return Math.floor(chunkCoord / WORLD.CLUSTER_CHUNKS);
+}
+
+/**
+ * World coordinate (on one axis) of a cluster's CENTER. Cluster k spans the
+ * chunk footprints of chunks [k*CLUSTER_CHUNKS, (k+1)*CLUSTER_CHUNKS), i.e.
+ * [k*CLUSTER - CHUNK/2, (k+1)*CLUSTER - CHUNK/2) in world units, so its center
+ * sits on the SEAM between the cluster's two chunk columns/rows. On the x
+ * axis this is the FORCED_ALIGNMENT rift line (one crack per cluster).
+ */
+export function clusterCenterWorld(clusterCoord: number, chunkSize: number = WORLD.CHUNK_SIZE): number {
+    return (clusterCoord * WORLD.CLUSTER_CHUNKS + (WORLD.CLUSTER_CHUNKS - 1) / 2) * chunkSize;
+}
+
+/**
+ * X coordinate of the FORCED_ALIGNMENT rift line of the cluster containing
+ * worldX: the cluster center (see clusterCenterWorld). The 4 chunks of an FA
+ * cluster share this single crack line — the "one giant vertical rift" of the
+ * design — instead of one crack per chunk. Single source for the crack base
+ * point (faSideNoiseDensity, RiftMechanic, ChunkManager floor generation).
+ */
+export function riftLineXForWorldX(worldX: number, chunkSize: number = WORLD.CHUNK_SIZE): number {
+    return clusterCenterWorld(chunkToCluster(worldToChunkCoord(worldX, chunkSize)), chunkSize);
+}
+
+/**
  * Get room type at a world position, attributed via the same footprint
  * convention as the visible floor geometry (see worldToChunkCoord).
  */
@@ -573,19 +740,162 @@ export function getRoomTypeAtWorldPosition(x: number, z: number, chunkSize: numb
 }
 
 /**
- * Get room type from chunk position (procedural assignment)
+ * F1 "the world reads you" — behavior → room-weight bias.
+ *
+ * A lightweight normalized profile of the CURRENT run (produced by
+ * stats/RunStatsCollector.getLiveProfile, null until ~30s of play) gently
+ * re-weights which room a NEWLY generated cluster becomes (world/RoomLedger).
+ * The bias is deliberately mild — a single room can at most double its odds
+ * weight — so the world reads as a quiet mirror, never a theme switch.
+ * Already-pinned clusters are never touched.
+ */
+export interface BehaviorProfile {
+    /** Mean flower intensity 0-1 (low = suppressing the light, high = expressing). */
+    avgFlower: number;
+    /** Fraction of play time spent gazing at the sky eye, 0-1. */
+    gazeRatio: number;
+    /** Normalized override (resistance) activity, 0-1. */
+    overrideActivity: number;
+    /** Normalized affinity for the FORCED_ALIGNMENT crack line, 0-1. */
+    crackAffinity: number;
+}
+
+/** Per-room selection weights (relative odds; neutral = all 1). */
+export type RoomWeights = Record<RoomType, number>;
+
+/**
+ * Selection order of the weighted room pick. MUST stay in this historical
+ * hash-bucket order (INFO < FA < IN_BETWEEN < POLARIZED): with neutral
+ * weights the cumulative thresholds land exactly on 0.25/0.5/0.75, making
+ * pickRoomFromWeights bit-identical to the pre-ledger quartile mapping.
+ */
+export const ROOM_PICK_ORDER: readonly RoomType[] = [
+    RoomType.INFO_OVERFLOW,
+    RoomType.FORCED_ALIGNMENT,
+    RoomType.IN_BETWEEN,
+    RoomType.POLARIZED,
+];
+
+/** Neutral weights — the unbiased quartile distribution. Treat as read-only. */
+export const NEUTRAL_ROOM_WEIGHTS: RoomWeights = {
+    [RoomType.INFO_OVERFLOW]: 1,
+    [RoomType.FORCED_ALIGNMENT]: 1,
+    [RoomType.IN_BETWEEN]: 1,
+    [RoomType.POLARIZED]: 1,
+};
+
+/**
+ * The behavior → room bias table (all F1 knobs live here):
+ * each profile reading maps to a drive in [0,1] that lifts ONE room's weight
+ * to at most 1 + drive * GAIN (capped by MAX_MULT). Raising a GAIN sharpens
+ * one mirror axis; raising MAX_MULT makes the whole world more suggestible.
+ */
+export const BEHAVIOR_ROOM_BIAS = {
+    /** Hard cap on any single room's weight (neutral = 1). Gentle: at most x2. */
+    MAX_MULT: 2.0,
+    /**
+     * avgFlower pivot ± deadzone: below (pivot - deadzone) the player reads
+     * as suppressing the light (POLARIZED drive ramps toward 1 at avgFlower
+     * 0); above (pivot + deadzone) as expressing it (INFO_OVERFLOW drive
+     * ramps toward 1 at avgFlower 1). Inside the deadzone — including the
+     * 0.5 default the flower boots with — the flower exerts no bias at all.
+     */
+    FLOWER_PIVOT: 0.5,
+    FLOWER_DEADZONE: 0.1,
+    /** gazeRatio at which the FORCED_ALIGNMENT drive saturates to 1. */
+    GAZE_SATURATION: 0.4,
+    /** Per-room weight gain per unit drive: weight = 1 + drive * gain. */
+    GAIN: {
+        [RoomType.INFO_OVERFLOW]: 1.0, // expression: more signal, more noise
+        [RoomType.FORCED_ALIGNMENT]: 1.0, // entanglement with the authority
+        [RoomType.IN_BETWEEN]: 1.0, // probing the boundaries
+        [RoomType.POLARIZED]: 1.0, // suppression: the world slides binary
+    } as Record<RoomType, number>,
+} as const;
+
+/**
+ * Map a live behavior profile to per-room selection weights (the F1 mirror):
+ *
+ * - LOW avgFlower (suppressing the light) → POLARIZED rises: the world
+ *   slides toward pure binary.
+ * - HIGH avgFlower (expressing) → INFO_OVERFLOW rises: more signal, more noise.
+ * - override or crack activity (probing the boundaries) → IN_BETWEEN rises.
+ * - HIGH gazeRatio (entangled with the authority) → FORCED_ALIGNMENT rises.
+ *
+ * profile = null (not yet formed) returns the neutral weights, so early-run
+ * generation is exactly the unbiased distribution. Every weight stays within
+ * [1, MAX_MULT] — the bias is a lean, never a takeover. Pure.
+ */
+export function biasedRoomWeights(profile: BehaviorProfile | null): RoomWeights {
+    if (profile === null)
+        return { ...NEUTRAL_ROOM_WEIGHTS };
+
+    const { MAX_MULT, FLOWER_PIVOT, FLOWER_DEADZONE, GAZE_SATURATION, GAIN } = BEHAVIOR_ROOM_BIAS;
+    const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+    // Drives in [0,1], one per behavioral reading.
+    const lowEnd = FLOWER_PIVOT - FLOWER_DEADZONE;
+    const highStart = FLOWER_PIVOT + FLOWER_DEADZONE;
+    const suppression = clamp01((lowEnd - profile.avgFlower) / lowEnd);
+    const expression = clamp01((profile.avgFlower - highStart) / (1 - highStart));
+    const boundary = clamp01(Math.max(profile.overrideActivity, profile.crackAffinity));
+    const entanglement = clamp01(profile.gazeRatio / GAZE_SATURATION);
+
+    const weight = (drive: number, gain: number): number => Math.min(MAX_MULT, 1 + drive * gain);
+    return {
+        [RoomType.INFO_OVERFLOW]: weight(expression, GAIN[RoomType.INFO_OVERFLOW]),
+        [RoomType.FORCED_ALIGNMENT]: weight(entanglement, GAIN[RoomType.FORCED_ALIGNMENT]),
+        [RoomType.IN_BETWEEN]: weight(boundary, GAIN[RoomType.IN_BETWEEN]),
+        [RoomType.POLARIZED]: weight(suppression, GAIN[RoomType.POLARIZED]),
+    };
+}
+
+/**
+ * The per-cluster deterministic random draw in [0,1) used for room
+ * assignment — the historical getRoomTypeForCluster hash, extracted so the
+ * session ledger's weighted pick consumes the SAME random source (neutral
+ * weights therefore reproduce the unbiased mapping exactly). Pure.
+ */
+export function clusterRoomRandom(clusterX: number, clusterZ: number): number {
+    return Math.abs(Math.sin(clusterX * 12.9898 + clusterZ * 78.233) * 43758.5453) % 1;
+}
+
+/**
+ * Weighted room pick: r in [0,1) against the cumulative distribution of
+ * `weights` over ROOM_PICK_ORDER. With NEUTRAL_ROOM_WEIGHTS the cumulative
+ * thresholds are exactly 0.25/0.5/0.75 (1/4, 2/4, 3/4 are exact in IEEE754
+ * floats), so this is bit-identical to the historical quartile mapping. Pure.
+ */
+export function pickRoomFromWeights(r: number, weights: RoomWeights): RoomType {
+    let total = 0;
+    for (const room of ROOM_PICK_ORDER)
+        total += weights[room];
+    let acc = 0;
+    for (const room of ROOM_PICK_ORDER) {
+        acc += weights[room];
+        if (r < acc / total)
+            return room;
+    }
+    return ROOM_PICK_ORDER[ROOM_PICK_ORDER.length - 1];
+}
+
+/**
+ * Get room type from cluster position (procedural assignment). The hash is
+ * drawn per CLUSTER, so every chunk of a 2x2 cluster shares one room.
+ * This is the NEUTRAL (profile-free) path — tests and the spawn scan use it
+ * directly; the session ledger (world/RoomLedger) layers the F1 behavior
+ * bias over the same hash draw for newly generated clusters.
+ */
+export function getRoomTypeForCluster(clusterX: number, clusterZ: number): RoomType {
+    return pickRoomFromWeights(clusterRoomRandom(clusterX, clusterZ), NEUTRAL_ROOM_WEIGHTS);
+}
+
+/**
+ * Get room type from chunk position: chunks inherit the room of their 2x2
+ * cluster (see chunkToCluster / getRoomTypeForCluster).
  */
 export function getRoomTypeFromPosition(cx: number, cz: number): RoomType {
-    // Use hash-based distribution for variety
-    const hash = Math.abs(Math.sin(cx * 12.9898 + cz * 78.233) * 43758.5453) % 1;
-
-    if (hash < 0.25)
-        return RoomType.INFO_OVERFLOW;
-    if (hash < 0.50)
-        return RoomType.FORCED_ALIGNMENT;
-    if (hash < 0.75)
-        return RoomType.IN_BETWEEN;
-    return RoomType.POLARIZED;
+    return getRoomTypeForCluster(chunkToCluster(cx), chunkToCluster(cz));
 }
 
 /**
@@ -600,42 +910,61 @@ export const QUIET_SPAWN_ROOMS: ReadonlySet<RoomType> = new Set([
 ]);
 
 /**
- * Find the chunk nearest the origin (Euclidean on chunk coords, ties broken
- * by deterministic scan order) whose room is quiet enough to spawn in.
- * Scans the square [-maxRadiusChunks, maxRadiusChunks]² via the same room
- * attribution as everything else (getRoomTypeFromPosition); the radius cap
- * guards against pathological seeds, with the origin chunk as the fallback.
- * Pure and deterministic.
+ * Find the cluster nearest the origin (Euclidean on cluster coords, ties
+ * broken by deterministic scan order) whose room is quiet enough to spawn in.
+ * Rooms are per-cluster, so scanning the cluster grid is the natural unit
+ * (and 4x cheaper than the old chunk scan). Scans the square
+ * [-maxRadiusClusters, maxRadiusClusters]² via the same room attribution as
+ * everything else (getRoomTypeForCluster); the radius cap guards against
+ * pathological seeds, with the origin cluster as the fallback. Pure and
+ * deterministic.
  */
-export function findQuietSpawnChunk(
-    maxRadiusChunks: number = SPAWN.SCAN_RADIUS_CHUNKS,
-): { cx: number; cz: number } {
-    let best: { cx: number; cz: number } | null = null;
+export function findQuietSpawnCluster(
+    maxRadiusClusters: number = SPAWN.SCAN_RADIUS_CLUSTERS,
+): { clusterX: number; clusterZ: number } {
+    let best: { clusterX: number; clusterZ: number } | null = null;
     let bestDistSq = Infinity;
-    for (let cz = -maxRadiusChunks; cz <= maxRadiusChunks; cz++) {
-        for (let cx = -maxRadiusChunks; cx <= maxRadiusChunks; cx++) {
-            if (!QUIET_SPAWN_ROOMS.has(getRoomTypeFromPosition(cx, cz)))
+    for (let clusterZ = -maxRadiusClusters; clusterZ <= maxRadiusClusters; clusterZ++) {
+        for (let clusterX = -maxRadiusClusters; clusterX <= maxRadiusClusters; clusterX++) {
+            if (!QUIET_SPAWN_ROOMS.has(getRoomTypeForCluster(clusterX, clusterZ)))
                 continue;
-            const distSq = cx * cx + cz * cz;
+            const distSq = clusterX * clusterX + clusterZ * clusterZ;
             if (distSq < bestDistSq) {
                 bestDistSq = distSq;
-                best = { cx, cz };
+                best = { clusterX, clusterZ };
             }
         }
     }
-    return best ?? { cx: 0, cz: 0 };
+    return best ?? { clusterX: 0, clusterZ: 0 };
 }
 
 /**
- * World-space spawn point inside the nearest quiet chunk (flow-audit medium
- * #7): the chunk center (the floor is CENTERED on cx*CHUNK_SIZE — see
- * worldToChunkCoord) plus the historical (8, 8) safe-spawn clearance, which
- * stays well inside the footprint so the offset point keeps the same room.
+ * The "center chunk" of the nearest quiet cluster: the chunk whose floor
+ * footprint contains the cluster's center point under the round convention
+ * (worldToChunkCoord of clusterCenterWorld), so the spawn opens in the heart
+ * of the quiet PLACE rather than at its rim. Pure and deterministic.
+ */
+export function findQuietSpawnChunk(
+    maxRadiusClusters: number = SPAWN.SCAN_RADIUS_CLUSTERS,
+): { cx: number; cz: number } {
+    const { clusterX, clusterZ } = findQuietSpawnCluster(maxRadiusClusters);
+    return {
+        cx: worldToChunkCoord(clusterCenterWorld(clusterX)),
+        cz: worldToChunkCoord(clusterCenterWorld(clusterZ)),
+    };
+}
+
+/**
+ * World-space spawn point inside the nearest quiet cluster (flow-audit medium
+ * #7): its center chunk's center (the floor is CENTERED on cx*CHUNK_SIZE —
+ * see worldToChunkCoord) plus the historical (8, 8) safe-spawn clearance,
+ * which stays well inside the cluster footprint so the offset point keeps
+ * the same room.
  */
 export function findQuietSpawnPosition(
-    maxRadiusChunks: number = SPAWN.SCAN_RADIUS_CHUNKS,
+    maxRadiusClusters: number = SPAWN.SCAN_RADIUS_CLUSTERS,
 ): { x: number; z: number } {
-    const { cx, cz } = findQuietSpawnChunk(maxRadiusChunks);
+    const { cx, cz } = findQuietSpawnChunk(maxRadiusClusters);
     return {
         x: cx * WORLD.CHUNK_SIZE + SPAWN.SPAWN_OFFSET,
         z: cz * WORLD.CHUNK_SIZE + SPAWN.SPAWN_OFFSET,

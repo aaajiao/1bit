@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { WORLD } from '../src/config';
 import {
+    clusterCenterWorld,
     DEFAULT_WEATHER_WEIGHTS,
     faSideNoiseDensity,
     FORCED_ALIGNMENT_SIDE_NOISE,
@@ -83,19 +84,26 @@ describe('infoOverflowJitterForIntensity (INFO_OVERFLOW flower -> temporal jitte
 });
 
 describe('faSideNoiseDensity (FORCED_ALIGNMENT signed side -> noise density)', () => {
-    const SIZE = WORLD.CHUNK_SIZE;
     const HALF = FORCED_ALIGNMENT_SIDE_NOISE.halfRange;
     const BLEND = FORCED_ALIGNMENT_SIDE_NOISE.seamBlendRange;
     const { left, right } = FORCED_ALIGNMENT_SIDE_NOISE;
     const MID = (left + right) / 2;
+    // The crack base point is the CLUSTER center line (one rift per 2x2-chunk
+    // cluster); CRACK is cluster 0's line, CRACK2 a far-away cluster's line.
+    const CRACK = clusterCenterWorld(0);
+    const CRACK2 = clusterCenterWorld(2);
     // Side value at the inner edge of the seam-blend zone (|offset| = HALF-BLEND):
     // the most tidy/broken reading the smoothed field actually reaches.
     const EDGE_DELTA = (BLEND / (2 * HALF)) * (right - left);
 
-    it('returns the room baseline (0.55) exactly on the crack center', () => {
-        // Chunk centers sit at k * CHUNK_SIZE under the round convention.
+    it('saturates the side blend at the cluster half-width (rooms are 160m places)', () => {
+        expect(HALF).toBe((WORLD.CHUNK_SIZE * WORLD.CLUSTER_CHUNKS) / 2);
+    });
+
+    it('returns the room baseline (0.55) exactly on the crack line', () => {
+        // Rift lines sit on cluster centers (clusterCenterWorld).
         for (const k of [-3, 0, 2, 17]) {
-            expect(faSideNoiseDensity(k * SIZE)).toBeCloseTo(
+            expect(faSideNoiseDensity(clusterCenterWorld(k))).toBeCloseTo(
                 ROOM_CONFIGS[RoomType.FORCED_ALIGNMENT].shader.uNoiseDensity,
                 9,
             );
@@ -103,22 +111,22 @@ describe('faSideNoiseDensity (FORCED_ALIGNMENT signed side -> noise density)', (
     });
 
     it('is most tidy LEFT / broken RIGHT at the seam-blend inner edges', () => {
-        expect(faSideNoiseDensity(-(HALF - BLEND))).toBeCloseTo(left + EDGE_DELTA, 9);
-        expect(faSideNoiseDensity(HALF - BLEND)).toBeCloseTo(right - EDGE_DELTA, 9);
-        // Same shape inside a far-away chunk footprint.
-        expect(faSideNoiseDensity(2 * SIZE - (HALF - BLEND))).toBeCloseTo(left + EDGE_DELTA, 9);
-        expect(faSideNoiseDensity(2 * SIZE + (HALF - BLEND))).toBeCloseTo(right - EDGE_DELTA, 9);
+        expect(faSideNoiseDensity(CRACK - (HALF - BLEND))).toBeCloseTo(left + EDGE_DELTA, 9);
+        expect(faSideNoiseDensity(CRACK + (HALF - BLEND))).toBeCloseTo(right - EDGE_DELTA, 9);
+        // Same shape inside a far-away cluster footprint.
+        expect(faSideNoiseDensity(CRACK2 - (HALF - BLEND))).toBeCloseTo(left + EDGE_DELTA, 9);
+        expect(faSideNoiseDensity(CRACK2 + (HALF - BLEND))).toBeCloseTo(right - EDGE_DELTA, 9);
     });
 
-    it('eases back to the mid baseline at the footprint edges (seam smoothing)', () => {
-        expect(faSideNoiseDensity(-HALF)).toBeCloseTo(MID, 9);
-        expect(faSideNoiseDensity(HALF - 1e-6)).toBeCloseTo(MID, 5);
-        expect(faSideNoiseDensity(2 * SIZE - HALF)).toBeCloseTo(MID, 9);
+    it('eases back to the mid baseline at the cluster footprint edges (seam smoothing)', () => {
+        expect(faSideNoiseDensity(CRACK - HALF)).toBeCloseTo(MID, 9);
+        expect(faSideNoiseDensity(CRACK + HALF - 1e-6)).toBeCloseTo(MID, 5);
+        expect(faSideNoiseDensity(CRACK2 - HALF)).toBeCloseTo(MID, 9);
     });
 
-    it('is continuous across an FA-FA chunk seam (no right -> left jump)', () => {
+    it('is continuous across an FA-FA cluster seam (no right -> left jump)', () => {
         // Without seam smoothing this seam jumped 0.7 -> 0.4 in a single step.
-        const seamX = SIZE / 2; // boundary between chunk 0 and chunk 1 footprints
+        const seamX = CRACK + HALF; // boundary between cluster 0 and cluster 1 footprints
         const eps = 0.01;
         const before = faSideNoiseDensity(seamX - eps);
         const after = faSideNoiseDensity(seamX + eps);
@@ -129,15 +137,18 @@ describe('faSideNoiseDensity (FORCED_ALIGNMENT signed side -> noise density)', (
 
     it('interpolates linearly with the signed offset inside the footprint', () => {
         // Offset +HALF/2 -> t = 0.75 -> 0.4 + 0.75 * 0.3 = 0.625.
-        expect(faSideNoiseDensity(HALF / 2)).toBeCloseTo(0.625, 9);
+        expect(faSideNoiseDensity(CRACK + HALF / 2)).toBeCloseTo(0.625, 9);
         // Offset -HALF/2 -> t = 0.25 -> 0.475.
-        expect(faSideNoiseDensity(-HALF / 2)).toBeCloseTo(0.475, 9);
+        expect(faSideNoiseDensity(CRACK - HALF / 2)).toBeCloseTo(0.475, 9);
     });
 
-    it('is monotonically non-decreasing left-to-right between the seam-blend zones', () => {
-        let prev = faSideNoiseDensity(-(HALF - BLEND));
+    it('has ONE crack per cluster: monotonic left-to-right across the whole 160m footprint', () => {
+        // With the old per-chunk cracks the field reset to MID at every chunk
+        // center; one cluster rift means a single monotonic sweep between the
+        // seam-blend zones — including across the cluster's inner chunk seams.
+        let prev = faSideNoiseDensity(CRACK - (HALF - BLEND));
         for (let x = -(HALF - BLEND); x <= HALF - BLEND; x += 1) {
-            const cur = faSideNoiseDensity(x);
+            const cur = faSideNoiseDensity(CRACK + x);
             expect(cur).toBeGreaterThanOrEqual(prev);
             prev = cur;
         }

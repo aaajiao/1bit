@@ -97,6 +97,29 @@ function ensureDuotoneUniforms(
         u.uOverrideSustain = { value: 0.0 };
         injected = true;
     }
+    // F5 dither language. Defaults reproduce the historical look exactly:
+    // scale 1 + mode 0/0 (pure Bayer, so tBlueNoise is never sampled even
+    // while null) + blend 1.
+    if (!u.uDitherScale) {
+        u.uDitherScale = { value: 1.0 };
+        injected = true;
+    }
+    if (!u.uDitherModeFrom) {
+        u.uDitherModeFrom = { value: 0 };
+        injected = true;
+    }
+    if (!u.uDitherModeTo) {
+        u.uDitherModeTo = { value: 0 };
+        injected = true;
+    }
+    if (!u.uDitherModeBlend) {
+        u.uDitherModeBlend = { value: 1.0 };
+        injected = true;
+    }
+    if (!u.tBlueNoise) {
+        u.tBlueNoise = { value: null };
+        injected = true;
+    }
 
     if (injected) {
         // Force the renderer to rebuild its cached uniform list so the freshly
@@ -166,6 +189,13 @@ export interface ShaderUniformParams {
      * (not per-room) — room reactivity stays baked upstream in RoomTransition.
      */
     sunsetForeshadow: number;
+    /**
+     * Stress-driven dither sampling scale (F5 "分辨率即情绪"), >=1. Smoothed
+     * CPU-side by core/StressLevel (attack fast / release slow) and fed in by
+     * main.ts — a global player layer like the gaze contrast; the per-room
+     * pattern crossfade rides shaderConfig instead.
+     */
+    ditherScale: number;
 }
 
 /**
@@ -192,6 +222,7 @@ export function createShaderUniformParams(
         pitch: 0,
         gazeThresholdPulse: 0,
         sunsetForeshadow: 0,
+        ditherScale: 1,
     };
 }
 
@@ -214,6 +245,7 @@ export function updateShaderUniforms(params: ShaderUniformParams): void {
         pitch,
         gazeThresholdPulse,
         sunsetForeshadow,
+        ditherScale,
     } = params;
     ensureDuotoneUniforms(shaderQuad.material);
     const u = shaderQuad.material.uniforms;
@@ -249,6 +281,13 @@ export function updateShaderUniforms(params: ShaderUniformParams): void {
     // POLARIZED's pristine 0 is never quite 0 again this run.
     u.uMisregister.value = Math.min(1, shaderConfig.uMisregister + overrideResidue);
     u.uFlowerThresholdGain.value = shaderConfig.uFlowerThresholdGain;
+    // F5 dither language: the room's pattern crossfade triple (categorical
+    // ids + output-blend factor, baked upstream by RoomTransition — never
+    // numerically lerped) and the global stress-driven grain scale.
+    u.uDitherModeFrom.value = shaderConfig.ditherModeFrom;
+    u.uDitherModeTo.value = shaderConfig.ditherMode;
+    u.uDitherModeBlend.value = Math.min(1, Math.max(0, shaderConfig.ditherModeBlend));
+    u.uDitherScale.value = Math.max(1, ditherScale);
 
     // Room duotone palette (mutate the existing Vector3 in place to avoid churn).
     (u.uInkColor.value as THREE.Vector3).set(

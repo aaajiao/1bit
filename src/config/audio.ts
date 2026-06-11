@@ -92,6 +92,25 @@ export const OVERRIDE_DENIED_CONFIG = {
 };
 
 /**
+ * Distant tear (F3 silhouette rebellion): the player's own override tear,
+ * heard from far away when a distant figure breaks rank — quieter, duller
+ * (lowpassed), slightly longer. Volume scales with the trigger proximity
+ * (1 = the closest possible rebellion, FIGURES.REBEL_MIN_DISTANCE; 0 = the
+ * farthest), so the rip always reads as happening ELSEWHERE.
+ */
+export const DISTANT_TEAR_CONFIG = {
+    /** Volume at proximity 0 (farthest trigger distance). */
+    minVolume: 0.03,
+    /** Volume at proximity 1 (closest trigger distance). */
+    maxVolume: 0.12,
+    /** Noise burst length (s) — longer than the player's own 0.3s tear. */
+    duration: 0.5,
+    /** Lowpass cutoff (Hz): distance eats the highs. */
+    filterFreq: 900,
+    filterQ: 0.8,
+};
+
+/**
  * Flower-intensity change confirm tone (flow-audit medium #6): event-driven
  * from the player's wheel / Q-E / touch-button input. Pitch rises with the
  * new intensity so each tick is an audible confirmation of the change.

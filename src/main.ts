@@ -9,18 +9,21 @@ import { isWebGLAvailable, showFallback } from './core/BootGuard';
 import { CableAudioUpdater } from './core/CableAudioUpdater';
 import { HudUpdater } from './core/HudUpdater';
 import { PauseController } from './core/PauseController';
-import { createPostProcessing, updatePostProcessingSize } from './core/PostProcessing';
+import { createPostProcessing, disposePostProcessing, updatePostProcessingSize } from './core/PostProcessing';
 import { RoomFlowUpdater } from './core/RoomFlowUpdater';
 import { createScene, updateScannerLight } from './core/SceneSetup';
 import { createShaderUniformParams, updateShaderUniforms } from './core/ShaderUniformUpdater';
 import { StatsSunsetUpdater } from './core/StatsSunsetUpdater';
+import { StressLevel } from './core/StressLevel';
 // New Managers
 import { PlayerManager } from './player/PlayerManager';
 import { RunStatsCollector } from './stats/RunStatsCollector';
-import { disposeRenderTarget } from './utils/dispose';
+import { ScarStore } from './stats/ScarStorage';
 import { ScreenshotManager } from './utils/ScreenshotManager';
 import { updateCableTime } from './world/CableSystem';
 import { CHUNK_SIZE, ChunkManager } from './world/ChunkManager';
+import { FigureSystem } from './world/FigureSystem';
+import { GhostSystem } from './world/GhostSystem';
 import { findQuietSpawnPosition, getRoomTypeAtWorldPosition, RoomType } from './world/RoomConfig';
 import { SkyEye } from './world/SkyEye';
 import { WeatherSystem } from './world/WeatherSystem';
@@ -51,6 +54,7 @@ class ChimeraVoid {
     // Systems
     private player: PlayerManager;
     private runStats: RunStatsCollector;
+    private scars: ScarStore;
     private screenshotManager: ScreenshotManager;
 
     // Per-frame wiring helpers (core/)
@@ -58,6 +62,8 @@ class ChimeraVoid {
     private roomFlow: RoomFlowUpdater;
     private statsSunset: StatsSunsetUpdater;
     private hudUpdater: HudUpdater;
+    // F5 stress->grain smoother (pressure coarsens the dither sampling grid).
+    private stress: StressLevel = new StressLevel();
 
     // Pause state machine + persistent window/document listeners: while paused
     // (no pointer lock / start screen shown / tab hidden) the entire UPDATE
@@ -102,10 +108,19 @@ class ChimeraVoid {
         const spawn = findQuietSpawnPosition();
         this.player.setSpawnPosition(spawn.x, SPAWN.SPAWN_HEIGHT, spawn.z);
 
+        // Cross-run scar record (F2): ONE localStorage read at boot, cached
+        // in memory — the eye's familiarity and the world's scars both read
+        // from this snapshot-side cache.
+        this.scars = new ScarStore();
+
         // World & Environment (seed the room state from the actual spawn so
         // the first frame doesn't blend in from the wrong room's palette)
-        this.skyEye = new SkyEye(this.scene);
-        this.chunkManager = new ChunkManager(this.scene, getRoomTypeAtWorldPosition(spawn.x, spawn.z));
+        this.skyEye = new SkyEye(this.scene, this.scars.getRunsCompleted());
+        this.chunkManager = new ChunkManager(
+            this.scene,
+            getRoomTypeAtWorldPosition(spawn.x, spawn.z),
+            this.scars.getScars(),
+        );
         this.weather = new WeatherSystem();
 
         // Stats & Utils
@@ -116,7 +131,18 @@ class ChimeraVoid {
         this.cableAudio = new CableAudioUpdater();
         // Room flow also eases scene.fog toward the current room's horizon
         // (flow-audit enhancement #12); createScene always installs THREE.Fog.
-        this.roomFlow = new RoomFlowUpdater(this.scene.fog as THREE.Fog | null);
+        // The profile source feeds the room ledger (F1 "the world reads you").
+        // The figure system (F3 silhouettes) attributes rooms via the chunk
+        // manager's ledger so figures agree with the generated world; the
+        // ghost (F4) replays last session's persisted trail, loaded here at
+        // boot before any save can overwrite it. The RoomFlowUpdater drives
+        // both per frame and owns their dispose.
+        this.roomFlow = new RoomFlowUpdater(
+            this.scene.fog as THREE.Fog | null,
+            () => this.runStats.getLiveProfile(),
+            new FigureSystem(this.scene, this.chunkManager),
+            new GhostSystem(this.scene),
+        );
         this.statsSunset = new StatsSunsetUpdater({
             scene: this.scene,
             shaderQuad: this.postProcessing.shaderQuad,
@@ -124,6 +150,7 @@ class ChimeraVoid {
             weather: this.weather,
             runStats: this.runStats,
             player: this.player,
+            scars: this.scars,
         });
         this.hudUpdater = new HudUpdater();
         this.shaderParams = createShaderUniformParams(
@@ -245,6 +272,15 @@ class ChimeraVoid {
         sp.pitch = playerState.pitch;
         sp.gazeThresholdPulse = playerState.gazeThresholdPulse;
         sp.sunsetForeshadow = this.statsSunset.getSunsetForeshadow();
+        // Stress->grain (F5): pressure coarsens the dither sampling grid.
+        sp.ditherScale = this.stress.update(
+            delta,
+            playerState.gazeIntensity,
+            this.player.getOverrideSustain(),
+            playerState.flowerIntensity,
+            currentRoomType,
+            sp.sunsetForeshadow,
+        );
         updateShaderUniforms(sp);
 
         // Audio tick
@@ -308,10 +344,8 @@ class ChimeraVoid {
         this.screenshotManager.dispose();
         this.statsSunset.dispose();
 
-        // Dispose post-processing
-        disposeRenderTarget(this.postProcessing.renderTarget);
-        this.postProcessing.shaderQuad.geometry.dispose();
-        (this.postProcessing.shaderQuad.material as THREE.ShaderMaterial).dispose();
+        // Dispose post-processing (render target + quad + blue-noise texture)
+        disposePostProcessing(this.postProcessing);
 
         // Dispose renderer
         this.renderer.dispose();

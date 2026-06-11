@@ -9,6 +9,7 @@ import type { RoomAudioConfig } from '../world/RoomConfig';
 import {
     BINAURAL_SIDE_CONFIG,
     CABLE_AUDIO_CONFIG,
+    DISTANT_TEAR_CONFIG,
     FLOWER_ATTENTION_CONFIG,
     FLOWER_CHANGE_TONE_CONFIG,
     FOOTSTEP_CONFIG,
@@ -358,6 +359,25 @@ export class AudioController implements AudioSystemInterface {
             filterType: 'bandpass',
             filterFreq: 2000,
             filterQ: 1.5,
+        });
+    }
+
+    /**
+     * Distant tear for a silhouette's rebellion (F3): the player's own
+     * override tear heard from far away — quieter, duller (lowpassed) and
+     * slightly longer. `proximity` in [0,1] scales the volume (1 = the
+     * closest possible trigger distance, 0 = the farthest), so the rip
+     * always reads as happening ELSEWHERE, never to you.
+     */
+    playDistantTear(proximity: number): void {
+        const p = Math.max(0, Math.min(1, proximity));
+        this.engine.playNoise({
+            duration: DISTANT_TEAR_CONFIG.duration,
+            volume: DISTANT_TEAR_CONFIG.minVolume
+                + p * (DISTANT_TEAR_CONFIG.maxVolume - DISTANT_TEAR_CONFIG.minVolume),
+            filterType: 'lowpass',
+            filterFreq: DISTANT_TEAR_CONFIG.filterFreq,
+            filterQ: DISTANT_TEAR_CONFIG.filterQ,
         });
     }
 

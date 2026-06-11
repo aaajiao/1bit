@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AUDIO_MASTER, CABLE_AUDIO_CONFIG, FOOTSTEP_CONFIG, POLARIZED_BEAT_CONFIG, SNAPSHOT_AUDIO_CONFIG } from '../src/config/audio';
-import { FLOWER_HINT, FLOWER_INTRO, GAMEPLAY, OVERRIDE, SPAWN, SUNSET_FORESHADOW, WORLD } from '../src/config/constants';
+import { FLOWER_HINT, FLOWER_INTRO, FLOWER_LIGHT, GAMEPLAY, OVERRIDE, SPAWN, SUNSET_FORESHADOW, WORLD } from '../src/config/constants';
 import { PHYSICS_CONFIG, RIFT_PHYSICS } from '../src/config/physics';
 
 describe('physics Config', () => {
@@ -106,6 +106,34 @@ describe('audio Config', () => {
     });
 });
 
+describe('flower light Config (F5 "花是光")', () => {
+    it('should keep the decay gentle but physical (0 < decay <= 2)', () => {
+        expect(FLOWER_LIGHT.DECAY).toBeGreaterThan(0);
+        expect(FLOWER_LIGHT.DECAY).toBeLessThanOrEqual(2);
+    });
+
+    it('should define all three flower states with positive params', () => {
+        expect(FLOWER_LIGHT.INTENSITY.length).toBe(3);
+        expect(FLOWER_LIGHT.DISTANCE.length).toBe(3);
+        for (let s = 0; s < 3; s++) {
+            expect(FLOWER_LIGHT.INTENSITY[s].BASE).toBeGreaterThan(0);
+            expect(FLOWER_LIGHT.INTENSITY[s].GAIN).toBeGreaterThanOrEqual(0);
+            expect(FLOWER_LIGHT.DISTANCE[s].BASE).toBeGreaterThan(0);
+            expect(FLOWER_LIGHT.DISTANCE[s].GAIN).toBeGreaterThanOrEqual(0);
+        }
+    });
+
+    it('should grow monotonically across states (brighter flower = more exposure)', () => {
+        for (let s = 0; s < 2; s++) {
+            expect(FLOWER_LIGHT.INTENSITY[s + 1].BASE).toBeGreaterThan(FLOWER_LIGHT.INTENSITY[s].BASE);
+            expect(FLOWER_LIGHT.DISTANCE[s + 1].BASE).toBeGreaterThan(FLOWER_LIGHT.DISTANCE[s].BASE);
+        }
+        // It stays a hand light, not a floodlight: max reach well under fog far.
+        const maxReach = FLOWER_LIGHT.DISTANCE[2].BASE + FLOWER_LIGHT.DISTANCE[2].GAIN;
+        expect(maxReach).toBeLessThanOrEqual(20);
+    });
+});
+
 describe('settlement & spawn Config', () => {
     it('should keep the dusk paper shift dimming-only and inside a half-cycle', () => {
         expect(SUNSET_FORESHADOW.WARM_SHIFT).toBeLessThanOrEqual(SUNSET_FORESHADOW.PAPER_DIM);
@@ -118,6 +146,11 @@ describe('settlement & spawn Config', () => {
     it('should keep the safe-spawn offset inside the chunk half-width', () => {
         expect(SPAWN.SPAWN_OFFSET).toBeGreaterThanOrEqual(0);
         expect(SPAWN.SPAWN_OFFSET).toBeLessThan(WORLD.CHUNK_SIZE / 2);
-        expect(SPAWN.SCAN_RADIUS_CHUNKS).toBeGreaterThanOrEqual(1);
+        expect(SPAWN.SCAN_RADIUS_CLUSTERS).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should keep the room-cluster edge a positive whole number of chunks', () => {
+        expect(Number.isInteger(WORLD.CLUSTER_CHUNKS)).toBe(true);
+        expect(WORLD.CLUSTER_CHUNKS).toBeGreaterThanOrEqual(1);
     });
 });

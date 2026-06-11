@@ -1,6 +1,8 @@
 // Post-processing setup module
 import * as THREE from 'three';
+import { createBlueNoiseTexture } from '../shaders/BlueNoiseTexture';
 import { DitherShader } from '../shaders/DitherShader';
+import { disposeRenderTarget } from '../utils/dispose';
 
 /**
  * Components created by post-processing setup
@@ -79,6 +81,15 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
                 // + sustained-hold edge band. Default 0 = inert.
                 uRawBypass: { value: 0.0 },
                 uOverrideSustain: { value: 0.0 },
+                // F5 dither language: stress grain scale (1 = historical) +
+                // per-room pattern crossfade (mode 0/0/blend 1 = pure Bayer,
+                // overwritten each frame from the room config) + the
+                // boot-generated blue-noise threshold texture.
+                uDitherScale: { value: 1.0 },
+                uDitherModeFrom: { value: 0 },
+                uDitherModeTo: { value: 0 },
+                uDitherModeBlend: { value: 1.0 },
+                tBlueNoise: { value: createBlueNoiseTexture() },
             },
             vertexShader: DitherShader.vertexShader,
             fragmentShader: DitherShader.fragmentShader,
@@ -87,6 +98,20 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
     composerScene.add(shaderQuad);
 
     return { renderTarget, composerScene, composerCamera, shaderQuad };
+}
+
+/**
+ * Dispose all post-processing GPU resources: the render target, the shader
+ * quad's geometry/material, and the boot-generated blue-noise texture
+ * (material.dispose() does NOT release textures held in uniforms).
+ */
+export function disposePostProcessing(components: PostProcessingComponents): void {
+    disposeRenderTarget(components.renderTarget);
+    const material = components.shaderQuad.material;
+    const blueNoise = material.uniforms.tBlueNoise?.value as THREE.Texture | null | undefined;
+    blueNoise?.dispose();
+    components.shaderQuad.geometry.dispose();
+    material.dispose();
 }
 
 /**
