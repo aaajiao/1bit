@@ -15,6 +15,9 @@ export interface AudioSystemInterface {
     tick: (deltaTime: number) => void;
     // Override
     playOverrideTear: () => void;
+    // Light low thud when the override key is denied for lack of gaze
+    // (flow-audit break #2 failure-feedback tier).
+    playOverrideDeniedThud: () => void;
     // Room
     playRoomTransition: () => void;
     playJump: () => void;
@@ -24,6 +27,9 @@ export interface AudioSystemInterface {
     // Flower
     updateFlowerAudio: (intensity: number) => void;
     playFlowerStateChange: (ascending: boolean) => void;
+    // Event-driven confirm tone for a player intensity change (debounced;
+    // flow-audit medium #6). Wired from the Controls intensity callback.
+    playFlowerChangeTone: (intensity: number) => void;
     stopFlowerAudio: () => void;
     // Rift
     startRiftFog: () => void;
@@ -36,8 +42,10 @@ export interface AudioSystemInterface {
     startCableHum: () => void;
     updateCableHum: (intensity: number) => void;
     stopCableHum: () => void;
-    // Binaural
-    updateBinauralPosition: (xPosition: number, crackWidth: number) => void;
+    // Binaural — signedOffsetX is the SIGNED x distance from the rift crack
+    // center (negative = left/consonant side, positive = right/dissonant side);
+    // |offset| drives loudness, the sign drives the beat detune direction.
+    updateBinauralPosition: (signedOffsetX: number, crackWidth: number) => void;
 }
 
 export interface AmbientNode {

@@ -1,6 +1,7 @@
 import type { AppConfig } from '../types';
 // Scene initialization module
 import * as THREE from 'three';
+import { CAMERA } from '../config';
 
 /**
  * Components created by scene setup
@@ -23,7 +24,7 @@ export function createScene(container: HTMLElement, config: AppConfig): SceneCom
 
     // Camera
     const camera = new THREE.PerspectiveCamera(
-        80,
+        CAMERA.FOV_DEGREES,
         window.innerWidth / window.innerHeight,
         0.1,
         1000,
@@ -59,4 +60,19 @@ export function createScene(container: HTMLElement, config: AppConfig): SceneCom
     scene.add(camera);
 
     return { scene, camera, renderer, scannerLight };
+}
+
+/**
+ * Per-frame scanner-light sweep: orbit the spotlight target around the player
+ * so the surveillance beam keeps scanning the world.
+ * @param scannerLight - The scanner spotlight created by createScene
+ * @param t - Elapsed time in seconds
+ */
+export function updateScannerLight(scannerLight: THREE.SpotLight, t: number): void {
+    scannerLight.target.position.set(
+        Math.sin(t * 0.5) * 100,
+        0,
+        Math.cos(t * 0.5) * 100,
+    );
+    scannerLight.target.updateMatrixWorld();
 }

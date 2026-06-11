@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RoomType } from '../src/world/RoomConfig';
 import { WEATHER_TYPES, WeatherSystem } from '../src/world/WeatherSystem';
 
 describe('weatherSystem', () => {
@@ -302,6 +303,62 @@ describe('weatherSystem', () => {
             weather.forceWeather('rain', 50);
             for (let i = 0; i < 30; i++) {
                 const state = weather.update(0.1, i * 0.1);
+                expect(state.weatherType).toBe(WEATHER_TYPES.RAIN);
+            }
+        });
+    });
+
+    describe('room-weighted selection (flow-audit medium #3)', () => {
+        // Drains the constructor cooldown (<= 60s at the pinned constructor draw)
+        // in one frame so startRandomWeather fires with the given RNG draw and room.
+        function triggerWithDraw(draw: number, room: RoomType | null): number {
+            const r = vi.spyOn(Math, 'random');
+            r.mockReturnValue(0.5); // constructor cooldown = 45
+            const sys = new WeatherSystem();
+            r.mockReturnValue(draw);
+            return sys.update(61, 61, room).weatherType;
+        }
+
+        it('should never start STATIC or RAIN in POLARIZED — only GLITCH survives', () => {
+            for (const draw of [0, 0.2, 0.5, 0.8, 0.999]) {
+                expect(triggerWithDraw(draw, RoomType.POLARIZED), `draw ${draw}`)
+                    .toBe(WEATHER_TYPES.GLITCH);
+            }
+        });
+
+        it('should bias INFO_OVERFLOW toward RAIN on draws that pick other types by default', () => {
+            // Default rotation (equal thirds): 0.3 -> STATIC, 0.7 -> GLITCH.
+            expect(triggerWithDraw(0.3, null)).toBe(WEATHER_TYPES.STATIC);
+            expect(triggerWithDraw(0.7, null)).toBe(WEATHER_TYPES.GLITCH);
+            // INFO_OVERFLOW weights (1/6/1, total 8): both draws land in the
+            // wide RAIN band [1/8, 7/8).
+            expect(triggerWithDraw(0.3, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.RAIN);
+            expect(triggerWithDraw(0.7, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.RAIN);
+        });
+
+        it('should keep the edge bands of the INFO_OVERFLOW rotation reachable', () => {
+            // INFO weights 1/6/1 (total 8): STATIC below 1/8, GLITCH at/above 7/8.
+            expect(triggerWithDraw(0.05, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.STATIC);
+            expect(triggerWithDraw(0.95, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.GLITCH);
+        });
+
+        it('should preserve the historical equal-thirds mapping when no room is given', () => {
+            const cases: Array<[number, number]> = [
+                [0, WEATHER_TYPES.STATIC],
+                [0.5, WEATHER_TYPES.RAIN],
+                [0.999, WEATHER_TYPES.GLITCH],
+            ];
+            for (const [draw, expected] of cases) {
+                expect(triggerWithDraw(draw, null), `draw ${draw}`).toBe(expected);
+            }
+        });
+
+        it('should never cut short weather already in progress when the room changes', () => {
+            weather.forceWeather('rain', 50);
+            // Walking into POLARIZED (which blocks RAIN selection) must not
+            // interrupt the in-progress rain — weighting affects selection only.
+            for (let i = 0; i < 30; i++) {
+                const state = weather.update(0.1, i * 0.1, RoomType.POLARIZED);
                 expect(state.weatherType).toBe(WEATHER_TYPES.RAIN);
             }
         });

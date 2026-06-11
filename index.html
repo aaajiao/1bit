@@ -12,15 +12,29 @@
 <body>
     <div id="ui">
         <h1>1bit</h1>
-        <p>点击进入嵌合体废墟</p>
-        <p>[W, A, S, D] 移动</p>
-        <p>[SPACE] 跳跃</p>
-        <p>[MOUSE] 观望</p>
-        <p>[SCROLL] or [Q/E] 调节光强</p>
-        <p>[SHIFT] 反抗</p>
+        <p id="enter-note">点击进入嵌合体废墟</p>
+        <p id="pause-note">已暂停 — 点击继续</p>
+        <div id="controls-desktop">
+            <p>[W, A, S, D] 移动</p>
+            <p>[SPACE] 跳跃</p>
+            <p>[MOUSE] 观望</p>
+            <p>[SCROLL] or [Q/E] 调节光强</p>
+            <p>[SHIFT] 反抗</p>
+        </div>
+        <div id="controls-touch" class="hidden">
+            <p>[左半屏拖动] 移动</p>
+            <p>[右半屏拖动] 观望</p>
+            <p>[−/+] 调节光强</p>
+            <p>[按住右下「反抗」] 反抗</p>
+            <p>[左上 II] 暂停</p>
+        </div>
+        <p id="input-warning" class="hidden">此设备暂不支持：需要键盘和鼠标<br />Keyboard &amp; mouse required</p>
+        <p id="last-run-note" class="hidden"></p>
+        <p id="replay-snapshot" class="hidden">重看上次快照</p>
     </div>
 
     <div id="coords">POS: 0, 0</div>
+    <div id="flower-hint"></div>
     <div id="scanlines"></div>
     <div id="canvas-container"></div>
 

@@ -10,7 +10,7 @@ import type { RoomShaderConfig } from './RoomConfig';
 import type { SharedAssets } from './SharedAssets';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
-import { ROOM_TRANSITION, WORLD } from '../config/constants';
+import { WORLD } from '../config/constants';
 import { disposeObject3D } from '../utils/dispose';
 import { hash } from '../utils/hash';
 import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
@@ -18,7 +18,7 @@ import { createDynamicCable, disposeCableMaterial } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createInfoFloorMesh, createMoireFloorMesh, createSeamFloorMesh, disposeFloorPool } from './FloorTile';
 import { createTree } from './FloraFactory';
-import { getRoomTypeFromPosition, lerpRoomShaderConfig, ROOM_CONFIGS, RoomType } from './RoomConfig';
+import { getRoomTypeFromPosition, IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, ROOM_CONFIGS, RoomType, worldToChunkCoord } from './RoomConfig';
 import {
     anomalyAt,
     applyLayout,
@@ -32,6 +32,7 @@ import {
     snapToGrid,
     subPaletteIndex,
 } from './RoomGeneration';
+import { RoomTransition } from './RoomTransition';
 import { getSharedAssets } from './SharedAssets';
 
 // Configuration (sourced from centralized constants; re-exported for consumers)
@@ -84,18 +85,24 @@ export class ChunkManager {
     private assets: SharedAssets;
 
     // Current room state
-    private currentRoomType: RoomType = RoomType.INFO_OVERFLOW;
-    private previousRoomType: RoomType = RoomType.INFO_OVERFLOW;
-    private roomTransitionProgress: number = 1.0; // 1.0 = fully transitioned
-    private roomTransitionSpeed: number = ROOM_TRANSITION.TRANSITION_SPEED; // 2.0 -> transition over 0.5 seconds
+    private currentRoomType: RoomType;
 
-    // Shader config for current room (interpolated during transitions)
-    private currentShaderConfig: RoomShaderConfig;
+    // Displayed shader config blender: freeze-from transition semantics with
+    // the reactive per-room overrides baked into the target (flow-audit
+    // medium #4). Advanced once per frame from updatePlayerRoom.
+    private readonly roomTransition: RoomTransition;
 
-    constructor(scene: THREE.Scene) {
+    /**
+     * @param scene - Scene the chunk group is added to.
+     * @param initialRoomType - Room the player actually spawns in (flow-audit
+     *   medium #7: the spawn point is no longer the INFO_OVERFLOW origin), so
+     *   the first frame doesn't open mid-blend from the wrong room's palette.
+     */
+    constructor(scene: THREE.Scene, initialRoomType: RoomType = RoomType.INFO_OVERFLOW) {
         this.floorMaterial = createFloorMaterial();
         this.assets = getSharedAssets();
-        this.currentShaderConfig = { ...ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader };
+        this.currentRoomType = initialRoomType;
+        this.roomTransition = new RoomTransition(initialRoomType);
 
         scene.add(this.chunkGroup);
     }
@@ -178,10 +185,10 @@ export class ChunkManager {
             floor = createInfoFloorMesh(CHUNK_SIZE, cx, cz);
         }
         else if (roomType === RoomType.POLARIZED) {
-            // Split-halves floor + module-shared seam line at local x=0. Both
-            // halves reuse the shared floor material and the seam uses a shared
-            // material, so nothing is added to chunkData.disposables.
-            floor = createSeamFloorMesh(CHUNK_SIZE, this.floorMaterial);
+            // Phase-opposite checkerboard halves + module-shared seam line at
+            // local x=0 (flow-audit enhancement #11). All materials are
+            // module-shared, so nothing is added to chunkData.disposables.
+            floor = createSeamFloorMesh(CHUNK_SIZE);
         }
         else {
             floor = createFloorMesh(CHUNK_SIZE, this.floorMaterial);
@@ -380,7 +387,14 @@ export class ChunkManager {
      * offset makes the coplanar faces shimmer because logarithmicDepthBuffer
      * is OFF. Static: no per-frame cost (clones are not pushed to animatedObjects).
      *
-     * @param buildGroup - The freshly built building group.
+     * Boundary densification (flow-audit enhancement #14): buildings near the
+     * chunk footprint edge get extra ghosts and a larger (still millimetre-
+     * scale) offset amplitude, so the shimmer artifacts cluster exactly where
+     * the chunk meets its neighbors — the boundary foreshadows itself. Knobs
+     * live in RoomConfig.IN_BETWEEN_EDGE_GHOSTS; interior buildings reproduce
+     * the original 1-2 ghosts at the original amplitude.
+     *
+     * @param buildGroup - The freshly built building group (position already set).
      * @param cx - Chunk X coordinate (deterministic seed).
      * @param cz - Chunk Z coordinate (deterministic seed).
      * @param i - Building index within the chunk (deterministic seed).
@@ -395,20 +409,34 @@ export class ChunkManager {
                     break;
             }
         }
+        if (meshChildren.length === 0)
+            return;
 
-        // 1 or 2 ghosts, deterministic by seed.
-        const ghostCount = hash(i + GHOST_COUNT_SALT, cx) > 0.5 ? 2 : 1;
-        const limit = Math.min(ghostCount, meshChildren.length);
+        // Edge factor 0-1 from the building's chunk-local position: 0 deep in
+        // the interior (original behavior), 1 at the footprint edge band.
+        const edge = inBetweenEdgeFactor(buildGroup.position.x, buildGroup.position.z);
 
-        for (let g = 0; g < limit; g++) {
-            const source = meshChildren[g];
+        // 1 or 2 base ghosts, deterministic by seed; the edge band adds up to
+        // EXTRA_GHOSTS more (cycling over the snapshot of source meshes).
+        const baseCount = hash(i + GHOST_COUNT_SALT, cx) > 0.5 ? 2 : 1;
+        const ghostCount = Math.min(baseCount, meshChildren.length)
+            + Math.round(edge * IN_BETWEEN_EDGE_GHOSTS.EXTRA_GHOSTS);
+
+        // Sub-millimetre base amplitude, scaled up to a few millimetres deep in
+        // the edge band — still invisible as displacement, but the z-fight
+        // flicker turns coarser and angrier.
+        const amplitude = 0.001 * (1 + edge * (IN_BETWEEN_EDGE_GHOSTS.OFFSET_MULT - 1));
+
+        for (let g = 0; g < ghostCount; g++) {
+            const source = meshChildren[g % meshChildren.length];
             // Mesh.clone() shares geometry + material (shallow) — no new GPU data.
             const ghost = source.clone();
-            // Sub-millimetre offset: ~[-0.0005, 0.0005) on each axis.
+            // Hash-seeded offset in ~[-amplitude/2, amplitude/2) on each axis
+            // (per-ghost g keeps every clone's offset decorrelated).
             ghost.position.set(
-                source.position.x + (hash(g + GHOST_X_SALT, cz) - 0.5) * 0.001,
-                source.position.y + (hash(g + GHOST_Y_SALT, cx) - 0.5) * 0.001,
-                source.position.z + (hash(g + GHOST_Z_SALT, cz + cx) - 0.5) * 0.001,
+                source.position.x + (hash(g + GHOST_X_SALT, cz) - 0.5) * amplitude,
+                source.position.y + (hash(g + GHOST_Y_SALT, cx) - 0.5) * amplitude,
+                source.position.z + (hash(g + GHOST_Z_SALT, cz + cx) - 0.5) * amplitude,
             );
             buildGroup.add(ghost);
         }
@@ -741,26 +769,12 @@ export class ChunkManager {
      *   neutral default so existing callers keep working.
      */
     animate(time: number, delta: number, cameraPosition?: THREE.Vector3, flowerIntensity?: number): void {
-        // Animate all chunks (delegated to ChunkAnimator)
+        // Animate all chunks (delegated to ChunkAnimator). The room-transition
+        // shader blend is NOT advanced here — updatePlayerRoom drives it with
+        // the freshly-updated player state (it runs after the player update in
+        // the fixed frame order; this method runs before it).
         for (const key in this.activeChunks) {
             animateChunk(this.activeChunks[key], time, delta, cameraPosition, flowerIntensity);
-        }
-
-        // Update room transition
-        if (this.roomTransitionProgress < 1.0) {
-            this.roomTransitionProgress += delta * this.roomTransitionSpeed;
-            if (this.roomTransitionProgress >= 1.0) {
-                this.roomTransitionProgress = 1.0;
-            }
-
-            // Interpolate shader config
-            const fromConfig = ROOM_CONFIGS[this.previousRoomType].shader;
-            const toConfig = ROOM_CONFIGS[this.currentRoomType].shader;
-            this.currentShaderConfig = lerpRoomShaderConfig(
-                fromConfig,
-                toConfig,
-                this.roomTransitionProgress,
-            );
         }
     }
 
@@ -772,19 +786,28 @@ export class ChunkManager {
     }
 
     /**
-     * Get the current shader configuration (interpolated during transitions)
+     * Get the current shader configuration: transition-blended with the
+     * reactive per-room overrides (INFO_OVERFLOW flower noise/jitter,
+     * FORCED_ALIGNMENT side asymmetry) already baked in by RoomTransition.
      */
     getCurrentShaderConfig(): RoomShaderConfig {
-        return { ...this.currentShaderConfig };
+        return { ...this.roomTransition.getConfig() };
     }
 
     /**
-     * Update current room based on player position
-     * Should be called from main update loop
+     * Update current room based on player position and advance the displayed
+     * shader blend. Should be called once per frame from the main update loop,
+     * AFTER the player update (so the reactive targets — flower intensity and
+     * the FORCED_ALIGNMENT side position — track this frame's fresh state).
      */
-    updatePlayerRoom(playerX: number, playerZ: number): void {
-        const cx = Math.floor(playerX / CHUNK_SIZE);
-        const cz = Math.floor(playerZ / CHUNK_SIZE);
+    updatePlayerRoom(playerX: number, playerZ: number, delta: number, flowerIntensity: number): void {
+        // Round convention: chunk floors are CENTERED on (cx*CHUNK_SIZE,
+        // cz*CHUNK_SIZE) — see createChunk — so the chunk whose visible floor
+        // is under the player is the ROUNDED coordinate. Math.floor here would
+        // misattribute the room by half a chunk relative to the floor seams
+        // the player can actually see.
+        const cx = worldToChunkCoord(playerX, CHUNK_SIZE);
+        const cz = worldToChunkCoord(playerZ, CHUNK_SIZE);
         const key = `${cx},${cz}`;
 
         const chunk = this.activeChunks[key];
@@ -793,19 +816,25 @@ export class ChunkManager {
             const newRoomType = chunkData.roomType;
 
             if (newRoomType !== this.currentRoomType) {
-                // Start room transition
-                this.previousRoomType = this.currentRoomType;
+                // Start room transition. RoomTransition freezes the current
+                // on-screen config (mid-blend state and reactive deltas
+                // included) as the from-snapshot, so boundary probing never
+                // pops back toward the static baseline (flow-audit medium #4).
                 this.currentRoomType = newRoomType;
-                this.roomTransitionProgress = 0.0;
+                this.roomTransition.beginTransition(newRoomType);
             }
         }
+
+        // Advance the displayed blend every frame (also at steady state, where
+        // it tracks the live reactive target exactly).
+        this.roomTransition.update(delta, flowerIntensity, playerX);
     }
 
     /**
      * Check if currently in a room transition
      */
     isInTransition(): boolean {
-        return this.roomTransitionProgress < 1.0;
+        return this.roomTransition.isInTransition();
     }
 
     /**

@@ -1,3 +1,4 @@
+import type { OverrideDenialReason } from '../src/player/OverrideMechanic';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { OVERRIDE } from '../src/config';
 import { OverrideMechanic } from '../src/player/OverrideMechanic';
@@ -262,6 +263,238 @@ describe('overrideMechanic', () => {
         });
     });
 
+    describe('hint display window (flow-audit break #2)', () => {
+        // Meet both hint conditions in POLARIZED; the display window starts on
+        // the last poll (forcedTwice flips before updateHint within update()).
+        function meetHintConditions(mech: OverrideMechanic): void {
+            poll(mech, 6.0, false, { gazing: true });
+            poll(mech, 0.1, false, { gazing: true, forced: true });
+            poll(mech, 0.1, false, { gazing: true, forced: false });
+            poll(mech, 0.1, false, { gazing: true, forced: true });
+        }
+
+        it('should keep the hint visible across updates within the window', () => {
+            meetHintConditions(m);
+            // Advance well into, but not past, HINT_DISPLAY_DURATION (10s).
+            for (let i = 0; i < 5; i++) {
+                poll(m, 1.0, false, { gazing: false });
+                expect(m.getHintState().shouldShow).toBe(true);
+            }
+            expect(m.getHintState().hasBeenShown).toBe(false);
+        });
+
+        it('should keep showing while briefly stepping out of POLARIZED once started', () => {
+            meetHintConditions(m);
+            poll(m, 1.0, false, { gazing: false, room: RoomType.IN_BETWEEN });
+            expect(m.getHintState().shouldShow).toBe(true);
+        });
+
+        it('should mark itself shown once the window elapses', () => {
+            meetHintConditions(m);
+            poll(m, OVERRIDE.HINT_DISPLAY_DURATION + 0.1, false, { gazing: false });
+            expect(m.getHintState().shouldShow).toBe(false);
+            expect(m.getHintState().hasBeenShown).toBe(true);
+            // It must never come back this session.
+            poll(m, 0.1, false, { gazing: true, forced: true });
+            expect(m.getHintState().shouldShow).toBe(false);
+        });
+
+        it('should end the hint early on a successful override', () => {
+            meetHintConditions(m);
+            expect(m.getHintState().shouldShow).toBe(true);
+            poll(m, 1.0, true); // hold to trigger
+            expect(m.getHintState().shouldShow).toBe(false);
+            expect(m.getHintState().hasBeenShown).toBe(true);
+        });
+
+        it('should mark the hint shown by any successful override, even before conditions', () => {
+            poll(m, 1.0, true); // trigger with no hint conditions met
+            expect(m.getHintState().hasBeenShown).toBe(true);
+        });
+    });
+
+    describe('denied-input feedback (flow-audit break #2)', () => {
+        let reasons: OverrideDenialReason[];
+
+        beforeEach(() => {
+            reasons = [];
+            m.setOnOverrideDenied(reason => reasons.push(reason));
+        });
+
+        it('should fire wrong-room once per key press outside POLARIZED', () => {
+            poll(m, 0.1, true, { room: RoomType.INFO_OVERFLOW });
+            poll(m, 0.1, true, { room: RoomType.INFO_OVERFLOW }); // still held
+            expect(reasons).toEqual(['wrong-room']);
+
+            poll(m, 0.1, false, { room: RoomType.INFO_OVERFLOW }); // release
+            poll(m, 0.1, true, { room: RoomType.INFO_OVERFLOW }); // new press
+            expect(reasons).toEqual(['wrong-room', 'wrong-room']);
+        });
+
+        it('should fire no-gaze in POLARIZED when not gazing', () => {
+            poll(m, 0.1, true, { gazing: false });
+            expect(reasons).toEqual(['no-gaze']);
+            expect(m.getActiveDenial()).toBe('no-gaze');
+        });
+
+        it('should fire cooldown in POLARIZED while the cooldown runs', () => {
+            poll(m, 1.0, true); // trigger
+            poll(m, 0.016, false); // release -> cooldown starts
+            reasons.length = 0;
+
+            poll(m, 0.1, true); // re-press during cooldown
+            expect(reasons).toEqual(['cooldown']);
+        });
+
+        it('should not fire when activation succeeds', () => {
+            poll(m, 0.1, true);
+            expect(reasons).toEqual([]);
+            expect(m.getActiveDenial()).toBeNull();
+        });
+
+        it('should clear the denial when the key is released', () => {
+            poll(m, 0.1, true, { gazing: false });
+            expect(m.getActiveDenial()).toBe('no-gaze');
+            poll(m, 0.1, false, { gazing: false });
+            expect(m.getActiveDenial()).toBeNull();
+        });
+    });
+
+    describe('getFeedbackProgress (cooldown edge-pulse channel)', () => {
+        it('should equal hold progress while the override is active', () => {
+            poll(m, 0.5, true);
+            expect(m.getFeedbackProgress()).toBeCloseTo(0.5, 5);
+        });
+
+        it('should expose a low-intensity pulse proportional to the remaining cooldown', () => {
+            poll(m, 1.0, true); // trigger
+            poll(m, 0.016, false); // release -> cooldownRemaining = COOLDOWN
+
+            poll(m, 0.5, true); // held during cooldown; cooldown drains by 0.5
+            const expected = OVERRIDE.COOLDOWN_FEEDBACK_MAX
+                * (OVERRIDE.COOLDOWN - 0.5) / OVERRIDE.COOLDOWN;
+            expect(m.getFeedbackProgress()).toBeCloseTo(expected, 5);
+            expect(m.getFeedbackProgress()).toBeLessThanOrEqual(OVERRIDE.COOLDOWN_FEEDBACK_MAX);
+        });
+
+        it('should report 0 when the key is not held during cooldown', () => {
+            poll(m, 1.0, true);
+            poll(m, 0.016, false);
+            poll(m, 0.5, false);
+            expect(m.getFeedbackProgress()).toBe(0);
+        });
+
+        it('should report 0 for a wrong-room denial', () => {
+            poll(m, 0.5, true, { room: RoomType.IN_BETWEEN });
+            expect(m.getFeedbackProgress()).toBe(0);
+        });
+    });
+
+    describe('raw-bypass crash frame (flow-audit enhancement #4)', () => {
+        it('should be 0 before any trigger, even while holding', () => {
+            expect(m.getRawBypassValue()).toBe(0);
+            poll(m, 0.5, true); // active, not yet triggered
+            expect(m.getRawBypassValue()).toBe(0);
+        });
+
+        it('should be 1 from the trigger frame through RAW_BYPASS_DURATION', () => {
+            poll(m, 1.0, true); // trigger, effectTimer = 0
+            expect(m.getRawBypassValue()).toBe(1);
+            poll(m, OVERRIDE.RAW_BYPASS_DURATION / 2, true); // still inside the window
+            expect(m.getRawBypassValue()).toBe(1);
+        });
+
+        it('should cut to 0 after the window while the inversion aftershock continues', () => {
+            poll(m, 1.0, true); // trigger
+            // Step past the raw window but stay inside the flash plateau.
+            poll(m, OVERRIDE.RAW_BYPASS_DURATION + 0.05, false);
+            expect(m.getRawBypassValue()).toBe(0);
+            expect(m.getColorInversionValue()).toBeGreaterThan(0);
+        });
+
+        it('should survive an early key release (driven by the effect timer)', () => {
+            poll(m, 1.0, true); // trigger
+            const s = poll(m, OVERRIDE.RAW_BYPASS_DURATION / 2, false); // released immediately
+            expect(s.isActive).toBe(false);
+            expect(m.getRawBypassValue()).toBe(1); // still inside the crash window
+        });
+
+        it('should be 0 once the whole effect has finished', () => {
+            poll(m, 1.0, true);
+            poll(m, OVERRIDE.EFFECT_DURATION + 0.01, false);
+            expect(m.getRawBypassValue()).toBe(0);
+        });
+    });
+
+    describe('sustained-hold feedback (flow-audit enhancement #5)', () => {
+        it('should be 0 while holding before the trigger', () => {
+            poll(m, 0.5, true);
+            expect(m.getSustainValue()).toBe(0);
+        });
+
+        it('should be full strength from the trigger frame while the key stays held', () => {
+            poll(m, 1.0, true); // trigger
+            expect(m.getSustainValue()).toBe(1);
+            poll(m, 2.0, true); // keep holding well past the effect duration
+            expect(m.getSustainValue()).toBe(1);
+        });
+
+        it('should decay over SUSTAIN_RELEASE_SECONDS after release', () => {
+            poll(m, 1.0, true); // trigger
+            const step = OVERRIDE.SUSTAIN_RELEASE_SECONDS / 2;
+            poll(m, step, false); // released: half the release window elapses
+            expect(m.getSustainValue()).toBeCloseTo(0.5, 5);
+            poll(m, OVERRIDE.SUSTAIN_RELEASE_SECONDS, false); // past the window
+            expect(m.getSustainValue()).toBe(0);
+        });
+
+        it('should not re-arm from a denied press during the cooldown', () => {
+            poll(m, 1.0, true); // trigger
+            poll(m, OVERRIDE.SUSTAIN_RELEASE_SECONDS + 0.01, false); // decayed to 0
+            expect(m.getSustainValue()).toBe(0);
+            poll(m, 0.1, true); // held during cooldown (denied)
+            expect(m.getSustainValue()).toBe(0);
+        });
+    });
+
+    describe('resistance residue (flow-audit enhancement #6)', () => {
+        // Trigger once and drain the cooldown so the next trigger can land.
+        function succeedOnce(mech: OverrideMechanic): void {
+            poll(mech, OVERRIDE.HOLD_THRESHOLD, true); // trigger
+            poll(mech, 0.016, false); // release -> cooldown
+            poll(mech, OVERRIDE.COOLDOWN + 0.1, false); // drain cooldown
+        }
+
+        it('should start at 0 and stay 0 for non-triggering holds', () => {
+            expect(m.getMisregisterResidue()).toBe(0);
+            poll(m, 0.5, true); // active, below threshold
+            poll(m, 0.016, false);
+            expect(m.getMisregisterResidue()).toBe(0);
+        });
+
+        it('should accumulate RESIDUE_STEP per successful override', () => {
+            succeedOnce(m);
+            expect(m.getMisregisterResidue()).toBeCloseTo(OVERRIDE.RESIDUE_STEP, 8);
+            succeedOnce(m);
+            expect(m.getMisregisterResidue()).toBeCloseTo(OVERRIDE.RESIDUE_STEP * 2, 8);
+        });
+
+        it('should clamp at RESIDUE_MAX', () => {
+            const successesToCap = Math.ceil(OVERRIDE.RESIDUE_MAX / OVERRIDE.RESIDUE_STEP);
+            for (let i = 0; i < successesToCap + 2; i++) {
+                succeedOnce(m);
+            }
+            expect(m.getMisregisterResidue()).toBeCloseTo(OVERRIDE.RESIDUE_MAX, 8);
+        });
+
+        it('should clear on resetResidue (sunset settlement)', () => {
+            succeedOnce(m);
+            expect(m.getMisregisterResidue()).toBeGreaterThan(0);
+            m.resetResidue();
+            expect(m.getMisregisterResidue()).toBe(0);
+        });
+    });
+
     describe('reset', () => {
         it('should clear runtime state but preserve hasBeenShown', () => {
             poll(m, 6.0, false, { gazing: true });
@@ -280,6 +513,19 @@ describe('overrideMechanic', () => {
             expect(s.cooldownRemaining).toBe(0);
             expect(m.getColorInversionValue()).toBe(0);
             expect(m.getHintState().hasBeenShown).toBe(true);
+        });
+
+        it('should clear the payoff channels (raw bypass / sustain / residue)', () => {
+            poll(m, 1.0, true); // trigger: raw window open, sustain 1, residue +step
+            expect(m.getRawBypassValue()).toBe(1);
+            expect(m.getSustainValue()).toBe(1);
+            expect(m.getMisregisterResidue()).toBeGreaterThan(0);
+
+            m.reset();
+
+            expect(m.getRawBypassValue()).toBe(0);
+            expect(m.getSustainValue()).toBe(0);
+            expect(m.getMisregisterResidue()).toBe(0);
         });
     });
 });

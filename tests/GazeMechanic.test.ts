@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { GazeMechanic } from '../src/player/GazeMechanic';
+import { GAZE, GAZE_VISUAL } from '../src/config';
+import { gazeDirectionFactor, GazeMechanic } from '../src/player/GazeMechanic';
 
 describe('gazeMechanic', () => {
     let camera: THREE.PerspectiveCamera;
@@ -200,7 +201,168 @@ describe('gazeMechanic', () => {
         it('should return minimum value (0.1) at max gaze intensity', () => {
             camera.rotation.x = Math.PI / 2; // Max gaze
             gaze.update(0.016);
-            expect(gaze.calculateForcedFlowerIntensity()).toBeCloseTo(0.1, 2);
+            expect(gaze.calculateForcedFlowerIntensity()).toBeCloseTo(GAZE.FLOWER_MIN_INTENSITY, 2);
+        });
+
+        it('should start near FLOWER_FORCED_START (0.35) just above the threshold', () => {
+            // Flow-audit medium #1: the forced value at the threshold crossing
+            // sits below the default flower intensity (0.5), so a default
+            // player sees the flower dim the instant they cross 45°.
+            camera.rotation.x = Math.PI / 4 + 0.001; // Just over 45°
+            gaze.update(0.016);
+            expect(gaze.calculateForcedFlowerIntensity()).toBeCloseTo(GAZE.FLOWER_FORCED_START, 1);
+            expect(gaze.calculateForcedFlowerIntensity()).toBeLessThan(0.5);
+        });
+
+        it('should interpolate between FLOWER_FORCED_START and FLOWER_MIN_INTENSITY', () => {
+            camera.rotation.x = Math.PI / 3; // 60°
+            const state = gaze.update(0.016);
+            const expected = GAZE.FLOWER_MIN_INTENSITY
+                + (1 - state.gazeIntensity) * (GAZE.FLOWER_FORCED_START - GAZE.FLOWER_MIN_INTENSITY);
+            expect(gaze.calculateForcedFlowerIntensity()).toBeCloseTo(expected, 5);
+        });
+    });
+
+    describe('threshold-crossing pulse (45° marker line)', () => {
+        it('should start at zero', () => {
+            expect(gaze.getThresholdPulse()).toBe(0);
+        });
+
+        it('should stay zero while below the threshold', () => {
+            camera.rotation.x = Math.PI / 4 - 0.1;
+            gaze.update(0.016);
+            expect(gaze.getThresholdPulse()).toBe(0);
+        });
+
+        it('should fire at full strength on the first crossing', () => {
+            camera.rotation.x = Math.PI / 3;
+            gaze.update(0.016);
+            expect(gaze.getThresholdPulse()).toBe(1.0);
+        });
+
+        it('should decay to zero over PITCH_LINE_PULSE_DURATION', () => {
+            camera.rotation.x = Math.PI / 3;
+            gaze.update(0.016); // Crossing frame: pulse = 1.0
+
+            gaze.update(GAZE_VISUAL.PITCH_LINE_PULSE_DURATION / 2);
+            expect(gaze.getThresholdPulse()).toBeCloseTo(0.5, 5);
+
+            gaze.update(GAZE_VISUAL.PITCH_LINE_PULSE_DURATION);
+            expect(gaze.getThresholdPulse()).toBe(0);
+        });
+
+        it('should not re-fire on subsequent crossings in the same session', () => {
+            camera.rotation.x = Math.PI / 3; // First crossing
+            gaze.update(0.016);
+            gaze.update(GAZE_VISUAL.PITCH_LINE_PULSE_DURATION * 2); // Fully decayed
+
+            camera.rotation.x = 0; // Look back down
+            gaze.update(0.016);
+
+            camera.rotation.x = Math.PI / 3; // Second crossing
+            gaze.update(0.016);
+            expect(gaze.getThresholdPulse()).toBe(0);
+        });
+
+        it('should fire again after reset()', () => {
+            camera.rotation.x = Math.PI / 3;
+            gaze.update(0.016);
+
+            camera.rotation.x = 0;
+            gaze.update(0.016);
+            gaze.reset();
+
+            camera.rotation.x = Math.PI / 3;
+            gaze.update(0.016);
+            expect(gaze.getThresholdPulse()).toBe(1.0);
+        });
+    });
+
+    // Flow-audit enhancement #13: discipline only lands while the eye is in frame.
+    describe('gaze direction attenuation', () => {
+        const ORIGIN = { x: 0, y: 0, z: 0 };
+
+        describe('gazeDirectionFactor (pure)', () => {
+            it('returns 1 when looking straight up at an eye directly overhead', () => {
+                const f = gazeDirectionFactor(ORIGIN, 0, Math.PI / 2, { x: 0, y: 120, z: 0 });
+                expect(f).toBeCloseTo(1, 6);
+            });
+
+            it('returns 0 when looking at the horizon with the eye straight overhead', () => {
+                // Forward is perpendicular to the camera->eye direction: dot = 0.
+                const f = gazeDirectionFactor(ORIGIN, 0, 0, { x: 0, y: 120, z: 0 });
+                expect(f).toBeCloseTo(0, 6);
+            });
+
+            it('returns 0 (hard zero) when the eye is behind the view plane', () => {
+                // Looking up-forward (-Z) while the eye sits low behind (+Z).
+                const f = gazeDirectionFactor(ORIGIN, 0, Math.PI / 3, { x: 0, y: 2, z: 100 });
+                expect(f).toBe(0);
+            });
+
+            it('returns 1 when the eye sits exactly along the camera forward', () => {
+                // Forward at yaw 0, pitch 60°: (0, sin60, -cos60). Eye 100m out.
+                const f = gazeDirectionFactor(
+                    ORIGIN,
+                    0,
+                    Math.PI / 3,
+                    { x: 0, y: Math.sin(Math.PI / 3) * 100, z: -Math.cos(Math.PI / 3) * 100 },
+                );
+                expect(f).toBeCloseTo(1, 6);
+            });
+
+            it('attenuates partially for an off-axis eye (0 < factor < 1)', () => {
+                // Pitch 60° toward -Z, eye up-and-behind: dot lands mid-range.
+                const f = gazeDirectionFactor(ORIGIN, 0, Math.PI / 3, { x: 0, y: 86.6, z: 50 });
+                expect(f).toBeGreaterThan(0);
+                expect(f).toBeLessThan(1);
+            });
+
+            it('respects yaw: turning away from the eye reduces the factor', () => {
+                const eye = { x: 0, y: 86.6, z: -50 }; // up-forward at yaw 0
+                const facing = gazeDirectionFactor(ORIGIN, 0, Math.PI / 3, eye);
+                const turned = gazeDirectionFactor(ORIGIN, Math.PI, Math.PI / 3, eye);
+                expect(facing).toBeGreaterThan(turned);
+            });
+
+            it('returns 1 for a degenerate zero-length camera->eye vector', () => {
+                expect(gazeDirectionFactor(ORIGIN, 0, 1, ORIGIN)).toBe(1);
+            });
+        });
+
+        it('keeps legacy intensity when no eye position is provided', () => {
+            camera.rotation.x = Math.PI / 2;
+            const state = gaze.update(0.016);
+            expect(state.gazeIntensity).toBe(1);
+        });
+
+        it('preserves full intensity when the eye is directly overhead', () => {
+            camera.rotation.x = Math.PI / 2; // straight up
+            const state = gaze.update(0.016, { x: 0, y: 120, z: 0 });
+            expect(state.gazeIntensity).toBeCloseTo(1, 6);
+        });
+
+        it('zeroes intensity but keeps isGazing when the eye is out of frame', () => {
+            camera.rotation.x = Math.PI / 3; // above threshold, facing -Z
+            const state = gaze.update(0.016, { x: 0, y: 2, z: 100 }); // low behind
+            expect(state.isGazing).toBe(true); // pitch stays the sole determinant
+            expect(state.gazeIntensity).toBe(0);
+        });
+
+        it('reduces intensity versus baseline for a partially off-frame eye', () => {
+            camera.rotation.x = Math.PI / 3;
+            const baseline = gaze.update(0.016).gazeIntensity;
+
+            const attenuated = gaze.update(0.016, { x: 0, y: 86.6, z: 50 }).gazeIntensity;
+            expect(attenuated).toBeGreaterThan(0);
+            expect(attenuated).toBeLessThan(baseline);
+        });
+
+        it('feeds the attenuated intensity into the forced flower calculation', () => {
+            camera.rotation.x = Math.PI / 3; // gazing toward -Z...
+            gaze.update(0.016, { x: 0, y: 2, z: 100 }); // ...eye fully out of frame
+            // Intensity 0 while gazing => forced value sits at the threshold start.
+            expect(gaze.calculateForcedFlowerIntensity()).toBeCloseTo(GAZE.FLOWER_FORCED_START, 5);
         });
     });
 

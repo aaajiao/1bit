@@ -1,18 +1,8 @@
 import type { FingerStructure, ThumbStructure } from '../types';
+import type { FlowerGroup } from './FlowerProp';
 // 1-bit Chimera Void - Hands Model
 import * as THREE from 'three';
 import { animateFlower, createFlowerProp } from './FlowerProp';
-
-interface FlowerGroup extends THREE.Group {
-    userData: {
-        bloom?: THREE.Group;
-        coreLight?: THREE.PointLight;
-        intensity: number;
-        targetIntensity: number;
-        isBeingForced: boolean;
-        forcedIntensity: number;
-    };
-}
 
 /**
  * Creates anatomically detailed hand models

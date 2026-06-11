@@ -1,8 +1,10 @@
 import type * as THREE from 'three';
 import type { PlayerManager } from '../player/PlayerManager';
 import type { AudioSystemInterface } from '../types';
+import { BINAURAL_SIDE_CONFIG } from '../config/audio';
 import { RIFT_PHYSICS } from '../config/physics';
 import { CHUNK_SIZE } from './ChunkManager';
+import { getRoomTypeFromPosition, RoomType, worldToChunkCoord } from './RoomConfig';
 
 export class RiftMechanic {
     constructor() { }
@@ -15,12 +17,22 @@ export class RiftMechanic {
         audio: AudioSystemInterface,
         cameraPosition: THREE.Vector3,
     ): void {
-        const nearestChunkX = Math.round(cameraPosition.x / CHUNK_SIZE);
+        const nearestChunkX = worldToChunkCoord(cameraPosition.x, CHUNK_SIZE);
         const chunkCenterX = nearestChunkX * CHUNK_SIZE;
         const distFromCenter = Math.abs(cameraPosition.x - chunkCenterX);
 
-        // Update binaural position for audio context
-        audio.updateBinauralPosition(cameraPosition.x, 20);
+        // The crack only exists in FORCED_ALIGNMENT chunks. Validate the chunk
+        // the player is actually standing on (round convention — the rounded
+        // x/z chunk is the one whose floor footprint contains the player by
+        // construction), so the fall can never punch through the intact floor
+        // of a neighbouring non-rift chunk.
+        const nearestChunkZ = worldToChunkCoord(cameraPosition.z, CHUNK_SIZE);
+        const isRiftChunk = getRoomTypeFromPosition(nearestChunkX, nearestChunkZ) === RoomType.FORCED_ALIGNMENT;
+
+        // Update binaural position for audio context: SIGNED x offset from the
+        // rift crack center (flow-audit break #7) so the beat hears which side
+        // the player stands on — negative = tidy left, positive = broken right.
+        audio.updateBinauralPosition(cameraPosition.x - chunkCenterX, BINAURAL_SIDE_CONFIG.fieldWidth);
 
         // RIFT AUDIO: Fog Sound
         // Start if not already playing (internal check handles redundancy)
@@ -31,8 +43,9 @@ export class RiftMechanic {
         const riftProximity = Math.max(0, 1 - distFromCenter / 10);
         audio.updateRiftFog(riftProximity);
 
-        // Crack half-width (meters from center)
-        if (distFromCenter < RIFT_PHYSICS.crackHalfWidth) {
+        // Crack half-width (meters from center), gated on the chunk actually
+        // having a crack (see isRiftChunk above)
+        if (isRiftChunk && distFromCenter < RIFT_PHYSICS.crackHalfWidth) {
             // Player is above the crack - infinite fall with low gravity
             player.setGroundLevel(-1000);
             player.setGravity(RIFT_PHYSICS.fallGravity); // Lunar gravity for slow, long fall

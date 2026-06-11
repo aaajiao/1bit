@@ -83,6 +83,16 @@ describe('runStatsCollector', () => {
             const metrics = collector.normalize();
             expect(metrics.gazeRatio).toBeCloseTo(0.4, 2);
         });
+
+        it('should carry overrideSuccesses through to metrics', () => {
+            // Two distinct glitch events (edge-detected)
+            collector.update(0.1, 0.5, false, 0, null, 0, true, true);
+            collector.update(0.1, 0.5, false, 0, null, 0, false, false);
+            collector.update(0.1, 0.5, false, 0, null, 0, true, true);
+
+            const metrics = collector.normalize();
+            expect(metrics.overrideSuccesses).toBe(2);
+        });
     });
 
     describe('generateTags', () => {
@@ -114,13 +124,33 @@ describe('runStatsCollector', () => {
             expect(tags).toContain('HIGH_GAZE');
         });
 
-        it('should generate RESISTER when override is used', () => {
-            // Override for more than 5% of time
+        it('should generate RESISTER when override hold exceeds 5% of run', () => {
+            // Override held for more than 5% of time, no success registered
             collector.update(1.0, 0.5, false, 0, null, 0, true, false);
             collector.update(10.0, 0.5, false, 0, null, 0, false, false);
 
             const tags = collector.generateTags();
             expect(tags).toContain('RESISTER');
+        });
+
+        it('should generate RESISTER after a single success even with low hold ratio', () => {
+            // One successful override (~1s hold) in a long run
+            collector.update(1.0, 0.5, false, 0, null, 0, true, true);
+            collector.update(120.0, 0.5, false, 0, null, 0, false, false);
+
+            const metrics = collector.normalize();
+            expect(metrics.overrideSuccesses).toBe(1);
+            expect(metrics.overrideRatio).toBeLessThan(0.05);
+
+            const tags = collector.generateTags();
+            expect(tags).toContain('RESISTER');
+        });
+
+        it('should not generate RESISTER with zero successes and zero hold time', () => {
+            collector.update(60.0, 0.5, false, 0, null, 0, false, false);
+
+            const tags = collector.generateTags();
+            expect(tags).not.toContain('RESISTER');
         });
 
         it('should generate INFO_MAZE for INFO_OVERFLOW room dominance', () => {

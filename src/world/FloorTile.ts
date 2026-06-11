@@ -357,11 +357,17 @@ export function createInfoFloorMesh(chunkSize: number, cx: number, cz: number): 
     return floor;
 }
 
-// --- POLARIZED seam-floor shared material ---------------------------------
-// A single module-shared high-contrast greyscale material for the dividing
-// line. Shared across all POLARIZED chunks, freed once via disposeFloorPool().
+// --- POLARIZED seam-floor shared materials ---------------------------------
+// Module-shared materials for the POLARIZED floor: a high-contrast seam line
+// plus TWO phase-opposite checkerboard materials (one per faction half — the
+// "us" cells are exactly the other side's "them" cells). All are shared across
+// every POLARIZED chunk and freed once via disposeFloorPool().
 let seamLineMaterial: THREE.MeshBasicMaterial | null = null;
+let checkerMaterials: [THREE.MeshLambertMaterial, THREE.MeshLambertMaterial] | null = null;
 const SEAM_LINE_WIDTH = 0.5; // razor-thin dividing line (metres)
+const CHECKER_CELL_SIZE = 2.5; // checkerboard cell edge (metres)
+const CHECKER_BRIGHT = 210; // renders as paper under the hard 0.5 threshold
+const CHECKER_DARK = 28; // renders as ink
 
 /**
  * Lazily initializes (once) the module-shared seam-line material.
@@ -376,29 +382,88 @@ function getSeamLineMaterial(): THREE.MeshBasicMaterial {
 }
 
 /**
- * Creates a razor-thin high-contrast ink/paper dividing line at local x=0 for
- * POLARIZED rooms. Reuses the split-halves approach from
+ * Builds one checkerboard material (flow-audit enhancement #11: POLARIZED's
+ * signature binary ground). A 2x2 DataTexture — one texel per cell — repeated
+ * with NearestFilter stays razor sharp at any distance, and POLARIZED's hard
+ * 0.5 threshold (zero dithering) maps it to pure ink/paper cells.
+ * @param phase - 0 or 1; phase 1 is the exact cell-inverse of phase 0.
+ * @param halfFloorWidth - Width (m) of one floor half (sets the X repeat).
+ * @param chunkSize - Chunk size (m) (sets the Y repeat).
+ */
+function createCheckerMaterial(
+    phase: 0 | 1,
+    halfFloorWidth: number,
+    chunkSize: number,
+): THREE.MeshLambertMaterial {
+    // 2x2 checker: cell (x+y) even = bright on phase 0, dark on phase 1.
+    const data = new Uint8Array(2 * 2 * 4);
+    for (let i = 0; i < 4; i++) {
+        const x = i % 2;
+        const y = Math.floor(i / 2);
+        const c = (x + y + phase) % 2 === 0 ? CHECKER_BRIGHT : CHECKER_DARK;
+        data[i * 4] = c;
+        data[i * 4 + 1] = c;
+        data[i * 4 + 2] = c;
+        data[i * 4 + 3] = 255;
+    }
+
+    const tex = new THREE.DataTexture(data, 2, 2, THREE.RGBAFormat);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    // One texture repeat covers 2 cells per axis; keep the cells square.
+    tex.repeat.set(
+        halfFloorWidth / (CHECKER_CELL_SIZE * 2),
+        chunkSize / (CHECKER_CELL_SIZE * 2),
+    );
+    tex.needsUpdate = true;
+
+    return new THREE.MeshLambertMaterial({ map: tex });
+}
+
+/**
+ * Lazily initializes (once) the module-shared phase-opposite checkerboard
+ * material pair for the POLARIZED floor halves.
+ */
+function getCheckerMaterials(chunkSize: number): [THREE.MeshLambertMaterial, THREE.MeshLambertMaterial] {
+    if (!checkerMaterials) {
+        const halfFloorWidth = (chunkSize - SEAM_LINE_WIDTH) / 2;
+        checkerMaterials = [
+            createCheckerMaterial(0, halfFloorWidth, chunkSize),
+            createCheckerMaterial(1, halfFloorWidth, chunkSize),
+        ];
+    }
+    return checkerMaterials;
+}
+
+/**
+ * Creates the POLARIZED floor: two phase-opposite checkerboard halves split by
+ * a razor-thin high-contrast dividing line at local x=0 (flow-audit
+ * enhancement #11). Reuses the split-halves approach from
  * {@link createCrackedFloorMesh}: two coplanar floor halves are pushed apart by
  * the seam width so the bright seam strip never z-fights the floor. Aligning the
- * seam at local x=0 makes it tile continuously across chunk borders.
+ * seam at local x=0 makes it tile continuously across chunk borders. The two
+ * halves carry PHASE-OPPOSITE checkerboards — each side's bright cells are the
+ * other side's dark cells, the factional opposition written into the ground.
  *
- * Both floor halves reuse the passed-in shared floor material; the seam strip
- * uses a module-shared greyscale material. NO per-chunk-unique materials are
- * created, so this returns no disposables and the caller adds none.
+ * Both checker materials and the seam material are module-shared. NO
+ * per-chunk-unique materials are created, so this returns no disposables and
+ * the caller adds none.
  *
  * @param chunkSize - Size of the chunk.
- * @param material - Shared floor material (both halves).
  */
-export function createSeamFloorMesh(chunkSize: number, material: THREE.Material): THREE.Group {
+export function createSeamFloorMesh(chunkSize: number): THREE.Group {
     const group = new THREE.Group();
 
     const halfSeam = SEAM_LINE_WIDTH / 2;
     const halfFloorWidth = (chunkSize - SEAM_LINE_WIDTH) / 2;
+    const [checkerA, checkerB] = getCheckerMaterials(chunkSize);
 
     // --- Left Floor Half (Negative X) ---
     const leftFloor = new THREE.Mesh(
         new THREE.PlaneGeometry(halfFloorWidth, chunkSize),
-        material,
+        checkerA,
     );
     leftFloor.rotation.x = -Math.PI / 2;
     leftFloor.position.x = -(halfSeam + halfFloorWidth / 2);
@@ -408,7 +473,7 @@ export function createSeamFloorMesh(chunkSize: number, material: THREE.Material)
     // --- Right Floor Half (Positive X) ---
     const rightFloor = new THREE.Mesh(
         new THREE.PlaneGeometry(halfFloorWidth, chunkSize),
-        material,
+        checkerB,
     );
     rightFloor.rotation.x = -Math.PI / 2;
     rightFloor.position.x = halfSeam + halfFloorWidth / 2;
@@ -431,9 +496,9 @@ export function createSeamFloorMesh(chunkSize: number, material: THREE.Material)
 
 /**
  * Frees all module-shared floor-pool resources (INFO_OVERFLOW glyph materials
- * + their DataTextures, and the POLARIZED seam-line material). Idempotent.
- * Call once from {@link ChunkManager.dispose}; NEVER per chunk, since the pool
- * is shared across every chunk that uses it.
+ * + their DataTextures, and the POLARIZED seam-line + checkerboard
+ * materials). Idempotent. Call once from {@link ChunkManager.dispose}; NEVER
+ * per chunk, since the pool is shared across every chunk that uses it.
  */
 export function disposeFloorPool(): void {
     if (infoFloorPool) {
@@ -447,6 +512,14 @@ export function disposeFloorPool(): void {
     if (seamLineMaterial) {
         seamLineMaterial.dispose();
         seamLineMaterial = null;
+    }
+    if (checkerMaterials) {
+        for (const mat of checkerMaterials) {
+            if (mat.map instanceof THREE.Texture)
+                mat.map.dispose();
+            mat.dispose();
+        }
+        checkerMaterials = null;
     }
 }
 

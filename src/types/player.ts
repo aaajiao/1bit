@@ -21,15 +21,22 @@ export interface PlayerPosition {
 }
 
 /**
- * Display-oriented [SHIFT]-resistance hint shown on the HUD.
- * Derived by main from OverrideMechanic.OverrideHint (shouldShow -> visible,
- * plus the resolved hint text). Kept as a small display contract so the HUD
- * stays decoupled from the mechanic's internal state.
+ * Generic display-oriented HUD hint contract (resolved text + visibility),
+ * shared by the override-resistance hint and the flower-adjustment fallback
+ * hint (flow-audit enhancement #1). Kept as a small display contract so the
+ * HUD stays decoupled from the mechanics' internal state.
  */
-export interface OverrideHintDisplay {
+export interface HintDisplay {
     text: string;
     visible: boolean;
 }
+
+/**
+ * Display-oriented [SHIFT]-resistance hint shown on the HUD.
+ * Derived by main from OverrideMechanic.OverrideHint (shouldShow -> visible,
+ * plus the resolved hint text).
+ */
+export type OverrideHintDisplay = HintDisplay;
 
 // ===== Finger & Hand Model =====
 

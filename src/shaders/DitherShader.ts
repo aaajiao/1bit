@@ -50,6 +50,32 @@ export const DitherShader: ShaderDefinition = {
         // uMisregister: 0-1, subtle duotone channel misregistration (IN_BETWEEN).
         uScanIntensity: { value: 0.0 },
         uMisregister: { value: 0.0 },
+        // uFlowerThresholdGain: signed gain of the flower term in the dither
+        //   threshold. Positive = brighter flower whitens/cleans the frame
+        //   (default 0.1, the historical behavior); NEGATIVE in INFO_OVERFLOW
+        //   so brightness dirties the frame instead (flow-audit break #8).
+        uFlowerThresholdGain: { value: 0.1 },
+        // ===== Gaze visual feedback (flow-audit break #1 + enhancement #2) =====
+        // uGazeIntensity: 0-1 smoothed gaze intensity (GazeMechanic curve);
+        //   drives a gentle disciplinary vignette (scaled by
+        //   uGazeVignetteStrength, sourced from GAZE_VISUAL config).
+        // uPitchLineV / uPitchLineAlpha: screen-space 45° threshold marker — a
+        //   thin paper-colored horizon line near the gaze threshold, with a
+        //   short first-crossing pulse folded into the alpha CPU-side.
+        uGazeIntensity: { value: 0.0 },
+        uGazeVignetteStrength: { value: 0.0 },
+        uPitchLineV: { value: 0.5 },
+        uPitchLineAlpha: { value: 0.0 },
+        // ===== Override payoff (flow-audit enhancements #4/#5) =====
+        // uRawBypass: 1 during the short crash window right after the override
+        //   triggers — the shader outputs the raw, un-dithered, un-tinted
+        //   tDiffuse render (the system cracks open), then the duotone
+        //   inversion flash plays as the aftershock.
+        // uOverrideSustain: 0-1 steady paper-white edge band while the key
+        //   stays held past the trigger (fast decay on release). Distinct from
+        //   the pulsing uOverrideProgress ramp / low-intensity cooldown denial.
+        uRawBypass: { value: 0.0 },
+        uOverrideSustain: { value: 0.0 },
     },
     vertexShader: `
         varying vec2 vUv;
@@ -89,6 +115,15 @@ export const DitherShader: ShaderDefinition = {
         // Per-room post-process character (Phase 5b)
         uniform float uScanIntensity;   // FORCED_ALIGNMENT: slow horizontal scan band
         uniform float uMisregister;     // IN_BETWEEN: subtle duotone misregistration
+        uniform float uFlowerThresholdGain; // signed flower->threshold gain (per-room)
+        // Gaze visual feedback
+        uniform float uGazeIntensity;        // 0-1 smoothed gaze intensity
+        uniform float uGazeVignetteStrength; // peak ink mix of the gaze vignette
+        uniform float uPitchLineV;           // screen v of the 45° threshold marker
+        uniform float uPitchLineAlpha;       // 0-1 marker opacity (proximity + pulse)
+        // Override payoff (flow-audit enhancements #4/#5)
+        uniform float uRawBypass;            // 1 = output raw tDiffuse (crash frame)
+        uniform float uOverrideSustain;      // 0-1 steady held-resistance edge band
         varying vec2 vUv;
 
         // Duotone-aware "inverse": swaps a color toward the opposite palette
@@ -198,6 +233,17 @@ export const DitherShader: ShaderDefinition = {
 
         void main() {
             vec4 color = texture2D(tDiffuse, vUv);
+
+            // Override raw-bypass crash frame (flow-audit enhancement #4): for
+            // ~0.1s after the trigger the whole 1-bit pipeline is skipped and
+            // the raw, un-dithered, un-tinted render leaks through — the system
+            // cracks open and shows the world underneath. The duotone inversion
+            // flash (uColorInversion below) then plays as the aftershock.
+            if (uRawBypass > 0.5) {
+                gl_FragColor = vec4(color.rgb, 1.0);
+                return;
+            }
+
             float gray = getLuminance(color.rgb);
 
             // Apply contrast (room-specific) BEFORE the brightness boost so that
@@ -264,9 +310,11 @@ export const DitherShader: ShaderDefinition = {
                 threshold -= scanBand * uScanIntensity * 0.12;
             }
 
-            // Apply flower intensity influence on threshold
-            // Brighter flower = slightly higher threshold = more white
-            threshold -= (uFlowerIntensity - 0.5) * 0.1;
+            // Apply flower intensity influence on threshold. The gain is a
+            // per-room SIGNED uniform: positive (default 0.1) = brighter flower
+            // means more white/cleaner; negative (INFO_OVERFLOW) = brighter
+            // flower means more ink/dirtier (flow-audit break #8).
+            threshold -= (uFlowerIntensity - 0.5) * uFlowerThresholdGain;
 
             // Dither to 1-bit, then map the scalar (~0 / ~1) to the per-room
             // duotone palette. All value-space effects below operate on this
@@ -310,7 +358,10 @@ export const DitherShader: ShaderDefinition = {
                 finalColor = duoInvert(finalColor);
             }
 
-            // Override progress feedback (edge pulse while holding)
+            // Override progress feedback (edge pulse while holding). Carries
+            // both the pre-trigger hold ramp and the low-intensity cooldown
+            // denial (flow-audit break #2); the post-trigger sustain lives on
+            // its own steady channel below (enhancement #5).
             if (uOverrideProgress > 0.0 && uOverrideProgress < 1.0) {
                 vec2 centered = vUv - 0.5;
                 float edgeDist = max(abs(centered.x), abs(centered.y));
@@ -324,6 +375,20 @@ export const DitherShader: ShaderDefinition = {
             if (uColorInversion > 0.0) {
                 vec3 inverted = duoInvert(finalColor);
                 finalColor = mix(finalColor, inverted, uColorInversion);
+            }
+
+            // Sustained-resistance edge band (flow-audit enhancement #5): while
+            // the key stays held past the trigger the screen edges hold a
+            // STEADY paper-white band — "still pressing = still resisting" —
+            // with a fast (~0.2s) CPU-side decay after release. Steady + paper
+            // (vs pulsing + inverted above) keeps the two states readable, and
+            // applying it after the inversion flash keeps the band same-phase
+            // white through the aftershock.
+            if (uOverrideSustain > 0.0) {
+                vec2 sustainCentered = vUv - 0.5;
+                float sustainDist = max(abs(sustainCentered.x), abs(sustainCentered.y));
+                float sustainBand = smoothstep(0.4, 0.5, sustainDist);
+                finalColor = mix(finalColor, uPaperColor, sustainBand * uOverrideSustain * 0.6);
             }
 
             // Weather effects
@@ -366,6 +431,27 @@ export const DitherShader: ShaderDefinition = {
 
                 // Invert edges slightly to create "bloom overflow" effect
                 finalColor = mix(finalColor, duoInvert(finalColor), edgeGlow * 0.4);
+            }
+
+            // ===== GAZE VISUAL FEEDBACK =====
+            // Disciplinary vignette: while gazing at the eye, the screen edges
+            // close in toward ink. Gentle (peak mix = uGazeVignetteStrength,
+            // from GAZE_VISUAL config) and smoothed by the gaze intensity curve.
+            if (uGazeIntensity > 0.0) {
+                vec2 gazeCentered = vUv - 0.5;
+                // ~0 at center, 1 at the corners.
+                float vig = smoothstep(0.5, 1.0, length(gazeCentered) * 1.41421356);
+                finalColor = mix(finalColor, uInkColor, vig * uGazeIntensity * uGazeVignetteStrength);
+            }
+
+            // 45° gaze-threshold marker: a thin paper-white horizon line that
+            // fades in as pitch nears the threshold (alpha also carries the
+            // short first-crossing pulse). One render-target pixel tall to
+            // match the 1-bit pixel grid.
+            if (uPitchLineAlpha > 0.001) {
+                float linePx = abs(vUv.y - uPitchLineV) * resolution.y;
+                float line = step(linePx, 0.5);
+                finalColor = mix(finalColor, uPaperColor, line * uPitchLineAlpha);
             }
 
             gl_FragColor = vec4(finalColor, 1.0);

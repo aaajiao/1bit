@@ -66,6 +66,19 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
                 // overwritten each frame by ShaderUniformUpdater from the room config.
                 uScanIntensity: { value: 0.0 },
                 uMisregister: { value: 0.0 },
+                // Signed per-room flower->threshold gain (0.1 = historical
+                // behavior); overwritten each frame from the room config.
+                uFlowerThresholdGain: { value: 0.1 },
+                // Gaze visual feedback (vignette + 45° threshold line). Default
+                // 0 = inert, overwritten each frame by ShaderUniformUpdater.
+                uGazeIntensity: { value: 0.0 },
+                uGazeVignetteStrength: { value: 0.0 },
+                uPitchLineV: { value: 0.5 },
+                uPitchLineAlpha: { value: 0.0 },
+                // Override payoff (enhancements #4/#5): raw-bypass crash frame
+                // + sustained-hold edge band. Default 0 = inert.
+                uRawBypass: { value: 0.0 },
+                uOverrideSustain: { value: 0.0 },
             },
             vertexShader: DitherShader.vertexShader,
             fragmentShader: DitherShader.fragmentShader,

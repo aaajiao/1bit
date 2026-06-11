@@ -7,8 +7,9 @@
 // of GPU resources — these are unit-testable in isolation (see tests/).
 //
 // AGGRESSIVENESS = MEDIUM: INFO_OVERFLOW strongly reduces (does not ban) TREE;
-// POLARIZED leans rigid BLOCKS and bans TREE; IN_BETWEEN never settles (FLUID
-// dominant); FORCED_ALIGNMENT is regimented BLOCKS/SPIKES.
+// POLARIZED is rigid BLOCKS and bans TREE *and* FLUID (no curves at all);
+// IN_BETWEEN never settles (FLUID dominant); FORCED_ALIGNMENT is regimented
+// BLOCKS/SPIKES.
 
 import { hash } from '../utils/hash';
 import { RoomType } from './RoomConfig';
@@ -27,7 +28,7 @@ export type BuildingStyle = 'BLOCKS' | 'SPIKES' | 'TREE' | 'FLUID';
  *
  * - INFO_OVERFLOW: machine district — BLOCKS/SPIKES dominant, TREE rare, no FLUID.
  * - IN_BETWEEN: never-settling — FLUID dominant.
- * - POLARIZED: rigid — BLOCKS dominant, no TREE (a little SPIKES/FLUID texture).
+ * - POLARIZED: rigid — BLOCKS dominant, no TREE, no FLUID (a little SPIKES texture).
  * - FORCED_ALIGNMENT: regimented — BLOCKS/SPIKES only.
  * - default (undefined room): the original mix (FLUID>0.9, TREE>0.7, SPIKES>0.35, else BLOCKS).
  *
@@ -56,9 +57,9 @@ export function selectBuildingStyle(styleSeed: number, roomType?: RoomType): Bui
             return 'BLOCKS';
 
         case RoomType.POLARIZED:
-            // Rigid: BLOCKS dominant, NO TREE (banned), a little SPIKES/FLUID.
-            if (styleSeed > 0.9)
-                return 'FLUID';
+            // Rigid: BLOCKS dominant, NO TREE (banned), NO FLUID — the room is
+            // all straight lines, zero curves (flow-audit enhancement #11);
+            // the former FLUID slice folds into BLOCKS. A little SPIKES texture.
             if (styleSeed > 0.75)
                 return 'SPIKES';
             return 'BLOCKS';
