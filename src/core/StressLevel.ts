@@ -66,13 +66,28 @@ export function ditherScaleForStress(stress: number): number {
 }
 
 /**
+ * Settle hysteresis on the stress->scale output: the emitted scale holds
+ * still until the per-frame candidate has drifted at least SETTLE_DEADBAND
+ * away from it, then jumps straight TO the candidate (fast landing, then
+ * stillness). A continuously micro-changing uDitherScale makes the whole
+ * halftone pattern crawl/flicker; deadband steps trade that for a slight,
+ * far less visible stepping (宁可台阶感轻微也不要持续爬纹). Pure.
+ */
+export function settleDitherScale(settled: number, candidate: number): number {
+    return Math.abs(candidate - settled) >= STRESS.SETTLE_DEADBAND ? candidate : settled;
+}
+
+/**
  * Stateful wrapper main.ts drives once per frame: smooths the raw stress
- * (attack fast / release slow) and returns the dither scale to feed into
- * ShaderUniformParams.ditherScale. All math delegates to the pure functions
- * above. Positional args so the per-frame call allocates nothing.
+ * (attack fast / release slow), settles the resulting scale (deadband
+ * hysteresis + exact landing on the band endpoints) and returns the dither
+ * scale to feed into ShaderUniformParams.ditherScale. All math delegates to
+ * the pure functions above. Positional args so the per-frame call allocates
+ * nothing.
  */
 export class StressLevel {
     private smoothed: number = 0;
+    private settledScale: number = STRESS.SCALE_MIN;
 
     update(
         delta: number,
@@ -90,7 +105,25 @@ export class StressLevel {
             sunsetForeshadow,
         );
         this.smoothed = stepStress(this.smoothed, target, delta);
-        return ditherScaleForStress(this.smoothed);
+
+        // Settle (anti-crawl, F-review): snap the asymptotic smoother onto a
+        // rest extreme once it coasts within SETTLE_SNAP of it — but only
+        // while the target sits on that side, so a fresh rise at very high
+        // frame rates (tiny per-frame steps) is never snapped back to 0.
+        if (target <= this.smoothed && this.smoothed < STRESS.SETTLE_SNAP)
+            this.smoothed = 0;
+        else if (target >= this.smoothed && this.smoothed > 1 - STRESS.SETTLE_SNAP)
+            this.smoothed = 1;
+
+        const candidate = ditherScaleForStress(this.smoothed);
+        // At a rest extreme the scale must land EXACTLY on the band endpoint
+        // (SCALE_MIN is the historical baseline grain), so the deadband is
+        // bypassed there; everywhere else the hysteresis holds the output
+        // still against sub-deadband drift.
+        this.settledScale = (this.smoothed === 0 || this.smoothed === 1)
+            ? candidate
+            : settleDitherScale(this.settledScale, candidate);
+        return this.settledScale;
     }
 
     /** Current smoothed 0-1 stress (post-attack/release filtering). */

@@ -105,6 +105,13 @@ body {
     text-decoration: underline;
 }
 
+/* Two-step in-screen confirm (the forgetting never leaves the 1-bit screen
+   language): the armed entry reads "再点一次以遗忘" and lifts to the replay
+   entries' emphasis until the second click — or the window lapses. */
+#forget-scars.armed {
+    opacity: 0.65;
+}
+
 /* Touch controls (touch fallback mode only): shared 1-bit button look for
    the flower +/- pair, the hold-to-resist entry, and the pause entry
    (flow-audit C3: override + pause were unreachable on pure touch). */

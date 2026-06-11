@@ -1,6 +1,7 @@
 // 1-bit Chimera Void - Floor Tile Generator
 import * as THREE from 'three';
 import { hash } from '../utils/hash';
+import { chunkToCluster } from './RoomConfig';
 
 /**
  * Deterministic pseudo-random generator seeded by chunk coords plus a
@@ -14,6 +15,31 @@ function makeSeededRandom(cx: number, cz: number): () => number {
         // Spread the counter across both hash inputs for good distribution
         return hash(cx * 17.31 + counter * 0.613, cz * 11.97 + counter * 1.193);
     };
+}
+
+/**
+ * Jagged-edge erosion depth (m) at a given WORLD z for one side of the FA
+ * rift. Seeded by the room CLUSTER (chunkToCluster — the single source of
+ * cluster conversion) and parameterized by world z, NOT by the chunk + its
+ * local z: the two z-stacked chunks of one cluster therefore evaluate the
+ * exact same function at their shared seam vertices, so the crack's jagged
+ * edges connect into one continuous line per cluster. Position-pure hash
+ * noise (no call-order-dependent RNG) keeps it deterministic per session.
+ * @param clusterX - Room-cluster x coordinate (chunkToCluster(cx)).
+ * @param clusterZ - Room-cluster z coordinate (chunkToCluster(cz)).
+ * @param worldZ - World-space z of the vertex (cz * chunkSize + localZ).
+ * @param side - 0 = left (negative-x) crack edge, 1 = right (positive-x);
+ *   keeps the two edges decorrelated (historical 123.4 phase offset).
+ */
+function crackJagOffset(clusterX: number, clusterZ: number, worldZ: number, side: number): number {
+    // Jagged noise: mix of sine waves + deterministic positional jitter,
+    // magnitudes unchanged from the historical per-chunk version.
+    const wave = Math.sin(worldZ * 0.5 + side * 123.4) * 0.8 + Math.sin(worldZ * 2.1) * 0.3;
+    const jitter = (hash(
+        clusterX * 17.31 + worldZ * 0.613,
+        clusterZ * 11.97 + worldZ * 1.193 + side * 5.77,
+    ) - 0.5) * 0.4;
+    return Math.abs(wave + jitter) * 0.8;
 }
 
 /**
@@ -85,8 +111,8 @@ const ABYSS_FOG_PARTICLES = 400;
  * @param chunkSize - Size of the chunk
  * @param material - Floor material
  * @param crackWidth - Base width of the crack (default 4 meters)
- * @param cx - Chunk X coordinate (deterministic jagged-edge seed)
- * @param cz - Chunk Z coordinate (deterministic jagged-edge seed)
+ * @param cx - Chunk X coordinate (cluster jagged-edge seed + fog seed)
+ * @param cz - Chunk Z coordinate (cluster jagged-edge seed + world-z base + fog seed)
  * @param crackLocalX - Chunk-local x of the crack center line (default 0)
  */
 export function createCrackedFloorMesh(
@@ -100,8 +126,14 @@ export function createCrackedFloorMesh(
     const group = new THREE.Group();
     const disposables: THREE.Material[] = [];
 
-    // Deterministic per-chunk RNG so re-entering a chunk looks identical
+    // Deterministic per-chunk RNG (abyss fog only — the jagged edges use the
+    // cluster-seeded crackJagOffset) so re-entering a chunk looks identical.
     const rand = makeSeededRandom(cx, cz);
+
+    // Jagged-edge seed: the room CLUSTER, not the chunk, so the two z-stacked
+    // FA chunks of one cluster draw a single continuous crack line.
+    const clusterX = chunkToCluster(cx);
+    const clusterZ = chunkToCluster(cz);
 
     // Floor strip widths on each side of the crack, clamped to the chunk
     // footprint (a crack on the footprint edge leaves one side empty).
@@ -126,11 +158,10 @@ export function createCrackedFloorMesh(
             // Right edge of left floor is at x = leftFloorWidth / 2
             // We want to perturb vertices near this edge
             if (x > leftFloorWidth / 2 - 0.1) {
-                // Jagged noise: mix of sine waves
-                const noise = Math.sin(z * 0.5) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
-                // Subtract from X (move left, widening gap randomly) or add (narrowing)
-                // But we want to keep a minimum gap, so let's mostly erode
-                leftPos.setX(i, x - Math.abs(noise) * 0.8);
+                // World-z-parameterized, cluster-seeded jag: continuous across
+                // the z seam between the cluster's two chunks. Mostly erode
+                // (move left, widening the gap) to keep a minimum gap.
+                leftPos.setX(i, x - crackJagOffset(clusterX, clusterZ, cz * chunkSize + z, 0));
             }
         }
         leftPos.needsUpdate = true;
@@ -154,9 +185,9 @@ export function createCrackedFloorMesh(
 
             // Left edge of right floor is at x = -rightFloorWidth / 2
             if (x < -rightFloorWidth / 2 + 0.1) {
-                const noise = Math.sin(z * 0.5 + 123.4) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
-                // Add to X (move right, widening gap)
-                rightPos.setX(i, x + Math.abs(noise) * 0.8);
+                // Add to X (move right, widening gap); side 1 = the crack's
+                // right edge, decorrelated from the left by the 123.4 phase.
+                rightPos.setX(i, x + crackJagOffset(clusterX, clusterZ, cz * chunkSize + z, 1));
             }
         }
         rightPos.needsUpdate = true;

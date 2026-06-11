@@ -15,6 +15,7 @@ import {
     recognitionBoost,
     sampleTrail,
     stepAngleToward,
+    TrailCursor,
 } from '../src/world/GhostSystem';
 
 const INTERVAL = TRAIL.SAMPLE_INTERVAL;
@@ -301,6 +302,64 @@ describe('sampleTrail (pure replay interpolator)', () => {
     });
 });
 
+describe('trailCursor (forward-only per-frame sampler)', () => {
+    const trail = makeTrail([
+        [0, 0, 0.2],
+        [10, 0, 0.4],
+        [10, 0, 0.6], // stationary segment: heading must hold
+        [10, 20, 1.0],
+    ]);
+
+    it('matches the pure sampleTrail across a monotonic sweep', () => {
+        const cursor = new TrailCursor(trail);
+        const end = INTERVAL * (trail.length - 1);
+        for (let t = -0.5; t <= end + 1; t += 0.13) {
+            const fromCursor = cursor.sample(t)!;
+            const oneShot = sampleTrail(trail, t)!;
+            expect(fromCursor).toEqual(oneShot);
+        }
+    });
+
+    it('returns ONE reused object mutated in place (per-frame allocation-free)', () => {
+        const cursor = new TrailCursor(makeTrail([[0, 0, 0.1], [4, 0, 0.9]]));
+        const first = cursor.sample(0);
+        expect(cursor.sample(INTERVAL / 2)).toBe(first);
+        expect(cursor.sample(INTERVAL)).toBe(first);
+    });
+
+    it('keeps the previous heading through stationary segments', () => {
+        const cursor = new TrailCursor(trail);
+        // Segment 0 walks +x => π/2; segment 1 is degenerate => heading holds.
+        expect(cursor.sample(INTERVAL * 0.5)!.rotationY).toBeCloseTo(Math.PI / 2, 12);
+        expect(cursor.sample(INTERVAL * 1.5)!.rotationY).toBeCloseTo(Math.PI / 2, 12);
+        // Segment 2 walks +z => 0 again.
+        expect(cursor.sample(INTERVAL * 2.5)!.rotationY).toBeCloseTo(0, 12);
+    });
+
+    it('never moves backwards: a regressing t clamps onto the current segment', () => {
+        const cursor = new TrailCursor(trail);
+        const ahead = cursor.sample(INTERVAL * 2.5)!;
+        const aheadX = ahead.x;
+        const aheadZ = ahead.z;
+        // t regresses below the cursor's segment: clamp to its start keyframe
+        // (the cursor only ever advances), never a rescan to an earlier one.
+        const back = cursor.sample(INTERVAL * 0.5)!;
+        expect(back.x).toBe(trail[2].x);
+        expect(back.z).toBe(trail[2].z);
+        // And it resumes forward correctly from there.
+        const resumed = cursor.sample(INTERVAL * 2.5)!;
+        expect(resumed.x).toBeCloseTo(aheadX, 12);
+        expect(resumed.z).toBeCloseTo(aheadZ, 12);
+    });
+
+    it('handles degenerate trails like sampleTrail (null / single-point done)', () => {
+        expect(new TrailCursor([]).sample(0)).toBeNull();
+        expect(new TrailCursor(trail, 0).sample(0)).toBeNull();
+        const single = new TrailCursor(makeTrail([[3, 4, 0.6]])).sample(0)!;
+        expect(single).toEqual({ x: 3, z: 4, flower: 0.6, rotationY: 0, done: true });
+    });
+});
+
 describe('stepAngleToward (shortest-arc, frame-rate independent)', () => {
     it('converges toward the target without overshoot', () => {
         let angle = 0;
@@ -365,7 +424,7 @@ describe('ghostSystem (headless integration)', () => {
     it('spawns at the trail start and walks it at the recorded rhythm', () => {
         const scene = new THREE.Scene();
         const trail = makeTrail([[0, 0, 0.3], [10, 0, 0.5], [10, 20, 0.9]]);
-        const ghost = new GhostSystem(scene, trail);
+        const ghost = new GhostSystem(scene, null, trail);
         // Waits unseen until the player leaves the trail start behind.
         expect(ghost.isPresent()).toBe(false);
         expect(countGhostMeshes(scene)).toBe(0);
@@ -390,7 +449,7 @@ describe('ghostSystem (headless integration)', () => {
 
     it('waits for the player to leave the trail start before entering (偶遇)', () => {
         const scene = new THREE.Scene();
-        const ghost = new GhostSystem(scene, makeTrail([[0, 0, 0.5], [5, 0, 0.5]]));
+        const ghost = new GhostSystem(scene, null, makeTrail([[0, 0, 0.5], [5, 0, 0.5]]));
 
         // The player lingers near the trail start (= the deterministic spawn
         // point): no ghost, no clock — it would otherwise be born inside the
@@ -420,7 +479,7 @@ describe('ghostSystem (headless integration)', () => {
 
     it('dispose while still waiting leaves no trace', () => {
         const scene = new THREE.Scene();
-        const ghost = new GhostSystem(scene, makeTrail([[0, 0, 0.5], [5, 0, 0.5]]));
+        const ghost = new GhostSystem(scene, null, makeTrail([[0, 0, 0.5], [5, 0, 0.5]]));
         ghost.update(0.05, new THREE.Vector3(0, 2, 0)); // still waiting
         ghost.dispose();
         expect(ghost.isPresent()).toBe(false);
@@ -432,7 +491,7 @@ describe('ghostSystem (headless integration)', () => {
 
     it('holds at the end, fades, and is gone for the session', () => {
         const scene = new THREE.Scene();
-        const ghost = new GhostSystem(scene, makeTrail([[0, 0, 0.5], [2, 0, 0.5]]));
+        const ghost = new GhostSystem(scene, null, makeTrail([[0, 0, 0.5], [2, 0, 0.5]]));
 
         // Walk to the end, through the hold and the fade, plus margin.
         const total = INTERVAL + GHOST.HOLD_SECONDS + GHOST.FADE_SECONDS + 1;
@@ -451,7 +510,7 @@ describe('ghostSystem (headless integration)', () => {
         const scene = new THREE.Scene();
         // A long stationary-ish trail so the ghost stays walking throughout.
         const trail = makeTrail(Array.from({ length: 50 }, (_, k) => [k * 0.1, 0, 0.4] as [number, number, number]));
-        const ghost = new GhostSystem(scene, trail);
+        const ghost = new GhostSystem(scene, null, trail);
         const far = new THREE.Vector3(500, 2, 500);
         ghost.update(0.05, far); // delayed entrance: the ghost enters
         ghost.update(0.05, far); // observed outside the radius => arms
@@ -489,7 +548,7 @@ describe('ghostSystem (headless integration)', () => {
     it('is silently inert with no / unusable trail (静默无幽灵)', () => {
         const scene = new THREE.Scene();
         for (const trail of [null, [], makeTrail([[1, 1, 0.5]])]) {
-            const ghost = new GhostSystem(scene, trail);
+            const ghost = new GhostSystem(scene, null, trail);
             expect(ghost.isPresent()).toBe(false);
             expect(scene.children).toHaveLength(0);
             expect(() => ghost.update(0.05, FAR_PLAYER)).not.toThrow();
@@ -499,11 +558,74 @@ describe('ghostSystem (headless integration)', () => {
 
     it('dispose mid-walk removes everything (PauseController dispose chain)', () => {
         const scene = new THREE.Scene();
-        const ghost = new GhostSystem(scene, makeTrail([[0, 0, 0.5], [5, 5, 0.5]]));
+        const ghost = new GhostSystem(scene, null, makeTrail([[0, 0, 0.5], [5, 5, 0.5]]));
         ghost.update(0.5, FAR_PLAYER);
         ghost.dispose();
         expect(ghost.isPresent()).toBe(false);
         expect(scene.children).toHaveLength(0);
         expect(() => ghost.dispose()).not.toThrow();
+    });
+});
+
+describe('ghost trail burn-after-read (阅后即焚, one-time across boots)', () => {
+    const FAR_PLAYER = new THREE.Vector3(1000, 2, 1000);
+
+    it('consumes the stored trail the moment a ghost is constructed from it', () => {
+        const storage = makeFakeStorage();
+        saveTrail(makeTrail([[0, 0, 0.5], [5, 0, 0.6], [10, 0, 0.7]]), storage);
+        const scene = new THREE.Scene();
+        const ghost = new GhostSystem(scene, storage);
+
+        // The stored copy is gone BEFORE the ghost even enters the world:
+        // a re-boot from here would find nothing — the same ghost can never
+        // walk twice, even when this run ends too short to save a new trail.
+        expect(storage.getItem(TRAIL.KEY)).toBeNull();
+        expect(loadTrail(storage)).toBeNull();
+
+        // The in-memory copy still drives a full, correct replay.
+        ghost.update(0.05, FAR_PLAYER);
+        expect(ghost.isPresent()).toBe(true);
+        const group = scene.children[0] as THREE.Group;
+        expect(group.position.x).toBe(0);
+        expect(group.position.z).toBe(0);
+        ghost.dispose();
+    });
+
+    it('leaves storage untouched when there is nothing stored (no ghost)', () => {
+        const storage = makeFakeStorage({ unrelated: 'keep' });
+        const ghost = new GhostSystem(new THREE.Scene(), storage);
+        expect(ghost.isPresent()).toBe(false);
+        expect(storage.getItem('unrelated')).toBe('keep');
+        ghost.dispose();
+    });
+
+    it('leaves corrupt stored data in place (construction failed => no burn)', () => {
+        const storage = makeFakeStorage({ [TRAIL.KEY]: '{broken' });
+        const ghost = new GhostSystem(new THREE.Scene(), storage);
+        expect(ghost.isPresent()).toBe(false);
+        expect(storage.getItem(TRAIL.KEY)).toBe('{broken');
+        ghost.dispose();
+    });
+
+    it('leaves a too-short stored trail in place (decodes as absent => no burn)', () => {
+        const storage = makeFakeStorage();
+        saveTrail(makeTrail([[1, 1, 0.5]]), storage); // 1 point: unwalkable
+        const before = storage.getItem(TRAIL.KEY);
+        expect(before).not.toBeNull();
+        const ghost = new GhostSystem(new THREE.Scene(), storage);
+        expect(ghost.isPresent()).toBe(false);
+        expect(storage.getItem(TRAIL.KEY)).toBe(before);
+        ghost.dispose();
+    });
+
+    it('does not burn the storage for an injected trail when none is stored', () => {
+        // Tests / future callers may inject a trail directly; with nothing
+        // persisted the clear is a harmless no-op on other keys.
+        const storage = makeFakeStorage({ unrelated: 'keep' });
+        const ghost = new GhostSystem(new THREE.Scene(), storage, makeTrail([[0, 0, 0.5], [5, 0, 0.5]]));
+        ghost.update(0.05, FAR_PLAYER);
+        expect(ghost.isPresent()).toBe(true);
+        expect(storage.getItem('unrelated')).toBe('keep');
+        ghost.dispose();
     });
 });

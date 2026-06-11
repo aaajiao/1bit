@@ -164,7 +164,7 @@ describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
         expect(edge.fog.count * 2).toBe(centered.fog.count);
     });
 
-    it('is deterministic per chunk seed (re-entering regenerates identical jagged edges)', () => {
+    it('is deterministic per seed (re-entering regenerates identical jagged edges)', () => {
         const a = build(CHUNK_SIZE / 2, 3, -7);
         const b = build(CHUNK_SIZE / 2, 3, -7);
         const posA = a.floors[0].geometry.attributes.position.array;
@@ -173,5 +173,38 @@ describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
         for (let i = 0; i < posA.length; i++) {
             expect(posA[i]).toBe(posB[i]);
         }
+    });
+
+    it('connects the jagged edge across the z seam inside a cluster (one continuous crack)', () => {
+        // Chunks (0,0) and (0,1) form one column of cluster (0,0)
+        // (CLUSTER_CHUNKS=2); the column left of the rift carries the crack on
+        // its +x footprint edge (crackLocalX = +CHUNK_SIZE/2) in both chunks.
+        const a = build(CHUNK_SIZE / 2, 0, 0);
+        const b = build(CHUNK_SIZE / 2, 0, 1);
+
+        // Plane-geometry rows are unrotated: local plane y = -world z, so
+        // chunk (0,0)'s +z edge is the row at plane y = -40 and chunk (0,1)'s
+        // -z edge is the row at plane y = +40 — the same world z = 40.
+        const rowXs = (mesh: THREE.Mesh, planeY: number): number[] => {
+            const pos = mesh.geometry.attributes.position;
+            const xs: number[] = [];
+            for (let i = 0; i < pos.count; i++) {
+                if (pos.getY(i) === planeY)
+                    xs.push(pos.getX(i));
+            }
+            return xs;
+        };
+        const seamA = rowXs(a.floors[0], -CHUNK_SIZE / 2);
+        const seamB = rowXs(b.floors[0], CHUNK_SIZE / 2);
+        expect(seamA.length).toBeGreaterThan(0);
+        expect(seamA.length).toBe(seamB.length);
+        // The seam-row jag endpoints meet: same x offsets on both sides.
+        for (let i = 0; i < seamA.length; i++) {
+            expect(seamA[i]).toBeCloseTo(seamB[i], 12);
+        }
+        // Sanity (non-vacuous): the seam row's edge column really was eroded
+        // away from the un-perturbed strip edge.
+        const stripHalfWidth = (CHUNK_SIZE - CRACK_WIDTH / 2) / 2; // 39
+        expect(Math.max(...seamA)).toBeLessThan(stripHalfWidth);
     });
 });

@@ -104,6 +104,13 @@ function ensureDuotoneUniforms(
         u.uDitherScale = { value: 1.0 };
         injected = true;
     }
+    // Dither-scale anchor (center-symmetric grain zoom). Inject with the live
+    // canvas center so a material that predates the uniform still anchors on
+    // the screen center; PostProcessing keeps it in sync on resize.
+    if (!u.uScreenCenter) {
+        u.uScreenCenter = { value: new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2) };
+        injected = true;
+    }
     if (!u.uDitherModeFrom) {
         u.uDitherModeFrom = { value: 0 };
         injected = true;
@@ -136,9 +143,9 @@ function ensureDuotoneUniforms(
 /**
  * Per-frame inputs for {@link updateShaderUniforms}.
  *
- * main.ts keeps ONE long-lived instance of this object (built once via
- * {@link createShaderUniformParams}) and mutates its fields in place every
- * frame, so the per-frame uniform sync allocates nothing.
+ * core/ShaderSyncUpdater keeps ONE long-lived instance of this object (built
+ * once via {@link createShaderUniformParams}) and mutates its fields in
+ * place every frame, so the per-frame uniform sync allocates nothing.
  */
 export interface ShaderUniformParams {
     /** Fullscreen quad carrying the DitherShader material */

@@ -2,7 +2,7 @@
 // Non-invasive runtime behavior sampling for state snapshot generation
 
 import type { BehaviorProfile } from '../world/RoomConfig';
-import { GAMEPLAY, LIVE_PROFILE } from '../config';
+import { GAMEPLAY, LIVE_PROFILE, TAG_THRESHOLDS } from '../config';
 import { riftLineXForWorldX, RoomType } from '../world/RoomConfig';
 
 /**
@@ -240,17 +240,19 @@ export class RunStatsCollector {
     }
 
     /**
-     * Generate behavior tags from normalized metrics
+     * Generate behavior tags from normalized metrics. All cut points live in
+     * config/TAG_THRESHOLDS (single source of truth, shared with the
+     * LIVE_PROFILE saturation knobs).
      */
     generateTags(): BehaviorTag[] {
         const metrics = this.normalize();
         const tags: BehaviorTag[] = [];
 
         // Light intensity tags
-        if (metrics.avgFlower < 0.25) {
+        if (metrics.avgFlower < TAG_THRESHOLDS.QUIET_LIGHT_MAX_FLOWER) {
             tags.push('QUIET_LIGHT');
         }
-        else if (metrics.avgFlower < 0.6) {
+        else if (metrics.avgFlower < TAG_THRESHOLDS.MEDIUM_LIGHT_MAX_FLOWER) {
             tags.push('MEDIUM_LIGHT');
         }
         else {
@@ -258,10 +260,10 @@ export class RunStatsCollector {
         }
 
         // Gaze relationship tags
-        if (metrics.gazeRatio > 0.5) {
+        if (metrics.gazeRatio > TAG_THRESHOLDS.HIGH_GAZE_MIN_RATIO) {
             tags.push('HIGH_GAZE');
         }
-        else if (metrics.gazeRatio < 0.15) {
+        else if (metrics.gazeRatio < TAG_THRESHOLDS.LOW_GAZE_MAX_RATIO) {
             tags.push('LOW_GAZE');
         }
 
@@ -274,12 +276,15 @@ export class RunStatsCollector {
         }
 
         // Position tags
-        if (metrics.crackRatio > 0.3) {
+        if (metrics.crackRatio > TAG_THRESHOLDS.NEUTRAL_SEEKER_MIN_CRACK_RATIO) {
             tags.push('NEUTRAL_SEEKER');
         }
 
         // Resistance tag: a single successful override counts, regardless of hold ratio
-        if (metrics.overrideSuccesses >= 1 || metrics.overrideRatio > 0.05) {
+        if (
+            metrics.overrideSuccesses >= TAG_THRESHOLDS.RESISTER_MIN_SUCCESSES
+            || metrics.overrideRatio > TAG_THRESHOLDS.RESISTER_MIN_OVERRIDE_RATIO
+        ) {
             tags.push('RESISTER');
         }
 

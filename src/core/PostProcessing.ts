@@ -1,4 +1,5 @@
 // Post-processing setup module
+import type { DitherUniforms } from '../types';
 import * as THREE from 'three';
 import { createBlueNoiseTexture } from '../shaders/BlueNoiseTexture';
 import { DitherShader } from '../shaders/DitherShader';
@@ -31,7 +32,9 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
     const composerScene = new THREE.Scene();
     const composerCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-    // Shader quad with dithering effect
+    // Shader quad with dithering effect. `satisfies DitherUniforms` locks this
+    // inline object against the types/shader.ts contract, so tsc flags any
+    // drift between the GLSL declarations, this injection and the type.
     const shaderQuad = new THREE.Mesh(
         new THREE.PlaneGeometry(2, 2),
         new THREE.ShaderMaterial({
@@ -86,11 +89,15 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
                 // overwritten each frame from the room config) + the
                 // boot-generated blue-noise threshold texture.
                 uDitherScale: { value: 1.0 },
+                // Dither-scale anchor: the OUTPUT framebuffer center in
+                // gl_FragCoord px (canvas size / 2 — the final pass renders at
+                // full window size, NOT the renderScale-scaled `resolution`).
+                uScreenCenter: { value: new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2) },
                 uDitherModeFrom: { value: 0 },
                 uDitherModeTo: { value: 0 },
                 uDitherModeBlend: { value: 1.0 },
                 tBlueNoise: { value: createBlueNoiseTexture() },
-            },
+            } satisfies DitherUniforms,
             vertexShader: DitherShader.vertexShader,
             fragmentShader: DitherShader.fragmentShader,
         }),
@@ -126,4 +133,40 @@ export function updatePostProcessingSize(
 
     components.renderTarget.setSize(width, height);
     (components.shaderQuad.material.uniforms.resolution.value as THREE.Vector2).set(width, height);
+    // Keep the dither-scale anchor on the OUTPUT framebuffer center (canvas
+    // px — the final pass renders at full window size, unscaled).
+    (components.shaderQuad.material.uniforms.uScreenCenter.value as THREE.Vector2)
+        .set(window.innerWidth / 2, window.innerHeight / 2);
+}
+
+/**
+ * Window-resize side effect for the whole render pipeline: camera aspect,
+ * renderer canvas size, and the post-processing target/uniforms above.
+ */
+export function resizeRendering(
+    camera: THREE.PerspectiveCamera,
+    renderer: THREE.WebGLRenderer,
+    components: PostProcessingComponents,
+    renderScale: number,
+): void {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    updatePostProcessingSize(components, renderScale);
+}
+
+/**
+ * The two-pass composed render: scene into the low-res target, then the
+ * dither quad onto the canvas at full resolution.
+ */
+export function renderComposed(
+    renderer: THREE.WebGLRenderer,
+    scene: THREE.Scene,
+    camera: THREE.PerspectiveCamera,
+    components: PostProcessingComponents,
+): void {
+    renderer.setRenderTarget(components.renderTarget);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    renderer.render(components.composerScene, components.composerCamera);
 }

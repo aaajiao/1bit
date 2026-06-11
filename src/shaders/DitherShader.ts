@@ -79,12 +79,18 @@ export const DitherShader: ShaderDefinition = {
         // ===== F5 dither language =====
         // uDitherScale: stress-driven sampling-grid divisor (core/StressLevel);
         //   1.0 = the historical grain, ~2.5 = coarse under full pressure.
+        // uScreenCenter: dither-scale anchor — the center of the OUTPUT
+        //   framebuffer (canvas px, i.e. gl_FragCoord units of the final
+        //   pass; NOT the renderScale-scaled `resolution`). Sampling is
+        //   centered on it so scale changes zoom the pattern symmetrically.
+        //   Set at construction + on resize (PostProcessing.ts).
         // uDitherModeFrom/To + uDitherModeBlend: per-room pattern crossfade
         //   (ids from world/RoomConfig.DITHER_MODE, baked through the
         //   RoomTransition pipeline; transitions blend pattern OUTPUTS).
         // tBlueNoise: 64x64 best-candidate ordered threshold texture,
         //   generated once at boot (shaders/BlueNoiseTexture.ts).
         uDitherScale: { value: 1.0 },
+        uScreenCenter: { value: new THREE.Vector2() },
         uDitherModeFrom: { value: 0 },
         uDitherModeTo: { value: 0 },
         uDitherModeBlend: { value: 1.0 },
@@ -139,6 +145,7 @@ export const DitherShader: ShaderDefinition = {
         uniform float uOverrideSustain;      // 0-1 steady held-resistance edge band
         // F5 dither language: stress grain + per-room pattern crossfade
         uniform float uDitherScale;     // >=1 sampling-coord divisor (coarser grain)
+        uniform vec2 uScreenCenter;     // dither-scale anchor: OUTPUT-framebuffer center (gl_FragCoord px)
         uniform int uDitherModeFrom;    // pattern id of the crossfade's from side
         uniform int uDitherModeTo;      // pattern id of the room's own side
         uniform float uDitherModeBlend; // 0=from, 1=to (blends pattern OUTPUTS)
@@ -359,7 +366,11 @@ export const DitherShader: ShaderDefinition = {
             // fractional scales land between cell sizes continuously. The
             // POLARIZED hard-threshold branch never samples a pattern, so the
             // scale (like every pattern knob) is inert there by construction.
-            vec2 scaledCoord = jitteredCoord / max(uDitherScale, 1.0);
+            // Anchored on the screen center (uScreenCenter, gl_FragCoord px):
+            // a changing scale zooms the pattern symmetrically about the view
+            // center instead of crawling away from the lower-left corner.
+            // (mod()/floor() in the patterns are negative-coord safe.)
+            vec2 scaledCoord = (jitteredCoord - uScreenCenter) / max(uDitherScale, 1.0);
 
             if (enableDepthDither) {
                 float pseudoDepth = length(vUv - 0.5) * 2.0;

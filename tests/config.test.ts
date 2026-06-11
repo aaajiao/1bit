@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AUDIO_MASTER, CABLE_AUDIO_CONFIG, FOOTSTEP_CONFIG, POLARIZED_BEAT_CONFIG, SNAPSHOT_AUDIO_CONFIG } from '../src/config/audio';
-import { FLOWER_HINT, FLOWER_INTRO, FLOWER_LIGHT, GAMEPLAY, OVERRIDE, SPAWN, SUNSET_FORESHADOW, WORLD } from '../src/config/constants';
+import { FLOWER_HINT, FLOWER_INTRO, FLOWER_LIGHT, GAMEPLAY, LIVE_PROFILE, OVERRIDE, SPAWN, SUNSET_FORESHADOW, TAG_THRESHOLDS, WORLD } from '../src/config/constants';
 import { PHYSICS_CONFIG, RIFT_PHYSICS } from '../src/config/physics';
 
 describe('physics Config', () => {
@@ -131,6 +131,35 @@ describe('flower light Config (F5 "花是光")', () => {
         // It stays a hand light, not a floodlight: max reach well under fog far.
         const maxReach = FLOWER_LIGHT.DISTANCE[2].BASE + FLOWER_LIGHT.DISTANCE[2].GAIN;
         expect(maxReach).toBeLessThanOrEqual(20);
+    });
+});
+
+describe('tag thresholds Config (snapshot tag language)', () => {
+    it('keeps the light bands ordered inside (0, 1)', () => {
+        expect(TAG_THRESHOLDS.QUIET_LIGHT_MAX_FLOWER).toBeGreaterThan(0);
+        expect(TAG_THRESHOLDS.QUIET_LIGHT_MAX_FLOWER)
+            .toBeLessThan(TAG_THRESHOLDS.MEDIUM_LIGHT_MAX_FLOWER);
+        expect(TAG_THRESHOLDS.MEDIUM_LIGHT_MAX_FLOWER).toBeLessThan(1);
+    });
+
+    it('keeps the gaze bands non-overlapping (LOW < HIGH)', () => {
+        expect(TAG_THRESHOLDS.LOW_GAZE_MAX_RATIO).toBeGreaterThan(0);
+        expect(TAG_THRESHOLDS.LOW_GAZE_MAX_RATIO)
+            .toBeLessThan(TAG_THRESHOLDS.HIGH_GAZE_MIN_RATIO);
+        expect(TAG_THRESHOLDS.HIGH_GAZE_MIN_RATIO).toBeLessThanOrEqual(1);
+    });
+
+    it('keeps the position/resistance thresholds valid ratios', () => {
+        expect(TAG_THRESHOLDS.NEUTRAL_SEEKER_MIN_CRACK_RATIO).toBeGreaterThan(0);
+        expect(TAG_THRESHOLDS.NEUTRAL_SEEKER_MIN_CRACK_RATIO).toBeLessThan(1);
+        expect(TAG_THRESHOLDS.RESISTER_MIN_OVERRIDE_RATIO).toBeGreaterThan(0);
+        expect(TAG_THRESHOLDS.RESISTER_MIN_OVERRIDE_RATIO).toBeLessThan(1);
+        expect(TAG_THRESHOLDS.RESISTER_MIN_SUCCESSES).toBeGreaterThanOrEqual(1);
+    });
+
+    it('keeps the live-profile saturations defined AS the tag thresholds (no drift)', () => {
+        expect(LIVE_PROFILE.OVERRIDE_SATURATION).toBe(TAG_THRESHOLDS.RESISTER_MIN_OVERRIDE_RATIO);
+        expect(LIVE_PROFILE.CRACK_SATURATION).toBe(TAG_THRESHOLDS.NEUTRAL_SEEKER_MIN_CRACK_RATIO);
     });
 });
 

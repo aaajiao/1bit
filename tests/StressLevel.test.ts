@@ -3,6 +3,7 @@ import { STRESS } from '../src/config/constants';
 import {
     computeRawStress,
     ditherScaleForStress,
+    settleDitherScale,
     stepStress,
     StressLevel,
 } from '../src/core/StressLevel';
@@ -36,6 +37,13 @@ describe('sTRESS config knobs', () => {
     it('keeps the sunset component a partial weight (never full panic)', () => {
         expect(STRESS.SUNSET_WEIGHT).toBeGreaterThan(0);
         expect(STRESS.SUNSET_WEIGHT).toBeLessThan(1);
+    });
+
+    it('keeps the settle knobs sane: deadband inside the scale band, snap a small stress epsilon', () => {
+        expect(STRESS.SETTLE_DEADBAND).toBeGreaterThan(0);
+        expect(STRESS.SETTLE_DEADBAND).toBeLessThan(STRESS.SCALE_MAX - STRESS.SCALE_MIN);
+        expect(STRESS.SETTLE_SNAP).toBeGreaterThan(0);
+        expect(STRESS.SETTLE_SNAP).toBeLessThan(0.5);
     });
 });
 
@@ -157,6 +165,22 @@ describe('ditherScaleForStress', () => {
     });
 });
 
+describe('settleDitherScale (anti-crawl hysteresis)', () => {
+    it('holds still for sub-deadband drift (no continuous pattern crawl)', () => {
+        const half = STRESS.SETTLE_DEADBAND / 2;
+        expect(settleDitherScale(1.5, 1.5 + half)).toBe(1.5);
+        expect(settleDitherScale(1.5, 1.5 - half)).toBe(1.5);
+        expect(settleDitherScale(1.5, 1.5)).toBe(1.5);
+    });
+
+    it('jumps straight TO the candidate at/beyond the deadband (fast landing)', () => {
+        expect(settleDitherScale(1.5, 1.5 + STRESS.SETTLE_DEADBAND)).toBe(1.5 + STRESS.SETTLE_DEADBAND);
+        expect(settleDitherScale(1.5, 1.5 - STRESS.SETTLE_DEADBAND)).toBe(1.5 - STRESS.SETTLE_DEADBAND);
+        expect(settleDitherScale(1.2, 2.4)).toBe(2.4);
+        expect(settleDitherScale(2.4, 1.0)).toBe(1.0);
+    });
+});
+
 describe('stressLevel (stateful smoother)', () => {
     it('boots calm: stress 0, scale at the historical baseline', () => {
         const s = new StressLevel();
@@ -164,12 +188,59 @@ describe('stressLevel (stateful smoother)', () => {
         expect(s.update(1 / 60, 0, 0, 0, RoomType.IN_BETWEEN, 0)).toBeCloseTo(STRESS.SCALE_MIN, 9);
     });
 
-    it('approaches SCALE_MAX under sustained full pressure', () => {
+    it('lands EXACTLY on SCALE_MAX under sustained full pressure (top snap)', () => {
         const s = new StressLevel();
         let scale = STRESS.SCALE_MIN;
         for (let i = 0; i < 300; i++)
             scale = s.update(1 / 60, 1, 0, 0, RoomType.POLARIZED, 0);
-        expect(scale).toBeCloseTo(STRESS.SCALE_MAX, 2);
+        expect(scale).toBe(STRESS.SCALE_MAX);
+        expect(s.getStress()).toBe(1);
+    });
+
+    it('lands back EXACTLY on SCALE_MIN after the pressure fully drains', () => {
+        const s = new StressLevel();
+        for (let i = 0; i < 120; i++)
+            s.update(1 / 60, 1, 0, 0, RoomType.POLARIZED, 0);
+        // 20s of calm: the release decays within SETTLE_SNAP of 0 and snaps,
+        // so the grain returns to the historical baseline, not a sub-deadband
+        // residual offset.
+        let scale = 0;
+        for (let i = 0; i < 1200; i++)
+            scale = s.update(1 / 60, 0, 0, 0, RoomType.POLARIZED, 0);
+        expect(s.getStress()).toBe(0);
+        expect(scale).toBe(STRESS.SCALE_MIN);
+    });
+
+    it('emits a piecewise-constant scale under slow drift (steps, never per-frame crawl)', () => {
+        const s = new StressLevel();
+        let prev = s.update(1 / 60, 0.3, 0, 0, RoomType.IN_BETWEEN, 0);
+        let holds = 0;
+        let moves = 0;
+        // Slow mid-band gaze drift (0.3 -> 0.6 over 10s at 60fps) — the case
+        // that used to micro-move uDitherScale every frame.
+        for (let i = 1; i <= 600; i++) {
+            const out = s.update(1 / 60, 0.3 + 0.3 * (i / 600), 0, 0, RoomType.IN_BETWEEN, 0);
+            if (out === prev) {
+                holds++;
+            }
+            else {
+                moves++;
+                // Every move is a full deadband step, never a micro-crawl.
+                expect(Math.abs(out - prev)).toBeGreaterThanOrEqual(STRESS.SETTLE_DEADBAND - 1e-9);
+            }
+            prev = out;
+        }
+        expect(moves).toBeGreaterThan(0); // the grain does follow the drift...
+        expect(holds).toBeGreaterThan(moves * 5); // ...but holds still most frames
+    });
+
+    it('still attacks from rest at very high frame rates (rest snap never traps 0)', () => {
+        const s = new StressLevel();
+        // 1s of full pressure in 1000 tiny steps: each step alone moves less
+        // than SETTLE_SNAP, which must NOT be snapped back toward rest.
+        for (let i = 0; i < 1000; i++)
+            s.update(1 / 1000, 1, 0, 0, RoomType.POLARIZED, 0);
+        expect(s.getStress()).toBeGreaterThan(0.9);
     });
 
     it('releases slowly: one attack-length beat after release, grain is still coarse', () => {

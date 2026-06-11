@@ -97,8 +97,12 @@ export function decodeTrail(raw: string | null | undefined): TrailPoint[] | null
     return points;
 }
 
-/** Browser localStorage, or null when unavailable (tests, privacy modes). */
-function defaultStorage(): Storage | null {
+/**
+ * Browser localStorage, or null when unavailable (tests, privacy modes).
+ * Exported so trail consumers (world/GhostSystem burn-after-read) can name
+ * the same backing store the save/load/clear defaults use.
+ */
+export function defaultTrailStorage(): Storage | null {
     try {
         return globalThis.localStorage ?? null;
     }
@@ -113,7 +117,7 @@ function defaultStorage(): Storage | null {
  */
 export function saveTrail(
     points: readonly TrailPoint[],
-    storage: Storage | null = defaultStorage(),
+    storage: Storage | null = defaultTrailStorage(),
 ): void {
     if (!storage)
         return;
@@ -127,7 +131,7 @@ export function saveTrail(
 
 /** Load the persisted last-run trail, or null when absent/invalid. */
 export function loadTrail(
-    storage: Storage | null = defaultStorage(),
+    storage: Storage | null = defaultTrailStorage(),
 ): TrailPoint[] | null {
     if (!storage)
         return null;
@@ -145,7 +149,7 @@ export function loadTrail(
  * Remove the persisted trail (the F2 "遗忘" entry erases the ghost's memory
  * along with the scars). Best-effort like every persistence path here.
  */
-export function clearStoredTrail(storage: Storage | null = defaultStorage()): void {
+export function clearStoredTrail(storage: Storage | null = defaultTrailStorage()): void {
     if (!storage)
         return;
     try {

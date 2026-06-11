@@ -53,6 +53,33 @@ export const FLOWER_HINT = {
 } as const;
 
 /**
+ * Behavior-tag thresholds (RunStatsCollector.generateTags): the cut points
+ * on the run's normalized 0-1 metrics that decide which behavior tags a
+ * sunset snapshot earns. Single source of truth for the tag language —
+ * LIVE_PROFILE's saturation knobs below reference these same values so the
+ * snapshot vocabulary and the live world-bias normalization never drift.
+ */
+export const TAG_THRESHOLDS = {
+    /** avgFlower below this reads as QUIET_LIGHT (kept the light low). */
+    QUIET_LIGHT_MAX_FLOWER: 0.25,
+    /** avgFlower below this (and above quiet) is MEDIUM_LIGHT; above, LOUD_LIGHT. */
+    MEDIUM_LIGHT_MAX_FLOWER: 0.6,
+    /** gazeRatio above this reads as HIGH_GAZE (kept meeting the eye). */
+    HIGH_GAZE_MIN_RATIO: 0.5,
+    /** gazeRatio below this reads as LOW_GAZE (avoided the eye). */
+    LOW_GAZE_MAX_RATIO: 0.15,
+    /** crackRatio above this reads as NEUTRAL_SEEKER (lived on the rift line). */
+    NEUTRAL_SEEKER_MIN_CRACK_RATIO: 0.3,
+    /**
+     * overrideRatio above this reads as RESISTER: holding resistance 5% of
+     * the run already reads as full boundary-probing.
+     */
+    RESISTER_MIN_OVERRIDE_RATIO: 0.05,
+    /** Successful overrides at/above this count as RESISTER outright. */
+    RESISTER_MIN_SUCCESSES: 1,
+} as const;
+
+/**
  * Live behavior profile (F1 "the world reads you"): RunStatsCollector
  * condenses the run-so-far into a lightweight normalized profile
  * (getLiveProfile) that gently biases the room assignment of NEWLY generated
@@ -70,15 +97,15 @@ export const LIVE_PROFILE = {
     MIN_DURATION: 30,
     /**
      * overrideTimeTotal/duration at which overrideActivity saturates to 1.
-     * Matches the RESISTER tag threshold (RunStatsCollector.generateTags):
-     * holding resistance 5% of the run already reads as full boundary-probing.
+     * Defined AS the RESISTER tag threshold (TAG_THRESHOLDS above) — one
+     * source, so the tag and the live bias can never drift apart.
      */
-    OVERRIDE_SATURATION: 0.05,
+    OVERRIDE_SATURATION: TAG_THRESHOLDS.RESISTER_MIN_OVERRIDE_RATIO,
     /**
-     * onCrackTime/duration at which crackAffinity saturates to 1. Matches the
-     * NEUTRAL_SEEKER tag threshold: 30% of the run on the crack is full affinity.
+     * onCrackTime/duration at which crackAffinity saturates to 1. Defined AS
+     * the NEUTRAL_SEEKER tag threshold: full crack-time affinity IS the tag.
      */
-    CRACK_SATURATION: 0.3,
+    CRACK_SATURATION: TAG_THRESHOLDS.NEUTRAL_SEEKER_MIN_CRACK_RATIO,
     /**
      * Seconds between feeding the live profile into the room ledger
      * (core/RoomFlowUpdater) — low-frequency by design; the ledger only
@@ -220,6 +247,24 @@ export const SCAR_STORAGE = {
      * leans gently toward where the resisting keeps happening.
      */
     ANCHOR_NUDGE: 0.25,
+} as const;
+
+/**
+ * The forgetting's in-screen confirmation (F2 #4): the entry used to pop a
+ * native window.confirm — the only system-level dialog in the whole piece,
+ * breaking the 1-bit screen language. Instead the entry itself arms on the
+ * first click ("再点一次以遗忘"), quietly reverts after WINDOW_MS without a
+ * second click, and erases the cross-run record on the confirming click.
+ * Menu-state UI: a wall-clock DOM timeout is acceptable here — the start/
+ * pause screen lives outside the delta-driven, pause-gated world.
+ */
+export const FORGET_CONFIRM = {
+    /** Milliseconds the armed entry waits for the second click before reverting. */
+    WINDOW_MS: 8000,
+    /** Resting entry copy (mirrors the initial #forget-scars text in index.html). */
+    IDLE_TEXT: '遗忘',
+    /** Armed entry copy asking for the confirming second click. */
+    CONFIRM_TEXT: '再点一次以遗忘',
 } as const;
 
 /**
@@ -437,6 +482,21 @@ export const STRESS = {
      * the last ~30s of the day tighten the grain, but never to full panic.
      */
     SUNSET_WEIGHT: 0.6,
+    /**
+     * Settle deadband (scale units): uDitherScale holds still until the
+     * stress-mapped candidate has drifted at least this far from the last
+     * emitted value, then jumps straight TO it. Kills the full-screen pattern
+     * crawl of a continuously micro-changing divisor — a slight stepping
+     * (one deadband per step) is the accepted trade (宁可台阶感轻微).
+     */
+    SETTLE_DEADBAND: 0.05,
+    /**
+     * Settle snap epsilon (stress units): once the smoothed stress coasts
+     * within this of a rest extreme (0 or 1) WHILE heading there, it snaps
+     * exactly onto it — so calm always lands back on precisely SCALE_MIN
+     * (the historical grain) instead of a sub-deadband residual offset.
+     */
+    SETTLE_SNAP: 0.01,
 } as const;
 
 /**
@@ -743,4 +803,9 @@ export const PERFORMANCE = {
     FOG_NEAR: 20,
     /** Fog far distance */
     FOG_FAR: 110,
+    /**
+     * Frame-delta clamp (s) for the render loop (core/FrameClock): avoids
+     * huge physics/animation steps after a stall or tab switch (M1).
+     */
+    MAX_FRAME_DELTA: 0.1,
 } as const;

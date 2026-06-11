@@ -50,7 +50,7 @@ Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 **Manager orchestration** (`player/PlayerManager.ts`): High-level managers compose subsystems (Controls, HandsModel, GazeMechanic, OverrideMechanic) and wire them together, exposing a single `update()` to `main.ts`.
 
-**Room-based state** (`world/RoomConfig.ts`): World position maps to one of four `RoomType` values (INFO_OVERFLOW, FORCED_ALIGNMENT, IN_BETWEEN, POLARIZED), each driving distinct shader parameters and audio behavior.
+**Room-based state** (`world/RoomConfig.ts`): World position maps to one of four `RoomType` values (INFO_OVERFLOW, FORCED_ALIGNMENT, IN_BETWEEN, POLARIZED), each driving distinct shader parameters and audio behavior. Rooms occupy 160m clusters (2×2 chunks); `chunkToCluster`/`clusterCenterWorld`/`riftLineXForWorldX` in RoomConfig.ts are the only coordinate-conversion source. Runtime room attribution goes through `ChunkManager.getRoomTypeForChunk` (a session `RoomLedger` pins each cluster on first generation and gently biases never-visited clusters by the player's live behavior profile); the pure `getRoomTypeFromPosition` is the neutral baseline used by spawn scanning and tests only.
 
 **Centralized config** (`config/constants.ts`): All magic numbers live here — gameplay thresholds, cable proximity ranges, performance LOD distances, gaze intensity curves, etc. No hardcoded values in system files.
 
@@ -67,7 +67,9 @@ Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 ### Chunk-Based World
 
-`ChunkManager` handles infinite terrain with 80-unit chunks and 2-chunk render distance. Generation is deterministic via hash-based seeding from chunk coordinates. Buildings come in 4 procedural styles (TREE, SPIKES, BLOCKS, FLUID) with LOD-based animation.
+`ChunkManager` handles infinite terrain with 80-unit chunks and 2-chunk render distance. Generation is deterministic via hash-based seeding from chunk coordinates (within-session only — see the reproducibility contract; behavior-biased room selection and cross-run scars intentionally vary worlds between sessions). Buildings come in 4 procedural styles (TREE, SPIKES, BLOCKS, FLUID) with LOD-based animation.
+
+Persistent state lives in three versioned localStorage keys (`1bit:lastSnapshot`, `1bit:scars`, `1bit:lastTrail` — see `stats/SnapshotStorage.ts` for the injectable pattern); the in-world "forget" entry clears all of them.
 
 ## Development Rules (from ARCHITECTURE.md)
 

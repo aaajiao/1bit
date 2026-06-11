@@ -69,7 +69,11 @@ export interface DitherUniforms {
     //   never the ids.
     // tBlueNoise: 64x64 best-candidate ordered threshold texture
     //   (shaders/BlueNoiseTexture, generated once at boot, hash-seeded).
+    // uScreenCenter: dither-scale anchor — OUTPUT-framebuffer center in
+    //   gl_FragCoord px (canvas size / 2, NOT the renderScale-scaled
+    //   `resolution`); synced at construction + resize by PostProcessing.
     uDitherScale: { value: number };
+    uScreenCenter: { value: THREE.Vector2 };
     uDitherModeFrom: { value: number };
     uDitherModeTo: { value: number };
     uDitherModeBlend: { value: number };

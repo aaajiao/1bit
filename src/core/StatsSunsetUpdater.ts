@@ -7,7 +7,7 @@ import type { StateSnapshot } from '../stats/StateSnapshotGenerator';
 import type { DayNightContext } from '../types';
 import type { RoomType } from '../world/RoomConfig';
 import type { WeatherSystem } from '../world/WeatherSystem';
-import { SNAPSHOT_RITUAL, SUNSET_FORESHADOW } from '../config';
+import { FORGET_CONFIRM, SNAPSHOT_RITUAL, SUNSET_FORESHADOW } from '../config';
 import { exportSnapshotCard } from '../stats/SnapshotCard';
 import { SnapshotOverlay } from '../stats/SnapshotOverlay';
 import { clearLastSnapshot, loadLastSnapshot, saveLastSnapshot } from '../stats/SnapshotStorage';
@@ -63,6 +63,10 @@ export class StatsSunsetUpdater {
     private readonly boundReplay: () => void;
     private readonly forgetEl: HTMLElement | null;
     private readonly boundForget: (e: Event) => void;
+    // In-screen two-step confirm state for the forget entry (no native
+    // dialog — the work's only system-level UI stays in the 1-bit language).
+    private forgetArmed = false;
+    private forgetRevertTimer: ReturnType<typeof setTimeout> | null = null;
     // F6 share card: pause-menu export entry next to the replay line.
     private readonly saveCardEl: HTMLElement | null;
     private readonly boundSaveCard: (e: Event) => void;
@@ -155,31 +159,61 @@ export class StatsSunsetUpdater {
         this.forgetEl?.classList.toggle('hidden', !this.scars.hasMemory());
     }
 
-    /** Confirm once, then erase the cross-run record (F2 #4). */
+    /**
+     * Two-step in-screen confirm, then erase the cross-run record (F2 #4).
+     * The first click arms the entry ("再点一次以遗忘"); without a second
+     * click inside FORGET_CONFIRM.WINDOW_MS it quietly reverts. No native
+     * dialog: the forgetting stays inside the work's own screen language.
+     */
     private onForget(e: Event): void {
         // Keep this click on the start screen: without stopPropagation it
         // would bubble to the document click handlers and enter the game
         // (the replay entry bubbles on purpose; the forgetting must not).
         e.stopPropagation();
-        // eslint-disable-next-line no-alert
-        if (window.confirm('遗忘：系统将清除你留下的所有疤痕与来访记录。确定？')) {
-            this.scars.forgetAll();
-            // The forgetting erases the ghost's memory too (F4): the stored
-            // trail goes with the scars, and the in-memory recorder restarts
-            // from zero — otherwise the next sunset/unload save would write
-            // the pre-forget footprints right back. A ghost already walking
-            // this session is in-flight memory and finishes its walk.
-            clearStoredTrail();
-            this.trail.reset();
-            // "所有来访记录" includes the persisted "上次" snapshot: clear
-            // the stored record, the start-screen line, and the replay /
-            // save-card cache (their entries hide via syncReplayEntry).
-            clearLastSnapshot();
-            this.snapshotOverlay.clearLastSnapshot();
-            document.getElementById('last-run-note')?.classList.add('hidden');
-            this.syncReplayEntry();
+        if (!this.forgetArmed) {
+            this.armForget();
+            return;
         }
+        this.disarmForget();
+        this.scars.forgetAll();
+        // The forgetting erases the ghost's memory too (F4): the stored
+        // trail goes with the scars, and the in-memory recorder restarts
+        // from zero — otherwise the next sunset/unload save would write
+        // the pre-forget footprints right back. A ghost already walking
+        // this session is in-flight memory and finishes its walk.
+        clearStoredTrail();
+        this.trail.reset();
+        // "所有来访记录" includes the persisted "上次" snapshot: clear
+        // the stored record, the start-screen line, and the replay /
+        // save-card cache (their entries hide via syncReplayEntry).
+        clearLastSnapshot();
+        this.snapshotOverlay.clearLastSnapshot();
+        document.getElementById('last-run-note')?.classList.add('hidden');
+        this.syncReplayEntry();
         this.syncForgetEntry();
+    }
+
+    /** Arm the forget entry and start the auto-revert window (wall clock). */
+    private armForget(): void {
+        this.forgetArmed = true;
+        if (this.forgetEl) {
+            this.forgetEl.textContent = FORGET_CONFIRM.CONFIRM_TEXT;
+            this.forgetEl.classList.add('armed');
+        }
+        this.forgetRevertTimer = setTimeout(() => this.disarmForget(), FORGET_CONFIRM.WINDOW_MS);
+    }
+
+    /** Restore the resting entry (confirm consumed, window lapsed, dispose). */
+    private disarmForget(): void {
+        this.forgetArmed = false;
+        if (this.forgetRevertTimer !== null) {
+            clearTimeout(this.forgetRevertTimer);
+            this.forgetRevertTimer = null;
+        }
+        if (this.forgetEl) {
+            this.forgetEl.textContent = FORGET_CONFIRM.IDLE_TEXT;
+            this.forgetEl.classList.remove('armed');
+        }
     }
 
     /**
@@ -297,6 +331,7 @@ export class StatsSunsetUpdater {
         // dispose() runs on beforeunload/HMR via PauseController -> main, so
         // this is the "page is going away" hook: save before tearing down.
         this.persistRun();
+        this.disarmForget();
         this.replayEl?.removeEventListener('click', this.boundReplay);
         this.forgetEl?.removeEventListener('click', this.boundForget);
         this.saveCardEl?.removeEventListener('click', this.boundSaveCard);
