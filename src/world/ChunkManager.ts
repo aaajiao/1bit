@@ -19,7 +19,7 @@ import { createDynamicCable, disposeCableMaterial } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createInfoFloorMesh, createMoireFloorMesh, createSeamFloorMesh, disposeFloorPool } from './FloorTile';
 import { createTree } from './FloraFactory';
-import { IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, riftLineXForWorldX, ROOM_CONFIGS, RoomType, worldToChunkCoord } from './RoomConfig';
+import { FA_RIFT, IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, isWithinRiftClearance, riftLineXForWorldX, ROOM_CONFIGS, RoomType, worldToChunkCoord } from './RoomConfig';
 import {
     anomalyAt,
     applyLayout,
@@ -54,6 +54,9 @@ const SUBTINT_GATE_SALT = 907; // which fragments take a sub-palette tint
 const FLICKER_GATE_SALT = 1009; // which fragments get a flicker group
 const FLICKER_PHASE_SALT = 1013; // per-group desync phase
 const FLICKER_VARIANT_SALT = 1019; // per-variant geometry/scale pick
+
+// FA rift banner salt (decorrelated from every prior per-chunk draw).
+const RIFT_BANNER_SALT = 1117; // banner count / z stagger / height / phase
 
 // INFO_OVERFLOW building-flicker tuning.
 const FLICKER_MAX_GROUPS_PER_CHUNK = 4; // cap subset so the toggle stays cheap
@@ -202,6 +205,14 @@ export class ChunkManager {
                 // We'll store it in userData.fogSystem (requires type update or loose typing)
                 chunk.userData.fogSystem = crackedSystem.fog;
             }
+
+            // Rift banner cables (rift presence): taut trembling lines strung
+            // across the crack. Same owner rule as the floor system's void
+            // tear — the shared edge crack belongs to the chunk holding it on
+            // its +x side, so a cluster z-row never doubles its banners.
+            if (crackLocalX >= 0) {
+                this.createRiftBanners(chunk, cx, cz, crackLocalX);
+            }
         }
         else if (roomType === RoomType.IN_BETWEEN) {
             const moireSystem = createMoireFloorMesh(CHUNK_SIZE, this.floorMaterial);
@@ -287,6 +298,14 @@ export class ChunkManager {
                 if (occupiedCells.has(cellKey))
                     continue;
                 occupiedCells.add(cellKey);
+
+                // Shore corridor (rift presence): keep both banks of the rift
+                // open — no buildings within FA_RIFT.CLEARANCE of the crack
+                // line, so sightlines along and across the rift stay clear.
+                // Judged on the building's WORLD x; positions are bounded to
+                // the chunk footprint, so its cluster is the chunk's own.
+                if (isWithinRiftClearance(cx * CHUNK_SIZE + bx))
+                    continue;
             }
 
             // POLARIZED faction split: skew each building toward the +X or -X
@@ -438,6 +457,71 @@ export class ChunkManager {
 
         this.activeChunks[`${cx},${cz}`] = chunk;
         this.chunkGroup.add(chunk);
+    }
+
+    /**
+     * FORCED_ALIGNMENT rift banner cables (rift presence): 1-2 taut lines per
+     * cluster z-row strung ACROSS the crack — "像意识形态横幅一样跨越裂口、
+     * 紧绷且颤抖的线缆". Anchors are fixed-height VIRTUAL points (CableNode.obj
+     * is just { position } — the existing ground-dangle pattern) at
+     * ±FA_RIFT.CLEARANCE of the crack line, i.e. the corridor's inner edges,
+     * so the banners exist whether or not buildings do. droop is tuned so the
+     * sag is ~0.2m (taut), and the tremble option quivers the control point.
+     * Count, z stagger, height and phase are hash-deterministic per chunk.
+     *
+     * The cable joins chunk.userData.cables, so the existing per-frame update
+     * (ChunkAnimator) and the removeChunk geometry-dispose chain apply
+     * unchanged; the material is the shared cable singleton (never disposed
+     * per chunk). The far anchor reaches ~12m into the x-neighbor chunk —
+     * acceptable: the neighbor is the same cluster (same room) and both are
+     * loaded together long before the rift is within fog-visible range.
+     *
+     * @param chunk - The chunk group being built (the crack's owner side).
+     * @param cx - Chunk X coordinate (deterministic seed).
+     * @param cz - Chunk Z coordinate (deterministic seed).
+     * @param crackLocalX - Chunk-local x of the crack line (>= 0 by owner rule).
+     */
+    private createRiftBanners(chunk: Chunk, cx: number, cz: number, crackLocalX: number): void {
+        const { CLEARANCE, BANNER } = FA_RIFT;
+        const count = hash(cx + RIFT_BANNER_SALT, cz - RIFT_BANNER_SALT) > 0.5 ? 2 : 1;
+
+        // Stagger z: one banner per band of the chunk's z extent, jittered
+        // within it (an 8m end margin keeps anchors off the chunk z seams,
+        // so neighboring clusters' banners never bunch up at a shared seam).
+        const zExtent = CHUNK_SIZE - 16;
+        const band = zExtent / count;
+
+        for (let k = 0; k < count; k++) {
+            const z = -zExtent / 2 + band * (k + 0.15 + hash(cz + RIFT_BANNER_SALT + k, cx) * 0.7);
+            const height = BANNER.HEIGHT_BASE + hash(cx + k, cz + RIFT_BANNER_SALT) * BANNER.HEIGHT_VAR;
+
+            // Virtual fixed-height anchor (isGround: the position is used
+            // as-is, no topOffset) on each bank of the rift.
+            const makeAnchor = (x: number): CableNode => ({
+                obj: { position: new THREE.Vector3(x, height, z) },
+                topOffset: new THREE.Vector3(0, 0, 0),
+                isGround: true,
+            });
+
+            const cable = createDynamicCable(
+                makeAnchor(crackLocalX - CLEARANCE),
+                makeAnchor(crackLocalX + CLEARANCE),
+                {
+                    droop: BANNER.DROOP,
+                    heavySag: false,
+                    offsetS: new THREE.Vector3(0, 0, 0),
+                    offsetE: new THREE.Vector3(0, 0, 0),
+                    tremble: {
+                        amplitude: BANNER.TREMBLE_AMPLITUDE,
+                        speed: BANNER.TREMBLE_SPEED,
+                        phase: hash(cz + k, cx + RIFT_BANNER_SALT) * Math.PI * 2,
+                    },
+                },
+            );
+            cable.line.name = 'riftBanner';
+            chunk.add(cable.line);
+            chunk.userData.cables.push(cable);
+        }
     }
 
     /**

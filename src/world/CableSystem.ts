@@ -110,8 +110,10 @@ export function createDynamicCable(
 /**
  * Update cable geometry based on node positions
  * @param cable - Cable object
+ * @param time - Current time in seconds; drives the optional mid-point
+ *   tremble (FA rift banners). Defaults to 0 (static control point).
  */
-export function updateCableGeometry(cable: DynamicCable): void {
+export function updateCableGeometry(cable: DynamicCable, time: number = 0): void {
     const { startNode, endNode, options, segments, _cache } = cable;
 
     // Use cached vectors instead of creating new ones
@@ -146,6 +148,15 @@ export function updateCableGeometry(cable: DynamicCable): void {
     if (options.heavySag)
         currentDroop += 20;
     mid.y -= currentDroop;
+
+    // Optional mid-point tremble (FA rift banners): a small sinusoidal y
+    // oscillation of the curve's control point — taut cables quiver rather
+    // than sway. Pure function of absolute time, so it is frame-rate
+    // independent; ordinary cables carry no tremble and skip this entirely.
+    if (options.tremble) {
+        const { amplitude, speed, phase } = options.tremble;
+        mid.y += Math.sin(time * speed + phase) * amplitude;
+    }
 
     // Update positions and lineDistance arrays
     const positions = (cable.line.geometry.attributes.position as THREE.BufferAttribute).array as Float32Array;

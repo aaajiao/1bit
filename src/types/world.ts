@@ -85,6 +85,19 @@ export interface CableOptions {
     heavySag: boolean;
     offsetS: THREE.Vector3;
     offsetE: THREE.Vector3;
+    /**
+     * Optional mid-point tremble (FA rift banner cables): a sinusoidal y
+     * oscillation of the Bezier control point, a pure function of the time
+     * passed to updateCableGeometry. Absent on ordinary cables (no cost).
+     */
+    tremble?: {
+        /** Oscillation amplitude (m). */
+        amplitude: number;
+        /** Angular speed (rad/s). */
+        speed: number;
+        /** Per-cable phase offset (rad) so banners do not quiver in lockstep. */
+        phase: number;
+    };
 }
 
 export interface CableCache {

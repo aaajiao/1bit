@@ -46,10 +46,10 @@ export function animateChunk(
         animateObjects(chunk.userData.animatedObjects, time, delta, cameraPosition);
     }
 
-    // Update cables
+    // Update cables (time drives the rift banners' mid-point tremble)
     if (chunk.userData.cables) {
         chunk.userData.cables.forEach((cable: DynamicCable) => {
-            updateCableGeometry(cable);
+            updateCableGeometry(cable, time);
         });
     }
 
@@ -211,6 +211,13 @@ function animateFogSystem(chunk: Chunk, delta: number): void {
     if (!fogSystem || !fogSystem.userData.speeds)
         return;
 
+    // Per-instance recycle ceilings + shared reset floor written by
+    // createAbyssFog (FA_RIFT.FOG heights in the mesh's local frame): dense
+    // particles recycle at the dense-band top, leakers ride on to the column
+    // top. The legacy fallbacks keep any topYs-less fog mesh cycling sanely.
+    const topYs: number[] | undefined = fogSystem.userData.topYs;
+    const resetY: number = fogSystem.userData.resetY ?? -160.0;
+
     for (let i = 0; i < fogSystem.count; i++) {
         fogSystem.getMatrixAt(i, _fogMatrix);
         _fogMatrix.decompose(_fogPosition, _fogRotation, _fogScale);
@@ -219,13 +226,14 @@ function animateFogSystem(chunk: Chunk, delta: number): void {
         const speed = fogSystem.userData.speeds[i];
         _fogPosition.y += speed * delta;
 
-        // Reset if too high. The horizontal nudge must stay deterministic, but this
-        // is a per-frame hot loop over up to 400 instances, so hash() is too costly
-        // here. Instead derive a cheap stable per-instance offset from the already
-        // deterministic per-instance speed (seeded via hash-RNG at creation) using
-        // plain trig — no allocation, no hash() call. Mapped to ~[-0.25, 0.25).
-        if (_fogPosition.y > 2.0) {
-            _fogPosition.y = -160.0;
+        // Reset once past this instance's own ceiling. The horizontal nudge must
+        // stay deterministic, but this is a per-frame hot loop over up to 400
+        // instances, so hash() is too costly here. Instead derive a cheap stable
+        // per-instance offset from the already deterministic per-instance speed
+        // (seeded via hash-RNG at creation) using plain trig — no allocation,
+        // no hash() call. Mapped to ~[-0.25, 0.25).
+        if (_fogPosition.y > (topYs ? topYs[i] : 2.0)) {
+            _fogPosition.y = resetY;
             _fogPosition.x += Math.sin(speed * 12.9898) * 0.25;
             _fogPosition.z += Math.cos(speed * 78.233) * 0.25;
         }

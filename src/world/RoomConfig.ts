@@ -729,6 +729,81 @@ export function riftLineXForWorldX(worldX: number, chunkSize: number = WORLD.CHU
 }
 
 /**
+ * FORCED_ALIGNMENT rift presence (design doc: the rift is the room's spine —
+ * "一条巨大的垂直裂口将空间分为左右两半", "到达前 20 米可见"). The crack used
+ * to be a purely ground-level feature (a 4-5m black gap + fog capped near the
+ * floor), invisible past ~30m in the amber haze. Three vertical layers plus a
+ * shore corridor make it legible from anywhere in the room:
+ *
+ * - FOG: the abyss-fog column rises far above the floor; a sparse minority of
+ *   particles "leak" past the dense band (越界泄漏) — taller without denser.
+ * - TEAR: a translucent pure-black plane standing in the crack — from afar a
+ *   dark vertical rip crossing the room, not a wall.
+ * - BANNER: taut, trembling cables strung across the crack on fixed-height
+ *   virtual anchors ("像意识形态横幅一样跨越裂口").
+ * - CLEARANCE: buildings keep off both banks so sightlines along and across
+ *   the rift stay open.
+ *
+ * All heights are WORLD-frame metres (y=0 = floor level) unless noted.
+ * Consumed by FloorTile (fog + tear), ChunkAnimator (fog recycle) and
+ * ChunkManager (corridor + banners).
+ */
+export const FA_RIFT = {
+    /** Shore-corridor half-width (m): no buildings within this |x| of the rift line. */
+    CLEARANCE: 12,
+    /** Abyss-fog column (FloorTile.createAbyssFog / ChunkAnimator recycle). */
+    FOG: {
+        /** Chunk-local y the fog InstancedMesh sits at (historical -5). */
+        MESH_Y: -5,
+        /** Column floor (m, world) — recycled particles restart here. */
+        BOTTOM: -165,
+        /** Top of the DENSE band (m, world): most particles recycle here. */
+        DENSE_TOP: 2,
+        /** Top of the sparse leak band (m, world) — the visible fog column. */
+        LEAK_TOP: 14,
+        /** Fraction of particles that leak above DENSE_TOP (稍稀). */
+        LEAK_FRACTION: 0.3,
+        /** Uniform scale multiplier on leaking particles (稍大). */
+        LEAK_SCALE: 1.6,
+    },
+    /** "Void tear": translucent black plane standing in the crack. */
+    TEAR: {
+        /** Top of the tear (m, world) above the floor. */
+        HEIGHT: 10,
+        /** Base y (m, world) — slightly below the floor, rising out of the crack. */
+        BASE_Y: -1,
+        /** Plane opacity — a dark rip in space, never an occluding wall. */
+        OPACITY: 0.4,
+        /** Multiplier on crackJagOffset (≈0-1.2m) for the ragged top edge. */
+        JAG_SCALE: 2.5,
+    },
+    /** Taut "ideological banner" cables strung across the rift (ChunkManager). */
+    BANNER: {
+        /** Anchor height band (m, world): BASE + hash * VAR. */
+        HEIGHT_BASE: 6,
+        HEIGHT_VAR: 3,
+        /**
+         * Cable droop option. The effective sag is droop - span * 0.1
+         * (CableSystem); with span = 2 * CLEARANCE this leaves ~0.2m (紧绷).
+         */
+        DROOP: 2.6,
+        /** Mid-point tremble: amplitude (m) and angular speed (rad/s) (颤抖). */
+        TREMBLE_AMPLITUDE: 0.08,
+        TREMBLE_SPEED: 8,
+    },
+} as const;
+
+/**
+ * True when a world x lies inside the FORCED_ALIGNMENT shore corridor —
+ * strictly within FA_RIFT.CLEARANCE of its cluster's rift line. ChunkManager
+ * skips building placement here so both banks of the rift stay open. Pure;
+ * riftLineXForWorldX stays the single source of the crack base point.
+ */
+export function isWithinRiftClearance(worldX: number, chunkSize: number = WORLD.CHUNK_SIZE): boolean {
+    return Math.abs(worldX - riftLineXForWorldX(worldX, chunkSize)) < FA_RIFT.CLEARANCE;
+}
+
+/**
  * Get room type at a world position, attributed via the same footprint
  * convention as the visible floor geometry (see worldToChunkCoord).
  */
