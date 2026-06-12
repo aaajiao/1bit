@@ -33,7 +33,7 @@
 import * as THREE from 'three';
 import { FIGURES, WORLD } from '../config/constants';
 import { hash } from '../utils/hash';
-import { FA_FIGURE_PLACEMENT, riftLineXForWorldX, ROOM_FIGURE_DENSITY, RoomType } from './RoomConfig';
+import { FA_FIGURE_PLACEMENT, faSideAxisX, riftLineXForWorldX, ROOM_FIGURE_DENSITY, RoomType } from './RoomConfig';
 import { getSharedAssets } from './SharedAssets';
 
 // ===========================================================================
@@ -104,12 +104,15 @@ export function figureCountForChunk(cx: number, cz: number, roomType: RoomType):
 }
 
 /**
- * FORCED_ALIGNMENT pose: outside the rift's ±CRACK_CLEARANCE, facing the
- * crack. The crack sits on the cluster-center seam, so a chunk is entirely
- * on one side: LEFT chunks (crack at local +x) stand in a tidy rank — one
- * shared distance, z snapped to the ROW_SNAP grid (distinct cells for the
- * chunk's two figures), exact +x facing; RIGHT chunks scatter in a band
- * beyond the clearance with untidy facing.
+ * FORCED_ALIGNMENT pose: outside the chunk's own crack ±CRACK_CLEARANCE,
+ * facing the crack. The PHYSICAL crack runs through every FA chunk's center
+ * (riftLineXForWorldX → chunk-local x = 0); the side TREATMENT follows the
+ * room's SEMANTIC axis (faSideAxisX, the cluster center — siding is about
+ * the room, not the nearest crack): chunks west of the axis stand in a tidy
+ * rank — one shared distance west of their crack, z snapped to the ROW_SNAP
+ * grid (distinct cells for the chunk's two figures), exact +x facing toward
+ * crack and axis; chunks east of it scatter in a band east of their crack
+ * with untidy -x facing. Everyone still faces a rift.
  */
 function placeAligned(
     cx: number,
@@ -117,12 +120,18 @@ function placeAligned(
     k: number,
     chunkSize: number,
 ): { x: number; z: number; rotationY: number } {
+    // Chunk-local x of the chunk's own crack — identically 0 on the regular
+    // path; derived so the figures stay pinned to the physical-crack source.
     const crackLocalX = riftLineXForWorldX(cx * chunkSize, chunkSize) - cx * chunkSize;
+    // Semantic side: chunk centers never sit ON the axis (it lies on the
+    // seam between the cluster's columns), so the comparison is exact.
+    const isTidyLeft = cx * chunkSize < faSideAxisX(cx * chunkSize, chunkSize);
     const { CRACK_CLEARANCE, ROW_DISTANCE, ROW_SNAP, SCATTER_DEPTH, SCATTER_FACING_JITTER }
         = FA_FIGURE_PLACEMENT;
 
-    if (crackLocalX > 0) {
-        // Tidy LEFT: a single rank line, grid-snapped z, exact crack-facing.
+    if (isTidyLeft) {
+        // Tidy LEFT: a single rank line west of the crack, grid-snapped z,
+        // exact crack-facing.
         const cells = Math.floor((chunkSize - 20) / ROW_SNAP);
         const baseIdx = Math.floor(hash(cx + FIGURE_Z_SALT, cz - FIGURE_Z_SALT) * cells);
         const zIdx = (baseIdx + k * 3) % cells; // distinct cells for k=0,1
@@ -133,7 +142,8 @@ function placeAligned(
         };
     }
 
-    // Broken RIGHT: scattered depth and z, facing roughly the crack (-x).
+    // Broken RIGHT: scattered depth and z east of the crack, facing roughly
+    // the crack (-x).
     return {
         x: crackLocalX + CRACK_CLEARANCE
             + hash(cx - k + FIGURE_X_SALT, cz + k + FIGURE_X_SALT) * SCATTER_DEPTH,

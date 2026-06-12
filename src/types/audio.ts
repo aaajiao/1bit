@@ -42,10 +42,13 @@ export interface AudioSystemInterface {
     startCableHum: () => void;
     updateCableHum: (intensity: number) => void;
     stopCableHum: () => void;
-    // Binaural — signedOffsetX is the SIGNED x distance from the rift crack
-    // center (negative = left/consonant side, positive = right/dissonant side);
-    // |offset| drives loudness, the sign drives the beat detune direction.
-    updateBinauralPosition: (signedOffsetX: number, crackWidth: number) => void;
+    // Binaural — sideOffsetX is the SIGNED x distance from the room's semantic
+    // side axis (faSideAxisX, the cluster center; negative = left/consonant,
+    // positive = right/dissonant) and drives the beat detune direction;
+    // riftDistance is the distance (m) to the nearest PHYSICAL crack
+    // (riftLineXForWorldX) and drives loudness. Normalization knobs live in
+    // BINAURAL_SIDE_CONFIG (sideHalfRange / fieldWidth).
+    updateBinauralPosition: (sideOffsetX: number, riftDistance: number) => void;
 }
 
 export interface AmbientNode {

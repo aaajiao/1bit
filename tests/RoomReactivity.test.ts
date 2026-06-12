@@ -3,6 +3,7 @@ import { WORLD } from '../src/config';
 import {
     clusterCenterWorld,
     DEFAULT_WEATHER_WEIGHTS,
+    faSideAxisX,
     faSideNoiseDensity,
     FORCED_ALIGNMENT_SIDE_NOISE,
     INFO_OVERFLOW_JITTER,
@@ -11,6 +12,7 @@ import {
     lerpRoomShaderConfig,
     noiseDensityForIntensity,
     reactiveRoomShaderConfig,
+    riftLineXForWorldX,
     ROOM_CONFIGS,
     ROOM_WEATHER_WEIGHTS,
     RoomType,
@@ -88,8 +90,10 @@ describe('faSideNoiseDensity (FORCED_ALIGNMENT signed side -> noise density)', (
     const BLEND = FORCED_ALIGNMENT_SIDE_NOISE.seamBlendRange;
     const { left, right } = FORCED_ALIGNMENT_SIDE_NOISE;
     const MID = (left + right) / 2;
-    // The crack base point is the CLUSTER center line (one rift per 2x2-chunk
-    // cluster); CRACK is cluster 0's line, CRACK2 a far-away cluster's line.
+    // The side SEMANTIC pivots on the CLUSTER center line (faSideAxisX) — the
+    // room's choice axis, NOT the physical cracks, which sit at axis ± 40
+    // (riftLineXForWorldX, one per chunk column). CRACK/CRACK2 here are the
+    // AXES of cluster 0 and a far-away cluster.
     const CRACK = clusterCenterWorld(0);
     const CRACK2 = clusterCenterWorld(2);
     // Side value at the inner edge of the seam-blend zone (|offset| = HALF-BLEND):
@@ -100,14 +104,34 @@ describe('faSideNoiseDensity (FORCED_ALIGNMENT signed side -> noise density)', (
         expect(HALF).toBe((WORLD.CHUNK_SIZE * WORLD.CLUSTER_CHUNKS) / 2);
     });
 
-    it('returns the room baseline (0.55) exactly on the crack line', () => {
-        // Rift lines sit on cluster centers (clusterCenterWorld).
+    it('returns the room baseline (0.55) exactly on the side axis', () => {
+        // Side axes sit on cluster centers (clusterCenterWorld = faSideAxisX).
         for (const k of [-3, 0, 2, 17]) {
+            expect(faSideAxisX(clusterCenterWorld(k))).toBe(clusterCenterWorld(k));
             expect(faSideNoiseDensity(clusterCenterWorld(k))).toBeCloseTo(
                 ROOM_CONFIGS[RoomType.FORCED_ALIGNMENT].shader.uNoiseDensity,
                 9,
             );
         }
+    });
+
+    it('keeps the side semantic on the CLUSTER axis: both banks of the LEFT crack read "left"', () => {
+        // Acceptance for the physical/semantic split: the left physical crack
+        // sits at axis - 40 (riftLineXForWorldX); stepping across it must NOT
+        // flip the side reading — both sides stay in the tidy-left value
+        // range (below the 0.55 axis baseline), and the field still grows
+        // monotonically toward the axis.
+        const leftCrack = CRACK - 40;
+        expect(riftLineXForWorldX(leftCrack)).toBe(leftCrack); // it IS a crack line
+        const west = faSideNoiseDensity(leftCrack - 5);
+        const east = faSideNoiseDensity(leftCrack + 5);
+        expect(west).toBeLessThan(MID);
+        expect(east).toBeLessThan(MID);
+        expect(west).toBeLessThan(east); // deeper west = tidier
+        // Mirror image across the RIGHT crack: both banks read "right".
+        const rightCrack = CRACK + 40;
+        expect(faSideNoiseDensity(rightCrack - 5)).toBeGreaterThan(MID);
+        expect(faSideNoiseDensity(rightCrack + 5)).toBeGreaterThan(MID);
     });
 
     it('is most tidy LEFT / broken RIGHT at the seam-blend inner edges', () => {
@@ -142,10 +166,10 @@ describe('faSideNoiseDensity (FORCED_ALIGNMENT signed side -> noise density)', (
         expect(faSideNoiseDensity(CRACK - HALF / 2)).toBeCloseTo(0.475, 9);
     });
 
-    it('has ONE crack per cluster: monotonic left-to-right across the whole 160m footprint', () => {
-        // With the old per-chunk cracks the field reset to MID at every chunk
-        // center; one cluster rift means a single monotonic sweep between the
-        // seam-blend zones — including across the cluster's inner chunk seams.
+    it('has ONE side axis per cluster: monotonic left-to-right across the whole 160m footprint', () => {
+        // The field pivots on the single cluster axis, so it sweeps
+        // monotonically between the seam-blend zones — unaffected by the TWO
+        // physical cracks (axis ± 40) it crosses on the way.
         let prev = faSideNoiseDensity(CRACK - (HALF - BLEND));
         for (let x = -(HALF - BLEND); x <= HALF - BLEND; x += 1) {
             const cur = faSideNoiseDensity(CRACK + x);

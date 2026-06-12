@@ -192,9 +192,11 @@ export class ChunkManager {
         // Floor - select type based on room
         let floor: THREE.Object3D;
         if (roomType === RoomType.FORCED_ALIGNMENT) {
-            // One rift per 2x2-chunk cluster: the crack runs along the cluster
-            // center x (the seam between the cluster's chunk columns), so each
-            // FA chunk carries the crack half overlapping its own footprint.
+            // One rift per FA chunk COLUMN: the crack runs along the chunk's
+            // own center x (riftLineXForWorldX(cx * CHUNK_SIZE) is exactly
+            // cx * CHUNK_SIZE), so crackLocalX is identically 0 — every FA
+            // chunk carries one complete interior crack. Kept as a derivation
+            // so the floor stays pinned to the single physical-crack source.
             const crackLocalX = riftLineXForWorldX(cx * CHUNK_SIZE, CHUNK_SIZE) - cx * CHUNK_SIZE;
             const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial, 4, cx, cz, crackLocalX);
             floor = crackedSystem.group;
@@ -207,12 +209,9 @@ export class ChunkManager {
             }
 
             // Rift banner cables (rift presence): taut trembling lines strung
-            // across the crack. Same owner rule as the floor system's void
-            // tear — the shared edge crack belongs to the chunk holding it on
-            // its +x side, so a cluster z-row never doubles its banners.
-            if (crackLocalX >= 0) {
-                this.createRiftBanners(chunk, cx, cz, crackLocalX);
-            }
+            // across the crack. The crack is interior to the chunk now, so
+            // every FA chunk owns its own banners (no shared-edge owner rule).
+            this.createRiftBanners(chunk, cx, cz, crackLocalX);
         }
         else if (roomType === RoomType.IN_BETWEEN) {
             const moireSystem = createMoireFloorMesh(CHUNK_SIZE, this.floorMaterial);
@@ -300,10 +299,11 @@ export class ChunkManager {
                 occupiedCells.add(cellKey);
 
                 // Shore corridor (rift presence): keep both banks of the rift
-                // open — no buildings within FA_RIFT.CLEARANCE of the crack
-                // line, so sightlines along and across the rift stay clear.
-                // Judged on the building's WORLD x; positions are bounded to
-                // the chunk footprint, so its cluster is the chunk's own.
+                // open — no buildings within FA_RIFT.CLEARANCE of the nearest
+                // crack line (one per chunk column), so sightlines along and
+                // across each rift stay clear. Judged on the building's WORLD
+                // x; positions are bounded to the chunk footprint, so the
+                // nearest line is the chunk's own center.
                 if (isWithinRiftClearance(cx * CHUNK_SIZE + bx))
                     continue;
             }
@@ -461,7 +461,7 @@ export class ChunkManager {
 
     /**
      * FORCED_ALIGNMENT rift banner cables (rift presence): 1-2 taut lines per
-     * cluster z-row strung ACROSS the crack — "像意识形态横幅一样跨越裂口、
+     * FA chunk strung ACROSS its own crack — "像意识形态横幅一样跨越裂口、
      * 紧绷且颤抖的线缆". Anchors are fixed-height VIRTUAL points (CableNode.obj
      * is just { position } — the existing ground-dangle pattern) at
      * ±FA_RIFT.CLEARANCE of the crack line, i.e. the corridor's inner edges,
@@ -472,14 +472,13 @@ export class ChunkManager {
      * The cable joins chunk.userData.cables, so the existing per-frame update
      * (ChunkAnimator) and the removeChunk geometry-dispose chain apply
      * unchanged; the material is the shared cable singleton (never disposed
-     * per chunk). The far anchor reaches ~12m into the x-neighbor chunk —
-     * acceptable: the neighbor is the same cluster (same room) and both are
-     * loaded together long before the rift is within fog-visible range.
+     * per chunk). With the crack at the chunk center (crackLocalX = 0) both
+     * anchors stay well inside the chunk footprint.
      *
-     * @param chunk - The chunk group being built (the crack's owner side).
+     * @param chunk - The chunk group being built (the crack's owner).
      * @param cx - Chunk X coordinate (deterministic seed).
      * @param cz - Chunk Z coordinate (deterministic seed).
-     * @param crackLocalX - Chunk-local x of the crack line (>= 0 by owner rule).
+     * @param crackLocalX - Chunk-local x of the crack line (0 on the regular path).
      */
     private createRiftBanners(chunk: Chunk, cx: number, cz: number, crackLocalX: number): void {
         const { CLEARANCE, BANNER } = FA_RIFT;

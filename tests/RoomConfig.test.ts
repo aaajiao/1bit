@@ -300,7 +300,7 @@ describe('roomConfig', () => {
 
     // Rift presence — the FA shore corridor gate + the FA_RIFT knob contracts.
     describe('isWithinRiftClearance (FA shore corridor)', () => {
-        // Use a few different clusters (positive and negative x) so the gate
+        // Use a few different columns (positive and negative x) so the gate
         // is exercised against more than one rift line.
         const riftLines = [0, 200, -300].map(x => riftLineXForWorldX(x));
 
@@ -324,6 +324,24 @@ describe('roomConfig', () => {
                 expect(isWithinRiftClearance(line + 30)).toBe(false);
                 expect(isWithinRiftClearance(line - 30)).toBe(false);
             }
+        });
+
+        it('repeats the corridor for EVERY chunk column (one crack per 80m)', () => {
+            for (const line of riftLines) {
+                // The next column's crack has its own corridor…
+                expect(isWithinRiftClearance(line + WORLD.CHUNK_SIZE)).toBe(true);
+                expect(isWithinRiftClearance(line - WORLD.CHUNK_SIZE)).toBe(true);
+                // …and the midline between two cracks stays buildable.
+                expect(isWithinRiftClearance(line + WORLD.CHUNK_SIZE / 2)).toBe(false);
+            }
+        });
+
+        it('leaves a buildable band on each flank of a column (corridor < layout bound)', () => {
+            // Building positions are bounded to ±(CHUNK_SIZE-20)/2 = ±30 of a
+            // chunk center; the corridor (±12) must leave real room outside it
+            // or FA chunks could never place a single building.
+            const layoutHalf = (WORLD.CHUNK_SIZE - 20) / 2;
+            expect(FA_RIFT.CLEARANCE).toBeLessThan(layoutHalf);
         });
     });
 

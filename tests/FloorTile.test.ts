@@ -78,10 +78,11 @@ describe('floorTile createSeamFloorMesh (POLARIZED checkerboard)', () => {
     });
 });
 
-// F0 room clustering — the FORCED_ALIGNMENT rift is ONE line per 2x2-chunk
-// cluster, running along the cluster center (a chunk footprint edge), so each
-// FA chunk carries only the crack half overlapping its own floor.
-describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
+// The FORCED_ALIGNMENT rift is one line per CHUNK COLUMN at the chunk center
+// (crackLocalX = 0 is the regular path ChunkManager always takes). The
+// edge-crack capability (crack ON a footprint edge, shared with the
+// x-neighbor) is retained and still exercised here.
+describe('floorTile createCrackedFloorMesh (per-column rift)', () => {
     const floorMaterial = new THREE.MeshLambertMaterial();
     const CRACK_WIDTH = 4;
 
@@ -113,7 +114,7 @@ describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
         return (mesh.geometry as THREE.PlaneGeometry).parameters.width;
     }
 
-    it('keeps the historical centered layout when the crack is at local x=0', () => {
+    it('keeps the historical centered layout when the crack is at local x=0 (the regular path)', () => {
         const { floors, abyss } = build(0);
         expect(floors).toHaveLength(2);
         const expectedWidth = (CHUNK_SIZE - CRACK_WIDTH) / 2; // 38
@@ -176,10 +177,10 @@ describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
         }
     });
 
-    it('connects the jagged edge across the z seam inside a cluster (one continuous crack)', () => {
-        // Chunks (0,0) and (0,1) form one column of cluster (0,0)
-        // (CLUSTER_CHUNKS=2); the column left of the rift carries the crack on
-        // its +x footprint edge (crackLocalX = +CHUNK_SIZE/2) in both chunks.
+    it('connects the jagged edge across z seams within one chunk column (one continuous crack)', () => {
+        // Chunks (0,0) and (0,1) are z-stacked in column cx=0. The jag is
+        // column-seeded (cx) and world-z-parameterized, so the crack edges of
+        // every z-stacked chunk meet at the shared seam vertices.
         const a = build(CHUNK_SIZE / 2, 0, 0);
         const b = build(CHUNK_SIZE / 2, 0, 1);
 
@@ -207,6 +208,39 @@ describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
         // away from the un-perturbed strip edge.
         const stripHalfWidth = (CHUNK_SIZE - CRACK_WIDTH / 2) / 2; // 39
         expect(Math.max(...seamA)).toBeLessThan(stripHalfWidth);
+    });
+
+    it('decorrelates the jags of ADJACENT chunk columns (two parallel cracks, no twins)', () => {
+        // The two cracks of one FA cluster live in columns cx and cx+1. The
+        // cx salt in the jag wave/jitter must give them genuinely different
+        // silhouettes at the same world z — never a copied or mirrored twin.
+        const a = build(0, 0, 0);
+        const b = build(0, 1, 0);
+
+        const edgeXs = (mesh: THREE.Mesh): number[] => {
+            // Right (crack-side) edge rows of the LEFT floor strip: the
+            // eroded vertices (x near the strip half-width before erosion).
+            const pos = mesh.geometry.attributes.position;
+            const geo = mesh.geometry as THREE.PlaneGeometry;
+            const halfW = geo.parameters.width / 2;
+            const xs: number[] = [];
+            for (let i = 0; i < pos.count; i++) {
+                if (pos.getX(i) > halfW - 2)
+                    xs.push(pos.getX(i));
+            }
+            return xs;
+        };
+        const jagA = edgeXs(a.floors[0]);
+        const jagB = edgeXs(b.floors[0]);
+        expect(jagA.length).toBe(jagB.length);
+        expect(jagA.length).toBeGreaterThan(0);
+        // Strict identity must fail on a clear majority of vertices.
+        let differing = 0;
+        for (let i = 0; i < jagA.length; i++) {
+            if (jagA[i] !== jagB[i])
+                differing++;
+        }
+        expect(differing).toBeGreaterThan(jagA.length / 2);
     });
 });
 
@@ -323,9 +357,9 @@ describe('floorTile rift presence (fog column + void tear)', () => {
             expect(torn).toBeGreaterThan(0); // non-vacuous: the edge IS ragged
         });
 
-        it('joins the torn silhouette across the cluster z seam (one continuous rip)', () => {
-            // Chunks (0,0) and (0,1) are one column of cluster (0,0); both own
-            // the tear (crackLocalX = +40). Local +x maps to world +z, so chunk
+        it('joins the torn silhouette across a column z seam (one continuous rip)', () => {
+            // Chunks (0,0) and (0,1) are z-stacked in column cx=0; both own
+            // the tear (crackLocalX >= 0). Local +x maps to world +z, so chunk
             // (0,0)'s +z end is x=+40 (worldZ 40) and chunk (0,1)'s -z end is
             // x=-40 (worldZ 40) — the torn top heights must meet exactly.
             const topAt = (group: THREE.Group, localX: number): number => {

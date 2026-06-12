@@ -356,25 +356,28 @@ export function infoOverflowJitterForIntensity(intensity: number): number {
 
 /**
  * FORCED_ALIGNMENT side asymmetry (flow-audit break #7): noise density slides
- * from a tidy LEFT of the rift crack to a broken RIGHT. The blend saturates at
- * halfRange (the CLUSTER footprint half-width — rooms are 2x2-chunk clusters
- * and the rift line is the cluster center, see riftLineXForWorldX), and the
- * crack-center value is the room's baseline 0.55 by construction
- * ((left + right) / 2).
+ * from a tidy LEFT of the room to a broken RIGHT. The left/right SEMANTIC is
+ * judged against the room's side axis — the CLUSTER center (faSideAxisX),
+ * NOT the nearest physical crack (riftLineXForWorldX): choosing a side is a
+ * choice about the room as a whole, so the field must not flip when the
+ * player steps across one of the room's two physical cracks. The blend
+ * saturates at halfRange (the CLUSTER footprint half-width — rooms are
+ * 2x2-chunk clusters), and the axis value is the room's baseline 0.55 by
+ * construction ((left + right) / 2).
  */
 export const FORCED_ALIGNMENT_SIDE_NOISE = {
-    /** uNoiseDensity at (and beyond) the far LEFT of the crack — tidy side */
+    /** uNoiseDensity at (and beyond) the far LEFT of the room — tidy side */
     left: 0.4,
-    /** uNoiseDensity at (and beyond) the far RIGHT of the crack — broken side */
+    /** uNoiseDensity at (and beyond) the far RIGHT of the room — broken side */
     right: 0.7,
-    /** Distance (m) from the crack center at which the side blend saturates */
+    /** Distance (m) from the side axis at which the side blend saturates */
     halfRange: (WORLD.CHUNK_SIZE * WORLD.CLUSTER_CHUNKS) / 2,
     /**
      * Distance (m) inside the cluster footprint edge over which the side
      * noise eases back to the mid baseline ((left + right) / 2). Each FA
-     * CLUSTER has its own crack, so without this an FA→FA cluster seam jumps
-     * right→left (0.7→0.4) in a single step (flow-audit C1 #3); pulling both
-     * sides to the same mid value AT the seam makes the field continuous
+     * CLUSTER has its own side axis, so without this an FA→FA cluster seam
+     * jumps right→left (0.7→0.4) in a single step (flow-audit C1 #3); pulling
+     * both sides to the same mid value AT the seam makes the field continuous
      * across neighbors, while a short 5m ramp keeps the tidy-left/broken-right
      * reading intact everywhere else.
      */
@@ -383,21 +386,21 @@ export const FORCED_ALIGNMENT_SIDE_NOISE = {
 
 /**
  * FORCED_ALIGNMENT noise density for a world x position: signed distance from
- * the rift crack center (= the CLUSTER center, same conversion chain as
- * RiftMechanic / ChunkManager — riftLineXForWorldX is the single source of
- * the crack base point). Within seamBlendRange of the cluster footprint edge
- * the value eases to the mid baseline so adjacent FA clusters meet seamlessly
- * (see seamBlendRange doc). Pure, per-frame safe.
+ * the room's side axis (= the CLUSTER center, faSideAxisX — the SEMANTIC
+ * left/right split, deliberately NOT the nearest physical crack). Within
+ * seamBlendRange of the cluster footprint edge the value eases to the mid
+ * baseline so adjacent FA clusters meet seamlessly (see seamBlendRange doc).
+ * Pure, per-frame safe.
  */
 export function faSideNoiseDensity(worldX: number): number {
     const { left, right, halfRange, seamBlendRange } = FORCED_ALIGNMENT_SIDE_NOISE;
-    const crackCenterX = riftLineXForWorldX(worldX);
-    const offset = worldX - crackCenterX;
+    const axisX = faSideAxisX(worldX);
+    const offset = worldX - axisX;
     const side = Math.max(-1, Math.min(1, offset / halfRange));
     const t = (side + 1) * 0.5;
     const raw = left + t * (right - left);
 
-    // Seam smoothing: |offset| <= halfRange because the rift line is the
+    // Seam smoothing: |offset| <= halfRange because the side axis is the
     // cluster center, so the distance to the nearest cluster footprint edge
     // is simply halfRange - |offset|.
     const distToSeam = halfRange - Math.abs(offset);
@@ -539,13 +542,14 @@ export const ROOM_FIGURE_DENSITY: Record<RoomType, RoomFigureDensity> = {
 
 /**
  * FORCED_ALIGNMENT figure placement (F3): figures keep a clearance from the
- * rift line and stand FACING it. The rift line is the cluster center x
- * (riftLineXForWorldX), i.e. the seam between a cluster's chunk columns, so
- * any single chunk's figures are all on one side of the crack: left-column
- * chunks (crack at local +x) form tidy ranks — one shared distance from the
- * crack, z snapped to a grid, exact facing — while right-column chunks
- * (crack at local -x) scatter with untidy facing. Tidy left / broken right
- * matches the room's side-asymmetric noise (FORCED_ALIGNMENT_SIDE_NOISE).
+ * nearest PHYSICAL rift line and stand FACING it. Every FA chunk column
+ * carries its own crack at the chunk center (riftLineXForWorldX), so each
+ * chunk's figures flank their own crack; which TREATMENT they get follows
+ * the SEMANTIC side axis (faSideAxisX, the cluster center): chunks west of
+ * the axis form tidy ranks — one shared distance from their crack, z snapped
+ * to a grid, exact facing — while chunks east of it scatter with untidy
+ * facing. Tidy left / broken right matches the room's side-asymmetric noise
+ * (FORCED_ALIGNMENT_SIDE_NOISE), which is judged against the same axis.
  */
 export const FA_FIGURE_PLACEMENT = {
     /** Min |x| distance (m) from the rift line — nobody stands on the crack. */
@@ -711,20 +715,42 @@ export function chunkToCluster(chunkCoord: number): number {
  * chunk footprints of chunks [k*CLUSTER_CHUNKS, (k+1)*CLUSTER_CHUNKS), i.e.
  * [k*CLUSTER - CHUNK/2, (k+1)*CLUSTER - CHUNK/2) in world units, so its center
  * sits on the SEAM between the cluster's two chunk columns/rows. On the x
- * axis this is the FORCED_ALIGNMENT rift line (one crack per cluster).
+ * axis this is the FORCED_ALIGNMENT side axis (faSideAxisX) — the room's
+ * semantic left/right split, NOT a physical crack (the room's two cracks run
+ * along the chunk column centers, ±CHUNK_SIZE/2 either side of it).
  */
 export function clusterCenterWorld(clusterCoord: number, chunkSize: number = WORLD.CHUNK_SIZE): number {
     return (clusterCoord * WORLD.CLUSTER_CHUNKS + (WORLD.CLUSTER_CHUNKS - 1) / 2) * chunkSize;
 }
 
 /**
- * X coordinate of the FORCED_ALIGNMENT rift line of the cluster containing
- * worldX: the cluster center (see clusterCenterWorld). The 4 chunks of an FA
- * cluster share this single crack line — the "one giant vertical rift" of the
- * design — instead of one crack per chunk. Single source for the crack base
- * point (faSideNoiseDensity, RiftMechanic, ChunkManager floor generation).
+ * X coordinate of the NEAREST physical FORCED_ALIGNMENT rift line: the center
+ * of the chunk COLUMN containing worldX (one complete crack per 80m chunk
+ * column, restored from the one-crack-per-cluster experiment — players found
+ * a single 160m-spaced crack too sparse). An FA cluster therefore carries TWO
+ * parallel cracks, at clusterCenter ± CHUNK_SIZE/2, and the cluster center
+ * itself is solid floor. Single source for the PHYSICAL crack base point
+ * (RiftMechanic fall/respawn/fog, ChunkManager floor generation, the shore
+ * corridor, RunStatsCollector's on-crack time).
+ *
+ * The room's left/right SEMANTIC deliberately does NOT live here — that is
+ * faSideAxisX (the cluster center): siding is a choice about the whole room
+ * and must not flip per crack.
  */
 export function riftLineXForWorldX(worldX: number, chunkSize: number = WORLD.CHUNK_SIZE): number {
+    return worldToChunkCoord(worldX, chunkSize) * chunkSize;
+}
+
+/**
+ * X coordinate of the FORCED_ALIGNMENT side AXIS of the cluster containing
+ * worldX: the cluster center (see clusterCenterWorld). This is the SEMANTIC
+ * left/right divider of the room — tidy left, broken right — consumed by
+ * faSideNoiseDensity, the binaural beat's side detune (RiftMechanic →
+ * AudioController) and the figure ranks (FigureSystem). It is NOT the
+ * physical crack: the room's two cracks (riftLineXForWorldX) sit one chunk
+ * half-width either side of this axis.
+ */
+export function faSideAxisX(worldX: number, chunkSize: number = WORLD.CHUNK_SIZE): number {
     return clusterCenterWorld(chunkToCluster(worldToChunkCoord(worldX, chunkSize)), chunkSize);
 }
 
@@ -794,10 +820,13 @@ export const FA_RIFT = {
 } as const;
 
 /**
- * True when a world x lies inside the FORCED_ALIGNMENT shore corridor —
- * strictly within FA_RIFT.CLEARANCE of its cluster's rift line. ChunkManager
- * skips building placement here so both banks of the rift stay open. Pure;
- * riftLineXForWorldX stays the single source of the crack base point.
+ * True when a world x lies inside a FORCED_ALIGNMENT shore corridor —
+ * strictly within FA_RIFT.CLEARANCE of the NEAREST rift line. Cracks run on
+ * every chunk column center (riftLineXForWorldX), so the corridor repeats
+ * every CHUNK_SIZE, leaving two buildable bands of (layoutHalf - CLEARANCE)
+ * ≈ 18m per column flank. ChunkManager skips building placement here so both
+ * banks of each rift stay open. Pure; riftLineXForWorldX stays the single
+ * source of the physical crack base point.
  */
 export function isWithinRiftClearance(worldX: number, chunkSize: number = WORLD.CHUNK_SIZE): boolean {
     return Math.abs(worldX - riftLineXForWorldX(worldX, chunkSize)) < FA_RIFT.CLEARANCE;

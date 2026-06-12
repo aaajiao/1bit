@@ -4,7 +4,7 @@ import type { AudioSystemInterface } from '../types';
 import { BINAURAL_SIDE_CONFIG } from '../config/audio';
 import { RIFT_PHYSICS } from '../config/physics';
 import { CHUNK_SIZE } from './ChunkManager';
-import { getRoomTypeFromPosition, riftLineXForWorldX, RoomType, worldToChunkCoord } from './RoomConfig';
+import { faSideAxisX, getRoomTypeFromPosition, riftLineXForWorldX, RoomType, worldToChunkCoord } from './RoomConfig';
 
 /**
  * Minimal room-attribution surface RiftMechanic consumes. ChunkManager
@@ -35,9 +35,11 @@ export class RiftMechanic {
         cameraPosition: THREE.Vector3,
         rooms?: RoomTypeSource,
     ): void {
-        // One crack per 2x2-chunk cluster, running along the cluster center x
-        // (riftLineXForWorldX is the single source of the crack base point,
-        // shared with faSideNoiseDensity and the floor generation).
+        // PHYSICAL crack: one per FA chunk column, running along the chunk
+        // center x (riftLineXForWorldX is the single source of the crack base
+        // point, shared with the floor generation and the shore corridor).
+        // All physics below — fall, fog proximity, respawn — keys off the
+        // NEAREST crack line.
         const crackCenterX = riftLineXForWorldX(cameraPosition.x, CHUNK_SIZE);
         const distFromCenter = Math.abs(cameraPosition.x - crackCenterX);
 
@@ -54,17 +56,25 @@ export class RiftMechanic {
             : getRoomTypeFromPosition(nearestChunkX, nearestChunkZ);
         const isRiftChunk = roomHere === RoomType.FORCED_ALIGNMENT;
 
-        // Update binaural position for audio context: SIGNED x offset from the
-        // rift crack center (flow-audit break #7) so the beat hears which side
-        // the player stands on — negative = tidy left, positive = broken right.
-        audio.updateBinauralPosition(cameraPosition.x - crackCenterX, BINAURAL_SIDE_CONFIG.fieldWidth);
+        // Binaural beat (flow-audit break #7) — the two rift concepts feed it
+        // separately: WHICH side the beat detunes toward comes from the room's
+        // SEMANTIC axis (faSideAxisX, the cluster center — negative = tidy
+        // left, positive = broken right; siding is a choice about the room,
+        // not about the nearest crack), while HOW LOUD it beats comes from the
+        // distance to the nearest PHYSICAL crack (each crack carries its own
+        // sound field, see BINAURAL_SIDE_CONFIG.fieldWidth).
+        audio.updateBinauralPosition(
+            cameraPosition.x - faSideAxisX(cameraPosition.x, CHUNK_SIZE),
+            distFromCenter,
+        );
 
         // RIFT AUDIO: Fog Sound
         // Start if not already playing (internal check handles redundancy)
         audio.startRiftFog();
 
-        // Intensity based on proximity (closer = louder), audible across the
-        // cluster-scale room so the crack can be found from its far edge
+        // Intensity based on proximity to the nearest crack (closer = louder);
+        // cracks repeat every chunk column, so the fog cue is audible from
+        // anywhere in the room and always leads to the closest rift
         const riftProximity = Math.max(0, 1 - distFromCenter / BINAURAL_SIDE_CONFIG.fogAudibleRange);
         audio.updateRiftFog(riftProximity);
 
