@@ -162,19 +162,33 @@ export interface WeatherState {
     weatherType: number;
     weatherIntensity: number;
     weatherTime: number;
+    /**
+     * Onset broadcast: 1 -> 0 linear decay over ONSET_SECONDS after a real
+     * weather event starts (STATIC/RAIN/full-length GLITCH, incl. forced
+     * static/rain). Always 0 for transient ambient glitches and CLEAR.
+     * Drives the "weather just started" screen flash + audio swell.
+     */
+    weatherOnset: number;
+    /**
+     * 1 while a REAL weather event is active (STATIC/RAIN/full-length
+     * GLITCH, incl. forced static/rain), 0 for transient ambient glitches
+     * and CLEAR. Unlike weatherOnset it stays 1 for the event's whole
+     * duration — it gates effects reserved for real events (e.g. the
+     * POLARIZED full-screen invert strikes) that transients must not fire.
+     */
+    weatherIsEvent: number;
 }
 
+// Cooldown/duration/intensity ranges moved to per-room profiles
+// (ROOM_WEATHER_PROFILES in world/RoomConfig.ts); only the cross-room
+// tuning knobs remain here.
 export interface WeatherConfig {
-    minCooldown: number;
-    maxCooldown: number;
-    minDuration: number;
-    maxDuration: number;
     transitionSpeed: number;
     glitchChance: number; // Ambient glitch rate per second (scaled by delta, frame-rate independent)
 }
 
 export interface WeatherSystemInterface {
-    update: (delta: number, time: number) => WeatherState;
+    update: (delta: number, time: number, roomType?: RoomType | null) => WeatherState;
     forceWeather: (type: string, duration?: number) => void;
 }
 

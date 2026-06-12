@@ -7,7 +7,8 @@ import type { GhostSystem } from '../world/GhostSystem';
 import type { BehaviorProfile, RoomFogConfig } from '../world/RoomConfig';
 import { GAMEPLAY, LIVE_PROFILE } from '../config';
 import { RiftMechanic } from '../world/RiftMechanic';
-import { ROOM_FOG, RoomType, stepFogToward } from '../world/RoomConfig';
+import { RAIN_FOG_FAR_FACTOR, ROOM_FOG, RoomType, stepFogToward } from '../world/RoomConfig';
+import { WEATHER_TYPES } from '../world/WeatherSystem';
 
 /**
  * Per-frame room-flow wiring: detects room transitions (ambient retune via
@@ -25,6 +26,17 @@ export class RoomFlowUpdater {
     // (F1 "the world reads you") — once per LEDGER_REFRESH_INTERVAL, not per
     // frame; the ledger only consults it when a new cluster needs a room.
     private profileFeedTimer = 0;
+
+    // Weather type + intensity fed by main.ts AFTER the weather update each
+    // frame; the figures and the rain fog close-in consume them one frame
+    // stale by design, because the room flow runs before this frame's
+    // weather selection in the fixed order.
+    private weatherType = 0;
+    private weatherIntensity = 0;
+
+    // Reusable rain-biased fog target (no per-frame allocation; ROOM_FOG
+    // entries are shared constants and must never be mutated).
+    private readonly rainFogTarget: RoomFogConfig = { near: 0, far: 0 };
 
     /**
      * @param fog - The live scene fog (THREE.Fog satisfies the shape), eased
@@ -56,6 +68,17 @@ export class RoomFlowUpdater {
      */
     getRoomType(): RoomType | null {
         return this.previousRoomType;
+    }
+
+    /**
+     * Feed the CURRENT frame's weather type + intensity (main.ts calls this
+     * right after the weather update). Consumed by the NEXT frame's figure
+     * update and rain fog close-in — one frame stale by design (see the
+     * field comment above).
+     */
+    setWeather(weatherType: number, intensity: number): void {
+        this.weatherType = weatherType;
+        this.weatherIntensity = intensity;
     }
 
     /**
@@ -103,8 +126,19 @@ export class RoomFlowUpdater {
         // fog toward the current room's target — INFO_OVERFLOW pulls the far
         // world into a ~45m noise horizon, every other room releases it back
         // to the global default. Frame-rate independent (delta-scaled).
+        // RAIN pulls the horizon in further (weather-presence): the far
+        // target closes toward RAIN_FOG_FAR_FACTOR scaled by the live
+        // intensity, so the data downpour visibly engulfs the world;
+        // stepFogToward's easing glides it in/out with the storm.
         if (this.fog) {
-            stepFogToward(this.fog, ROOM_FOG[currentRoomType], delta);
+            let target = ROOM_FOG[currentRoomType];
+            if (this.weatherType === WEATHER_TYPES.RAIN && this.weatherIntensity > 0) {
+                this.rainFogTarget.near = target.near;
+                this.rainFogTarget.far = target.far
+                    * (1 - this.weatherIntensity * (1 - RAIN_FOG_FAR_FACTOR));
+                target = this.rainFogTarget;
+            }
+            stepFogToward(this.fog, target, delta);
         }
 
         // Per-room mechanics. The rift consults the chunk manager's room
@@ -130,9 +164,10 @@ export class RoomFlowUpdater {
         // F3 silhouette figures: distant kin living the same rooms. Runs
         // AFTER the room flow above so the chunk grid and the room ledger's
         // cluster pins are already settled for this frame; the system follows
-        // the same active chunk window as ChunkManager and reports its rare
-        // rebel tears through the audio controller.
-        this.figures?.update(delta, playerPos, playerState, currentRoomType, audio);
+        // the same active chunk window as ChunkManager, reports its rare
+        // rebel tears through the audio controller, and shimmers harder
+        // under the (one frame stale) weather intensity.
+        this.figures?.update(delta, playerPos, playerState, currentRoomType, audio, this.weatherIntensity);
 
         // F4 ghost replay: last run's you, retracing its recorded trail. It
         // ignores rooms entirely (memory predates this world's layout); it

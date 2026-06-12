@@ -705,6 +705,19 @@ export const SKY_EYE_DOMINANCE = {
 } as const;
 
 /**
+ * Sky-eye storm response (weather presence): while real weather rages above
+ * the intensity threshold, the eye blinks visibly faster — the authority is
+ * agitated by the storm. Below the threshold (calm, fading tails, transient
+ * glitches) the eye's cadence is exactly unchanged.
+ */
+export const SKY_EYE_WEATHER = {
+    /** Weather intensity above which the eye reacts to the storm at all. */
+    INTENSITY_THRESHOLD: 0.4,
+    /** Extra blink-rate multiplier at full storm intensity (1 + gain = 3.5x). */
+    BLINK_RATE_STORM_GAIN: 2.5,
+} as const;
+
+/**
  * Camera constants
  */
 export const CAMERA = {

@@ -22,7 +22,10 @@ export interface AudioSystemInterface {
     playRoomTransition: () => void;
     playJump: () => void;
     playDoubleJump: () => void;
-    updateWeatherAudio: (weatherType: number, intensity: number) => void;
+    // onset (0-1, default 0) is the event's opening-broadcast window
+    // (WeatherState.weatherOnset); the weather layer gain swells by
+    // WEATHER_AUDIO.onsetSwellMult inside it, then settles.
+    updateWeatherAudio: (weatherType: number, intensity: number, onset?: number) => void;
     playGlitchBurst: () => void;
     // Flower
     updateFlowerAudio: (intensity: number) => void;

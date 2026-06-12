@@ -12,6 +12,23 @@ export interface DitherUniforms {
     weatherType: { value: number };
     weatherIntensity: { value: number };
     weatherTime: { value: number };
+    // Weather-presence pass: onset broadcast + per-room weather flavor.
+    // uWeatherOnset: 1 -> 0 over the first ~1.6s of a REAL weather event
+    //   (WeatherState.weatherOnset, global player layer via ShaderSyncUpdater);
+    //   drives the edge-band strobe + the top-to-bottom sweep line.
+    // The four flavor scalars are per-room (RoomShaderConfig fields, baked
+    //   through the RoomTransition lerp): RAIN density/speed/trail multiplier,
+    //   STATIC scan-band organization (FORCED_ALIGNMENT), RAIN misregistered
+    //   ghost copy (IN_BETWEEN), GLITCH invert-strike strength (POLARIZED).
+    // uWeatherIsEvent: 1 while a REAL event is active, 0 for transient
+    //   ambient glitches (WeatherState.weatherIsEvent); gates the POLARIZED
+    //   invert strikes so transients can't fire them.
+    uWeatherOnset: { value: number };
+    uWeatherIsEvent: { value: number };
+    uWeatherRainDensity: { value: number };
+    uWeatherBandStrength: { value: number };
+    uWeatherMisregisterBoost: { value: number };
+    uWeatherInvertStrike: { value: number };
     // Per-room dither character (blended by world/RoomTransition, synced each
     // frame by core/ShaderUniformUpdater).
     uNoiseDensity: { value: number };

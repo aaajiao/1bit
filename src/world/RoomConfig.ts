@@ -80,6 +80,24 @@ export interface RoomShaderConfig {
     ditherMode: number;
     ditherModeFrom: number;
     ditherModeBlend: number;
+    // ===== Per-room weather flavor (weather-presence pass) =====
+    // Consumed by the DitherShader weather block only while weather of the
+    // matching type is active; plain scalars, so they ride the standard
+    // RoomTransition lerp like every other room knob.
+    // weatherRainDensity: >=0 multiplier on RAIN column density / fall speed /
+    //   trail length (1 = historical look; INFO_OVERFLOW's 2.5 = data downpour).
+    weatherRainDensity: number;
+    // weatherBandStrength: 0-1, STATIC pressed into horizontal bands sweeping
+    //   the screen — FORCED_ALIGNMENT's "inspection scan-storm".
+    weatherBandStrength: number;
+    // weatherMisregisterBoost: 0-1, RAIN rendered as two horizontally offset
+    //   copies with a drifting/breathing slip — a failed two-plate print
+    //   (IN_BETWEEN's misregistration made weather).
+    weatherMisregisterBoost: number;
+    // weatherInvertStrike: 0-1, GLITCH escalates into hard full-screen invert
+    //   strikes + horizontal tear lines every few seconds (POLARIZED's
+    //   rupture-storm; a faint 0.25 echo in IN_BETWEEN).
+    weatherInvertStrike: number;
 }
 
 /**
@@ -130,6 +148,11 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             ditherMode: DITHER_MODE.BLUE_NOISE,
             ditherModeFrom: DITHER_MODE.BLUE_NOISE,
             ditherModeBlend: 1.0,
+            // Data downpour: ~2.5x rain columns, faster, longer trails.
+            weatherRainDensity: 2.5,
+            weatherBandStrength: 0.0,
+            weatherMisregisterBoost: 0.0,
+            weatherInvertStrike: 0.0,
         },
         audio: {
             baseFrequency: 60,
@@ -164,6 +187,11 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             ditherMode: DITHER_MODE.MIRROR_BAYER,
             ditherModeFrom: DITHER_MODE.MIRROR_BAYER,
             ditherModeBlend: 1.0,
+            weatherRainDensity: 1.0,
+            // Inspection scan-storm: STATIC pressed into sweeping bands.
+            weatherBandStrength: 1.0,
+            weatherMisregisterBoost: 0.0,
+            weatherInvertStrike: 0.0,
         },
         audio: {
             baseFrequency: 55,
@@ -199,6 +227,12 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             ditherMode: DITHER_MODE.DUAL_CONFLICT,
             ditherModeFrom: DITHER_MODE.DUAL_CONFLICT,
             ditherModeBlend: 1.0,
+            weatherRainDensity: 1.2,
+            weatherBandStrength: 0.0,
+            // Misregistration drift: rain prints twice and the plates miss.
+            weatherMisregisterBoost: 1.0,
+            // Faint echo of the rupture-storm: occasional invert strikes.
+            weatherInvertStrike: 0.25,
         },
         audio: {
             baseFrequency: 50,
@@ -234,6 +268,11 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             ditherMode: DITHER_MODE.BAYER,
             ditherModeFrom: DITHER_MODE.BAYER,
             ditherModeBlend: 1.0,
+            // Rupture-storm: no rain, no bands — only hard invert strikes.
+            weatherRainDensity: 0.0,
+            weatherBandStrength: 0.0,
+            weatherMisregisterBoost: 0.0,
+            weatherInvertStrike: 1.0,
         },
         audio: {
             baseFrequency: 40,
@@ -462,9 +501,68 @@ export const DEFAULT_WEATHER_WEIGHTS: WeatherTypeWeights = { static: 1, rain: 1,
 
 export const ROOM_WEATHER_WEIGHTS: Record<RoomType, WeatherTypeWeights> = {
     [RoomType.INFO_OVERFLOW]: { static: 1, rain: 6, glitch: 1 },
-    [RoomType.FORCED_ALIGNMENT]: DEFAULT_WEATHER_WEIGHTS,
-    [RoomType.IN_BETWEEN]: DEFAULT_WEATHER_WEIGHTS,
+    // FORCED_ALIGNMENT's signature weather is the "inspection scan-storm":
+    // STATIC organized into sweeping horizontal bands, so STATIC dominates.
+    [RoomType.FORCED_ALIGNMENT]: { static: 5, rain: 1, glitch: 1 },
+    // IN_BETWEEN reads as two systems misreading each other — RAIN (rendered
+    // as misregistered double-print) and GLITCH carry that better than STATIC.
+    [RoomType.IN_BETWEEN]: { static: 1, rain: 2, glitch: 2 },
     [RoomType.POLARIZED]: { static: 0, rain: 0, glitch: 1 },
+};
+
+/**
+ * Per-room weather lifecycle profiles (weather-presence pass). Where
+ * ROOM_WEATHER_WEIGHTS decides WHICH weather a room gets, these profiles
+ * decide HOW OFTEN, HOW LONG, and HOW HARD it hits — so each room's weather
+ * cadence matches its psychological identity:
+ *
+ * - INFO_OVERFLOW: frequent, medium-length data downpours — the overload
+ *   never lets up for long.
+ * - FORCED_ALIGNMENT: regular scan-storm inspections, long enough to feel
+ *   processed line by line.
+ * - IN_BETWEEN: drifting misregistration spells, slightly softer floor —
+ *   ambiguity rather than assault.
+ * - POLARIZED: rare, short, violent rupture-storms (intensity pinned near
+ *   max); the dead calm between them IS the room's identity.
+ *
+ * Ranges are [min, max] in seconds (cooldown/duration) or 0..1 (intensity),
+ * sampled uniformly by WeatherSystem. DEFAULT_WEATHER_PROFILE covers the
+ * no-room case (spawn scan, tests) and intentionally matches the historical
+ * duration/intensity ranges while halving the old 60-180s cooldown.
+ */
+export interface RoomWeatherProfile {
+    cooldownRange: [number, number];
+    durationRange: [number, number];
+    intensityRange: [number, number];
+}
+
+export const DEFAULT_WEATHER_PROFILE: RoomWeatherProfile = {
+    cooldownRange: [30, 90],
+    durationRange: [15, 45],
+    intensityRange: [0.6, 1.0],
+};
+
+export const ROOM_WEATHER_PROFILES: Record<RoomType, RoomWeatherProfile> = {
+    [RoomType.INFO_OVERFLOW]: {
+        cooldownRange: [20, 60],
+        durationRange: [25, 50],
+        intensityRange: [0.75, 1.0],
+    },
+    [RoomType.FORCED_ALIGNMENT]: {
+        cooldownRange: [30, 80],
+        durationRange: [20, 40],
+        intensityRange: [0.7, 1.0],
+    },
+    [RoomType.IN_BETWEEN]: {
+        cooldownRange: [25, 70],
+        durationRange: [25, 50],
+        intensityRange: [0.65, 1.0],
+    },
+    [RoomType.POLARIZED]: {
+        cooldownRange: [50, 110],
+        durationRange: [8, 16],
+        intensityRange: [0.9, 1.0],
+    },
 };
 
 /**
@@ -493,6 +591,15 @@ export const ROOM_FOG: Record<RoomType, RoomFogConfig> = {
     [RoomType.IN_BETWEEN]: DEFAULT_ROOM_FOG,
     [RoomType.POLARIZED]: DEFAULT_ROOM_FOG,
 };
+
+/**
+ * RAIN fog close-in (weather-presence): while RAIN is active the fog target's
+ * far distance is pulled toward far * RAIN_FOG_FAR_FACTOR, scaled by the live
+ * weather intensity — INFO_OVERFLOW's data downpour visibly engulfs the world
+ * (45m noise horizon -> ~20m at full intensity). Applied in RoomFlowUpdater
+ * before stepFogToward, whose easing glides it in/out with the storm.
+ */
+export const RAIN_FOG_FAR_FACTOR = 0.45;
 
 /**
  * Exponential approach rate (1/s) of the displayed fog toward the current
@@ -682,6 +789,11 @@ export function lerpRoomShaderConfig(
         ditherMode,
         ditherModeFrom,
         ditherModeBlend,
+        // Per-room weather flavor (weather-presence pass): plain scalars.
+        weatherRainDensity: lerp(from.weatherRainDensity, to.weatherRainDensity),
+        weatherBandStrength: lerp(from.weatherBandStrength, to.weatherBandStrength),
+        weatherMisregisterBoost: lerp(from.weatherMisregisterBoost, to.weatherMisregisterBoost),
+        weatherInvertStrike: lerp(from.weatherInvertStrike, to.weatherInvertStrike),
     };
 }
 
