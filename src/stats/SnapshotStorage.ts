@@ -14,6 +14,11 @@ export interface PersistedSnapshot {
     pattern: PatternUniforms;
     text: string;
     textKey: string;
+    /**
+     * Optional run length in seconds (F6 share-card footer); absent in
+     * pre-F6 payloads — same VERSION, additive field.
+     */
+    durationSeconds?: number;
 }
 
 /** Encode a snapshot into its versioned JSON wire format. Pure. */
@@ -25,6 +30,9 @@ export function encodeSnapshot(snapshot: StateSnapshot): string {
         text: snapshot.text,
         textKey: snapshot.textKey,
     };
+    if (isFiniteNumber(snapshot.durationSeconds) && snapshot.durationSeconds >= 0) {
+        payload.durationSeconds = snapshot.durationSeconds;
+    }
     return JSON.stringify(payload);
 }
 
@@ -72,7 +80,7 @@ export function decodeSnapshot(raw: string | null | undefined): StateSnapshot | 
     }
 
     // Rebuild a clean object (never alias the parsed payload's extra fields).
-    return {
+    const snapshot: StateSnapshot = {
         tags: p.tags as BehaviorTag[],
         pattern: {
             uPatternMode: pattern.uPatternMode,
@@ -83,6 +91,12 @@ export function decodeSnapshot(raw: string | null | undefined): StateSnapshot | 
         text: p.text,
         textKey: p.textKey,
     };
+    // Optional run duration (F6): tolerate absence (pre-F6 payloads) and
+    // drop garbage values without rejecting the whole snapshot.
+    if (isFiniteNumber(p.durationSeconds) && p.durationSeconds >= 0) {
+        snapshot.durationSeconds = p.durationSeconds;
+    }
+    return snapshot;
 }
 
 /** Browser localStorage, or null when unavailable (tests, privacy modes). */
@@ -110,6 +124,22 @@ export function saveLastSnapshot(
     }
     catch {
         // Best-effort: drop silently (quota exceeded / privacy mode).
+    }
+}
+
+/**
+ * Remove the persisted last-run snapshot (the F2 "遗忘" entry erases the
+ * visit record along with the scars and the ghost trail). Best-effort like
+ * every other persistence path here.
+ */
+export function clearLastSnapshot(storage: Storage | null = defaultStorage()): void {
+    if (!storage)
+        return;
+    try {
+        storage.removeItem(SNAPSHOT_STORAGE.KEY);
+    }
+    catch {
+        // Best-effort.
     }
 }
 

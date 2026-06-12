@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AUDIO_MASTER, CABLE_AUDIO_CONFIG, FOOTSTEP_CONFIG, POLARIZED_BEAT_CONFIG, SNAPSHOT_AUDIO_CONFIG } from '../src/config/audio';
-import { FLOWER_HINT, FLOWER_INTRO, GAMEPLAY, OVERRIDE, SPAWN, SUNSET_FORESHADOW, WORLD } from '../src/config/constants';
+import { FLOWER_HINT, FLOWER_INTRO, FLOWER_LIGHT, GAMEPLAY, LIVE_PROFILE, OVERRIDE, SPAWN, SUNSET_FORESHADOW, TAG_THRESHOLDS, WORLD } from '../src/config/constants';
 import { PHYSICS_CONFIG, RIFT_PHYSICS } from '../src/config/physics';
 
 describe('physics Config', () => {
@@ -106,6 +106,63 @@ describe('audio Config', () => {
     });
 });
 
+describe('flower light Config (F5 "花是光")', () => {
+    it('should keep the decay gentle but physical (0 < decay <= 2)', () => {
+        expect(FLOWER_LIGHT.DECAY).toBeGreaterThan(0);
+        expect(FLOWER_LIGHT.DECAY).toBeLessThanOrEqual(2);
+    });
+
+    it('should define all three flower states with positive params', () => {
+        expect(FLOWER_LIGHT.INTENSITY.length).toBe(3);
+        expect(FLOWER_LIGHT.DISTANCE.length).toBe(3);
+        for (let s = 0; s < 3; s++) {
+            expect(FLOWER_LIGHT.INTENSITY[s].BASE).toBeGreaterThan(0);
+            expect(FLOWER_LIGHT.INTENSITY[s].GAIN).toBeGreaterThanOrEqual(0);
+            expect(FLOWER_LIGHT.DISTANCE[s].BASE).toBeGreaterThan(0);
+            expect(FLOWER_LIGHT.DISTANCE[s].GAIN).toBeGreaterThanOrEqual(0);
+        }
+    });
+
+    it('should grow monotonically across states (brighter flower = more exposure)', () => {
+        for (let s = 0; s < 2; s++) {
+            expect(FLOWER_LIGHT.INTENSITY[s + 1].BASE).toBeGreaterThan(FLOWER_LIGHT.INTENSITY[s].BASE);
+            expect(FLOWER_LIGHT.DISTANCE[s + 1].BASE).toBeGreaterThan(FLOWER_LIGHT.DISTANCE[s].BASE);
+        }
+        // It stays a hand light, not a floodlight: max reach well under fog far.
+        const maxReach = FLOWER_LIGHT.DISTANCE[2].BASE + FLOWER_LIGHT.DISTANCE[2].GAIN;
+        expect(maxReach).toBeLessThanOrEqual(20);
+    });
+});
+
+describe('tag thresholds Config (snapshot tag language)', () => {
+    it('keeps the light bands ordered inside (0, 1)', () => {
+        expect(TAG_THRESHOLDS.QUIET_LIGHT_MAX_FLOWER).toBeGreaterThan(0);
+        expect(TAG_THRESHOLDS.QUIET_LIGHT_MAX_FLOWER)
+            .toBeLessThan(TAG_THRESHOLDS.MEDIUM_LIGHT_MAX_FLOWER);
+        expect(TAG_THRESHOLDS.MEDIUM_LIGHT_MAX_FLOWER).toBeLessThan(1);
+    });
+
+    it('keeps the gaze bands non-overlapping (LOW < HIGH)', () => {
+        expect(TAG_THRESHOLDS.LOW_GAZE_MAX_RATIO).toBeGreaterThan(0);
+        expect(TAG_THRESHOLDS.LOW_GAZE_MAX_RATIO)
+            .toBeLessThan(TAG_THRESHOLDS.HIGH_GAZE_MIN_RATIO);
+        expect(TAG_THRESHOLDS.HIGH_GAZE_MIN_RATIO).toBeLessThanOrEqual(1);
+    });
+
+    it('keeps the position/resistance thresholds valid ratios', () => {
+        expect(TAG_THRESHOLDS.NEUTRAL_SEEKER_MIN_CRACK_RATIO).toBeGreaterThan(0);
+        expect(TAG_THRESHOLDS.NEUTRAL_SEEKER_MIN_CRACK_RATIO).toBeLessThan(1);
+        expect(TAG_THRESHOLDS.RESISTER_MIN_OVERRIDE_RATIO).toBeGreaterThan(0);
+        expect(TAG_THRESHOLDS.RESISTER_MIN_OVERRIDE_RATIO).toBeLessThan(1);
+        expect(TAG_THRESHOLDS.RESISTER_MIN_SUCCESSES).toBeGreaterThanOrEqual(1);
+    });
+
+    it('keeps the live-profile saturations defined AS the tag thresholds (no drift)', () => {
+        expect(LIVE_PROFILE.OVERRIDE_SATURATION).toBe(TAG_THRESHOLDS.RESISTER_MIN_OVERRIDE_RATIO);
+        expect(LIVE_PROFILE.CRACK_SATURATION).toBe(TAG_THRESHOLDS.NEUTRAL_SEEKER_MIN_CRACK_RATIO);
+    });
+});
+
 describe('settlement & spawn Config', () => {
     it('should keep the dusk paper shift dimming-only and inside a half-cycle', () => {
         expect(SUNSET_FORESHADOW.WARM_SHIFT).toBeLessThanOrEqual(SUNSET_FORESHADOW.PAPER_DIM);
@@ -118,6 +175,11 @@ describe('settlement & spawn Config', () => {
     it('should keep the safe-spawn offset inside the chunk half-width', () => {
         expect(SPAWN.SPAWN_OFFSET).toBeGreaterThanOrEqual(0);
         expect(SPAWN.SPAWN_OFFSET).toBeLessThan(WORLD.CHUNK_SIZE / 2);
-        expect(SPAWN.SCAN_RADIUS_CHUNKS).toBeGreaterThanOrEqual(1);
+        expect(SPAWN.SCAN_RADIUS_CLUSTERS).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should keep the room-cluster edge a positive whole number of chunks', () => {
+        expect(Number.isInteger(WORLD.CLUSTER_CHUNKS)).toBe(true);
+        expect(WORLD.CLUSTER_CHUNKS).toBeGreaterThanOrEqual(1);
     });
 });

@@ -1,8 +1,9 @@
 // 1-bit Chimera Void - Run Stats Collector
 // Non-invasive runtime behavior sampling for state snapshot generation
 
-import { GAMEPLAY } from '../config';
-import { RoomType } from '../world/RoomConfig';
+import type { BehaviorProfile } from '../world/RoomConfig';
+import { GAMEPLAY, LIVE_PROFILE, TAG_THRESHOLDS } from '../config';
+import { riftLineXForWorldX, RoomType } from '../world/RoomConfig';
 
 /**
  * Raw runtime statistics collected during a run
@@ -65,8 +66,10 @@ export type BehaviorTag
 /**
  * Maps a dominant room type to its behavior tag.
  * Module-level constant so generateTags() does not reallocate it every call.
+ * Exported so the share card (F6) can invert it (tag -> room duotone accent)
+ * without duplicating the mapping.
  */
-const ROOM_TAG_MAP: Record<string, BehaviorTag> = {
+export const ROOM_TAG_MAP: Record<string, BehaviorTag> = {
     [RoomType.INFO_OVERFLOW]: 'INFO_MAZE',
     [RoomType.FORCED_ALIGNMENT]: 'CRACK_WALKER',
     [RoomType.IN_BETWEEN]: 'INBETWEENER',
@@ -165,8 +168,14 @@ export class RunStatsCollector {
         this.stats.xPositionMin = Math.min(this.stats.xPositionMin, playerX);
         this.stats.xPositionMax = Math.max(this.stats.xPositionMax, playerX);
 
-        // Track time on crack (neutral zone in FORCED_ALIGNMENT)
-        if (Math.abs(playerX) < 5.0 && currentRoom === RoomType.FORCED_ALIGNMENT) {
+        // Track time on crack (neutral zone in FORCED_ALIGNMENT). The crack
+        // is the cluster's rift line (riftLineXForWorldX, the single source
+        // of the crack base point) — NOT the world origin x=0, which no rift
+        // ever passes through.
+        if (
+            Math.abs(playerX - riftLineXForWorldX(playerX)) < 5.0
+            && currentRoom === RoomType.FORCED_ALIGNMENT
+        ) {
             this.stats.onCrackTime += deltaTime;
         }
 
@@ -231,17 +240,19 @@ export class RunStatsCollector {
     }
 
     /**
-     * Generate behavior tags from normalized metrics
+     * Generate behavior tags from normalized metrics. All cut points live in
+     * config/TAG_THRESHOLDS (single source of truth, shared with the
+     * LIVE_PROFILE saturation knobs).
      */
     generateTags(): BehaviorTag[] {
         const metrics = this.normalize();
         const tags: BehaviorTag[] = [];
 
         // Light intensity tags
-        if (metrics.avgFlower < 0.25) {
+        if (metrics.avgFlower < TAG_THRESHOLDS.QUIET_LIGHT_MAX_FLOWER) {
             tags.push('QUIET_LIGHT');
         }
-        else if (metrics.avgFlower < 0.6) {
+        else if (metrics.avgFlower < TAG_THRESHOLDS.MEDIUM_LIGHT_MAX_FLOWER) {
             tags.push('MEDIUM_LIGHT');
         }
         else {
@@ -249,10 +260,10 @@ export class RunStatsCollector {
         }
 
         // Gaze relationship tags
-        if (metrics.gazeRatio > 0.5) {
+        if (metrics.gazeRatio > TAG_THRESHOLDS.HIGH_GAZE_MIN_RATIO) {
             tags.push('HIGH_GAZE');
         }
-        else if (metrics.gazeRatio < 0.15) {
+        else if (metrics.gazeRatio < TAG_THRESHOLDS.LOW_GAZE_MAX_RATIO) {
             tags.push('LOW_GAZE');
         }
 
@@ -265,16 +276,47 @@ export class RunStatsCollector {
         }
 
         // Position tags
-        if (metrics.crackRatio > 0.3) {
+        if (metrics.crackRatio > TAG_THRESHOLDS.NEUTRAL_SEEKER_MIN_CRACK_RATIO) {
             tags.push('NEUTRAL_SEEKER');
         }
 
         // Resistance tag: a single successful override counts, regardless of hold ratio
-        if (metrics.overrideSuccesses >= 1 || metrics.overrideRatio > 0.05) {
+        if (
+            metrics.overrideSuccesses >= TAG_THRESHOLDS.RESISTER_MIN_SUCCESSES
+            || metrics.overrideRatio > TAG_THRESHOLDS.RESISTER_MIN_OVERRIDE_RATIO
+        ) {
             tags.push('RESISTER');
         }
 
         return tags;
+    }
+
+    /**
+     * Live, lightweight normalized behavior profile of the run so far (F1
+     * "the world reads you"), computed on the fly from already-collected
+     * fields — no new sampling. Returns null while the profile has not yet
+     * formed (duration < LIVE_PROFILE.MIN_DURATION), so boot-time generation
+     * and the spawn scan stay exactly neutral. Consumed (low frequency) by
+     * the room ledger via RoomConfig.biasedRoomWeights.
+     */
+    getLiveProfile(): BehaviorProfile | null {
+        const s = this.stats;
+        if (s.duration < LIVE_PROFILE.MIN_DURATION)
+            return null;
+
+        const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+        return {
+            // Same default as normalize(): 0.5 (the flower's boot intensity,
+            // inside the bias deadzone) until the first 2s sample lands.
+            avgFlower: clamp01(s.samples > 0 ? s.flowerIntensitySum / s.samples : 0.5),
+            gazeRatio: clamp01(s.gazeTimeTotal / s.duration),
+            overrideActivity: clamp01(
+                s.overrideTimeTotal / s.duration / LIVE_PROFILE.OVERRIDE_SATURATION,
+            ),
+            crackAffinity: clamp01(
+                s.onCrackTime / s.duration / LIVE_PROFILE.CRACK_SATURATION,
+            ),
+        };
     }
 
     /**

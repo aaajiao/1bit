@@ -1,6 +1,6 @@
 // 1-bit Chimera Void - Flower Prop (Hand-held flower)
 import * as THREE from 'three';
-import { FLOWER_INTRO, GAZE } from '../config';
+import { FLOWER_INTRO, FLOWER_LIGHT, GAZE } from '../config';
 import { hash } from '../utils/hash';
 import { getSharedAssets } from '../world/SharedAssets';
 
@@ -57,8 +57,12 @@ export function createFlowerProp(): FlowerGroup {
     const bloom = new THREE.Group();
     bloom.position.set(0, 0.8, 0);
 
-    // Core light
+    // Core light (F5 "花是光"): a REAL PointLight — the world is built from
+    // lit materials (MeshLambert/Phong), so this light brightens the
+    // pre-dither luminance field around the player. Gentle decay (config)
+    // lets the reach read in the dithered mid-distance: your light exposes you.
     const coreLight = new THREE.PointLight(0xFFFFFF, 3.0, 8.0);
+    coreLight.decay = FLOWER_LIGHT.DECAY;
     coreLight.castShadow = true;
     coreLight.shadow.bias = -0.0001;
     bloom.add(coreLight);
@@ -317,16 +321,13 @@ export function animateFlower(flowerGroup: FlowerGroup, time: number, delta: num
     }
 
     // ----- 1. CORE LIGHT (PointLight) -----
-    // State-based light intensity and distance
+    // State-based light intensity and reach (F5 "花是光", knobs in config):
+    // brighter flower = a wider, whiter pre-dither field around the player.
     if (ud.coreLight) {
-        const lightParams = [
-            { intensity: 0.3 + stateProgress * 0.5, distance: 2.0 + stateProgress * 1.0 }, // Dim: 0.3-0.8, 2-3m
-            { intensity: 1.0 + stateProgress * 2.0, distance: 4.0 + stateProgress * 2.0 }, // Soft: 1.0-3.0, 4-6m
-            { intensity: 4.0 + stateProgress * 4.0, distance: 8.0 + stateProgress * 4.0 }, // Intense: 4.0-8.0, 8-12m
-        ];
-        const params = lightParams[state];
-        ud.coreLight.intensity = params.intensity;
-        ud.coreLight.distance = params.distance;
+        const lightIntensity = FLOWER_LIGHT.INTENSITY[state];
+        const lightDistance = FLOWER_LIGHT.DISTANCE[state];
+        ud.coreLight.intensity = lightIntensity.BASE + stateProgress * lightIntensity.GAIN;
+        ud.coreLight.distance = lightDistance.BASE + stateProgress * lightDistance.GAIN;
     }
 
     // ----- 2. MATERIAL EMISSIVE (Core glow) -----

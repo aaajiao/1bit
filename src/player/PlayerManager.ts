@@ -55,6 +55,10 @@ export class PlayerManager {
     // main.ts gates while paused.
     private actionLockTimer = 0;
 
+    // Cross-run scar hook (F2): fired with the player's world position from
+    // inside the existing override success-callback chain (setupCallbacks).
+    private onOverrideSuccess: ((worldX: number, worldZ: number) => void) | null = null;
+
     constructor(
         camera: THREE.PerspectiveCamera,
         domElement: HTMLElement,
@@ -99,6 +103,12 @@ export class PlayerManager {
             if (flower) {
                 overrideFlowerIntensity(flower);
             }
+            // F2 cross-run scars: report WHERE the resistance succeeded up
+            // the chain (StatsSunsetUpdater persists it as a world scar).
+            if (this.onOverrideSuccess) {
+                const pos = this.controls.getCamera().position;
+                this.onOverrideSuccess(pos.x, pos.z);
+            }
         });
 
         // Tiered failure feedback (flow-audit break #2):
@@ -136,6 +146,15 @@ export class PlayerManager {
                 this.audio.playJump();
             }
         });
+    }
+
+    /**
+     * Subscribe to successful overrides with the player's world position
+     * (F2 cross-run scars). Rides the EXISTING OverrideMechanic trigger
+     * callback — fired once per trigger, after the flower blaze.
+     */
+    public setOnOverrideSuccess(callback: (worldX: number, worldZ: number) => void): void {
+        this.onOverrideSuccess = callback;
     }
 
     /**

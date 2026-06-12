@@ -1,7 +1,7 @@
 import type { AudioSystemInterface } from '../types';
 // 1-bit Chimera Void - Sky Eye System
 import * as THREE from 'three';
-import { SKY_EYE_AWARENESS, SKY_EYE_DOMINANCE } from '../config';
+import { SKY_EYE_AWARENESS, SKY_EYE_DOMINANCE, SKY_EYE_FAMILIARITY } from '../config';
 import { removeAndDispose } from '../utils/dispose';
 import { hash } from '../utils/hash';
 import { RoomType } from './RoomConfig';
@@ -51,6 +51,30 @@ export function stepEyeFollow(
 }
 
 /**
+ * Familiarity-adjusted BASE follow constants (F2 "the eye knows you"): a
+ * returning visitor (persisted runsCompleted, stats/ScarStorage) is followed
+ * with a tighter lerp and a shorter leash, ramping linearly to the
+ * SKY_EYE_FAMILIARITY cap. Computed ONCE at construction — the relationship
+ * is set when the eye opens, not renegotiated per frame. runsCompleted=0
+ * reproduces the original base constants exactly. Pure; exported for testing.
+ */
+export interface EyeFamiliarBase {
+    /** Base follow lerp the per-frame awareness gains multiply onto. */
+    followLerp: number;
+    /** Base leash distance the per-frame awareness shrink applies to. */
+    maxLag: number;
+}
+
+export function familiarEyeBase(runsCompleted: number): EyeFamiliarBase {
+    const fam = SKY_EYE_FAMILIARITY;
+    const f = Math.max(0, Math.min(1, runsCompleted / fam.CAP_RUNS));
+    return {
+        followLerp: SKY_EYE_FOLLOW_LERP * (1 + f * fam.FOLLOW_LERP_GAIN),
+        maxLag: SKY_EYE_MAX_LAG * (1 - f * fam.MAX_LAG_SHRINK),
+    };
+}
+
+/**
  * Per-frame awareness response of the eye to the player's state (flow-audit
  * break #4). All fields are effective values derived from the SkyEye base
  * constants and the SKY_EYE_AWARENESS config gains.
@@ -78,18 +102,23 @@ export interface EyeAwareness {
  * pupil tracking, more blinking); being gazed at provokes a confrontational
  * stare-back (dilated centered pupil, suppressed blinking, faster rings).
  * Inputs are clamped to [0,1]. Mutates `out` in place (no per-frame
- * allocation). Pure; exported for testing.
+ * allocation). The optional base follow constants let the familiarity
+ * calibration (familiarEyeBase, F2) tighten the starting point the gains
+ * apply to; the defaults reproduce the historical behavior exactly.
+ * Pure; exported for testing.
  */
 export function computeEyeAwareness(
     flowerIntensity: number,
     gazeIntensity: number,
     out: EyeAwareness,
+    baseFollowLerp: number = SKY_EYE_FOLLOW_LERP,
+    baseMaxLag: number = SKY_EYE_MAX_LAG,
 ): EyeAwareness {
     const f = Math.max(0, Math.min(1, flowerIntensity));
     const g = Math.max(0, Math.min(1, gazeIntensity));
     const a = SKY_EYE_AWARENESS;
-    out.followLerp = SKY_EYE_FOLLOW_LERP * (1 + f * a.FOLLOW_LERP_FLOWER_GAIN);
-    out.maxLag = SKY_EYE_MAX_LAG * (1 - f * a.MAX_LAG_FLOWER_SHRINK);
+    out.followLerp = baseFollowLerp * (1 + f * a.FOLLOW_LERP_FLOWER_GAIN);
+    out.maxLag = baseMaxLag * (1 - f * a.MAX_LAG_FLOWER_SHRINK);
     out.pupilGain = SKY_EYE_PUPIL_GAIN * (1 + f * a.PUPIL_GAIN_FLOWER_GAIN);
     // Gaze fully suppresses blinking at intensity 1 — an unblinking stare-back.
     out.blinkRate = (a.BLINK_RATE_BASE + f * a.BLINK_RATE_FLOWER_GAIN) * (1 - g);
@@ -171,7 +200,18 @@ export class SkyEye {
         extraRingScale: 0,
     };
 
-    constructor(scene: THREE.Scene) {
+    // Familiarity-calibrated base follow constants (F2): fixed for the
+    // session from the persisted runsCompleted at construction.
+    private readonly familiarBase: EyeFamiliarBase;
+
+    /**
+     * @param scene - Scene the eye group is added to.
+     * @param runsCompleted - Persisted completed-run counter (ScarStorage);
+     *   a returning visitor gets a tighter follow lerp and a shorter leash
+     *   (familiarEyeBase). 0 (default) is the original first-visit eye.
+     */
+    constructor(scene: THREE.Scene, runsCompleted: number = 0) {
+        this.familiarBase = familiarEyeBase(runsCompleted);
         this.createGeometry();
 
         // Position high in the sky, facing down
@@ -257,9 +297,16 @@ export class SkyEye {
         const eyePos = this.group.position;
 
         // Awareness response (flow-audit break #4): a bright flower attracts the
-        // eye; being gazed at provokes a stare-back. Neutral inputs (0, 0)
-        // reproduce the original base constants exactly.
-        const aw = computeEyeAwareness(flowerIntensity, gazeIntensity, this._awareness);
+        // eye; being gazed at provokes a stare-back. Neutral inputs (0, 0) on a
+        // first visit reproduce the original base constants exactly; returning
+        // visitors start from the familiarity-tightened bases (F2).
+        const aw = computeEyeAwareness(
+            flowerIntensity,
+            gazeIntensity,
+            this._awareness,
+            this.familiarBase.followLerp,
+            this.familiarBase.maxLag,
+        );
 
         // Room dominance (flow-audit enhancement #11): in POLARIZED the ring
         // group swells, extra rings unfold, and the eye descends — the

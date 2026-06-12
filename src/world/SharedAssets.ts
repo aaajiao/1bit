@@ -2,6 +2,9 @@ import type { SharedAssets as ISharedAssets } from '../types';
 // 1-bit Chimera Void - Shared Assets (Geometries & Materials)
 import * as THREE from 'three';
 
+// Singleton instance (declared before the class: dispose() clears it).
+let sharedAssetsInstance: SharedAssets | null = null;
+
 /**
  * Shared assets container - initialized once, reused everywhere
  */
@@ -125,11 +128,15 @@ export class SharedAssets implements ISharedAssets {
                 (value as { dispose: () => void }).dispose();
             }
         });
+
+        // A disposed instance must never be served again: clear the module
+        // singleton so the next getSharedAssets() rebuilds fresh assets
+        // instead of handing out already-freed GPU resources.
+        if (sharedAssetsInstance === this) {
+            sharedAssetsInstance = null;
+        }
     }
 }
-
-// Singleton instance
-let sharedAssetsInstance: SharedAssets | null = null;
 
 /**
  * Get or create shared assets instance

@@ -2,6 +2,7 @@ import type { StateSnapshot } from '../src/stats/StateSnapshotGenerator';
 import { describe, expect, it } from 'vitest';
 import { SNAPSHOT_STORAGE } from '../src/config';
 import {
+    clearLastSnapshot,
     decodeSnapshot,
     encodeSnapshot,
     loadLastSnapshot,
@@ -75,6 +76,30 @@ describe('snapshot wire format (flow-audit enhancement #8)', () => {
         expect(decodeSnapshot(JSON.stringify(missingField))).toBeNull();
     });
 
+    it('round-trips the optional run duration (F6 share-card footer)', () => {
+        const snapshot: StateSnapshot = { ...makeSnapshot(), durationSeconds: 392.5 };
+        const decoded = decodeSnapshot(encodeSnapshot(snapshot));
+        expect(decoded).toEqual(snapshot);
+        expect(decoded!.durationSeconds).toBe(392.5);
+    });
+
+    it('tolerates pre-F6 payloads without a duration', () => {
+        const base = JSON.parse(encodeSnapshot(makeSnapshot())) as Record<string, any>;
+        expect(base).not.toHaveProperty('durationSeconds');
+        const decoded = decodeSnapshot(JSON.stringify(base));
+        expect(decoded).not.toBeNull();
+        expect(decoded!.durationSeconds).toBeUndefined();
+    });
+
+    it('drops garbage durations without rejecting the snapshot', () => {
+        const base = JSON.parse(encodeSnapshot(makeSnapshot())) as Record<string, any>;
+        for (const garbage of ['long', -3, Number.NaN, null]) {
+            const decoded = decodeSnapshot(JSON.stringify({ ...base, durationSeconds: garbage }));
+            expect(decoded).not.toBeNull();
+            expect(decoded!.durationSeconds).toBeUndefined();
+        }
+    });
+
     it('rejects non-string text/textKey and non-string-array tags', () => {
         const base = JSON.parse(encodeSnapshot(makeSnapshot())) as Record<string, any>;
         expect(decodeSnapshot(JSON.stringify({ ...base, text: 7 }))).toBeNull();
@@ -102,6 +127,23 @@ describe('snapshot persistence (save/load)', () => {
     it('is a silent no-op without storage (privacy mode / node)', () => {
         expect(() => saveLastSnapshot(makeSnapshot(), null)).not.toThrow();
         expect(loadLastSnapshot(null)).toBeNull();
+        expect(() => clearLastSnapshot(null)).not.toThrow();
+    });
+
+    it('clearLastSnapshot removes the persisted key (the forgetting, F2 #4)', () => {
+        const storage = makeFakeStorage();
+        saveLastSnapshot(makeSnapshot(), storage);
+        clearLastSnapshot(storage);
+        expect(storage.getItem(SNAPSHOT_STORAGE.KEY)).toBeNull();
+        expect(loadLastSnapshot(storage)).toBeNull();
+    });
+
+    it('clearLastSnapshot swallows removeItem failures', () => {
+        const storage = makeFakeStorage();
+        storage.removeItem = () => {
+            throw new Error('SecurityError');
+        };
+        expect(() => clearLastSnapshot(storage)).not.toThrow();
     });
 
     it('swallows setItem failures (quota exceeded)', () => {

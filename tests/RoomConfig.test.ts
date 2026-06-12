@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { PERFORMANCE, WORLD } from '../src/config';
 import {
+    chunkToCluster,
     DEFAULT_ROOM_FOG,
+    getRoomTypeForCluster,
     getRoomTypeFromPosition,
     IN_BETWEEN_EDGE_GHOSTS,
     inBetweenEdgeFactor,
@@ -47,12 +49,15 @@ describe('roomConfig', () => {
             expect(seen.has(RoomType.POLARIZED)).toBe(true);
         });
 
-        it('should map the hash buckets to the documented thresholds', () => {
-            // Re-derive the same hash the implementation uses and assert the
-            // bucket boundaries (<0.25, <0.5, <0.75, else) hold for every cell.
+        it('should map the hash buckets (drawn per CLUSTER) to the documented thresholds', () => {
+            // Re-derive the same hash the implementation uses — over CLUSTER
+            // coordinates — and assert the bucket boundaries (<0.25, <0.5,
+            // <0.75, else) hold for every chunk via its cluster.
             for (let cx = -15; cx <= 15; cx++) {
                 for (let cz = -15; cz <= 15; cz++) {
-                    const hash = Math.abs(Math.sin(cx * 12.9898 + cz * 78.233) * 43758.5453) % 1;
+                    const clusterX = chunkToCluster(cx);
+                    const clusterZ = chunkToCluster(cz);
+                    const hash = Math.abs(Math.sin(clusterX * 12.9898 + clusterZ * 78.233) * 43758.5453) % 1;
                     const expected
                         = hash < 0.25
                             ? RoomType.INFO_OVERFLOW
@@ -62,6 +67,20 @@ describe('roomConfig', () => {
                                     ? RoomType.IN_BETWEEN
                                     : RoomType.POLARIZED;
                     expect(getRoomTypeFromPosition(cx, cz)).toBe(expected);
+                }
+            }
+        });
+
+        it('should give all chunks of one cluster the same room (2x2 grouping)', () => {
+            const cc = WORLD.CLUSTER_CHUNKS;
+            for (const k of [-4, -1, 0, 3]) {
+                for (const m of [-2, 0, 5]) {
+                    const expected = getRoomTypeForCluster(k, m);
+                    for (let ix = 0; ix < cc; ix++) {
+                        for (let iz = 0; iz < cc; iz++) {
+                            expect(getRoomTypeFromPosition(k * cc + ix, m * cc + iz)).toBe(expected);
+                        }
+                    }
                 }
             }
         });
@@ -198,26 +217,48 @@ describe('roomConfig', () => {
         });
     });
 
-    // Flow-audit enhancement #14 — boundary-bound z-fight densification.
+    // Flow-audit enhancement #14 — boundary-bound z-fight densification,
+    // measured against the CLUSTER footprint edge (rooms are 2x2 chunks).
     describe('inBetweenEdgeFactor', () => {
-        const HALF = WORLD.CHUNK_SIZE / 2; // 40
+        const S = WORLD.CHUNK_SIZE; // 80
+        const HALF_CLUSTER = (S * WORLD.CLUSTER_CHUNKS) / 2; // 80
+        // Chunk (0,0) is the low-x/low-z chunk of cluster (0,0): its center
+        // sits at cluster-local (-S/2, -S/2), so its OUTER cluster edges are
+        // the -x/-z sides and its +x/+z sides are inner chunk seams.
+        const innerOffset = S / 2; // chunk (0,0) center offset from cluster center
 
-        it('returns 0 deep in the chunk interior (original ghost behavior)', () => {
-            expect(inBetweenEdgeFactor(0, 0)).toBe(0);
-            expect(inBetweenEdgeFactor(10, -10)).toBe(0);
+        it('returns 0 deep in the cluster interior (original ghost behavior)', () => {
+            expect(inBetweenEdgeFactor(0, 0, 0, 0)).toBe(0);
+            expect(inBetweenEdgeFactor(10, -10, 0, 0)).toBe(0);
         });
 
-        it('saturates to 1 within INNER_DISTANCE of the footprint edge', () => {
-            const atInner = HALF - IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE;
-            expect(inBetweenEdgeFactor(atInner, 0)).toBe(1);
-            expect(inBetweenEdgeFactor(0, -(atInner + 1))).toBe(1);
+        it('stays 0 at the INNER chunk seams of a cluster (not a room boundary)', () => {
+            // Chunk (0,0)'s +x edge (chunk-local +30, the closest a building
+            // gets) faces chunk (1,0) of the SAME cluster: calm by design.
+            expect(inBetweenEdgeFactor(30, 0, 0, 0)).toBe(0);
+            expect(inBetweenEdgeFactor(0, 30, 0, 0)).toBe(0);
+            // Mirror case: chunk (1,1)'s -x/-z edges face its own cluster.
+            expect(inBetweenEdgeFactor(-30, 0, 1, 1)).toBe(0);
+            expect(inBetweenEdgeFactor(0, -30, 1, 1)).toBe(0);
         });
 
-        it('ramps monotonically between OUTER_DISTANCE and INNER_DISTANCE', () => {
+        it('saturates to 1 within INNER_DISTANCE of the cluster footprint edge', () => {
+            // Cluster-local saturation line: HALF_CLUSTER - INNER, on the -x
+            // side of chunk (0,0): chunk-local -(HALF_CLUSTER - INNER) + innerOffset.
+            const atInner = -(HALF_CLUSTER - IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE) + innerOffset;
+            expect(inBetweenEdgeFactor(atInner, 0, 0, 0)).toBe(1);
+            expect(inBetweenEdgeFactor(0, atInner - 1, 0, 0)).toBe(1);
+            // And on the +x side of the high chunk (1,0) of the same cluster.
+            expect(inBetweenEdgeFactor(-atInner, 0, 1, 0)).toBe(1);
+        });
+
+        it('ramps monotonically between OUTER_DISTANCE and INNER_DISTANCE of the cluster edge', () => {
             const { INNER_DISTANCE, OUTER_DISTANCE } = IN_BETWEEN_EDGE_GHOSTS;
             let prev = -1;
             for (let dist = OUTER_DISTANCE; dist >= INNER_DISTANCE; dist -= 1) {
-                const f = inBetweenEdgeFactor(HALF - dist, 0);
+                // Chunk-local x of a point `dist` from the -x cluster edge.
+                const localX = -(HALF_CLUSTER - dist) + innerOffset;
+                const f = inBetweenEdgeFactor(localX, 0, 0, 0);
                 expect(f).toBeGreaterThanOrEqual(prev);
                 expect(f).toBeGreaterThanOrEqual(0);
                 expect(f).toBeLessThanOrEqual(1);
@@ -226,19 +267,30 @@ describe('roomConfig', () => {
             expect(prev).toBe(1);
         });
 
-        it('uses the Chebyshev metric (either axis near the edge densifies)', () => {
-            const nearEdge = HALF - IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE;
-            expect(inBetweenEdgeFactor(nearEdge, 0)).toBe(inBetweenEdgeFactor(0, nearEdge));
+        it('uses the Chebyshev metric (either axis near the cluster edge densifies)', () => {
+            const nearEdge = -(HALF_CLUSTER - IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE) + innerOffset;
+            expect(inBetweenEdgeFactor(nearEdge, 0, 0, 0)).toBe(inBetweenEdgeFactor(0, nearEdge, 0, 0));
+        });
+
+        it('is continuous in negative-coordinate clusters too', () => {
+            // Chunk (-2,-2) is the low chunk of cluster (-1,-1); chunk (-1,-1)
+            // is its high chunk. Same geometry as the positive case.
+            const atInner = -(HALF_CLUSTER - IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE) + innerOffset;
+            expect(inBetweenEdgeFactor(atInner, 0, -2, -2)).toBe(1);
+            expect(inBetweenEdgeFactor(-atInner, 0, -1, -2)).toBe(1);
+            expect(inBetweenEdgeFactor(30, 0, -2, -2)).toBe(0); // inner seam calm
         });
 
         it('the band is reachable by actual building placements (|local| <= 30)', () => {
-            // Building positions are bounded to ±(CHUNK_SIZE-20)/2 = ±30; the
-            // saturation point must lie inside that bound or the band is dead.
-            const layoutHalf = (WORLD.CHUNK_SIZE - 20) / 2;
-            const saturationPos = HALF - IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE;
-            expect(saturationPos).toBeLessThanOrEqual(layoutHalf);
+            // Building positions are bounded to ±(CHUNK_SIZE-20)/2 = ±30 of
+            // their CHUNK; in the cluster's outer band the closest approach to
+            // the cluster edge is HALF_CLUSTER - innerOffset - 30 = 10m, so the
+            // saturation line must lie inside that bound or the band is dead.
+            const layoutHalf = (S - 20) / 2;
+            const minReachableEdgeDist = HALF_CLUSTER - innerOffset - layoutHalf;
+            expect(minReachableEdgeDist).toBeLessThanOrEqual(IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE);
             // And the interior must still contain a zero-factor region.
-            expect(inBetweenEdgeFactor(0, 0)).toBe(0);
+            expect(inBetweenEdgeFactor(0, 0, 0, 0)).toBe(0);
         });
     });
 });

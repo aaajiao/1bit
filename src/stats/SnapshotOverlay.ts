@@ -1,8 +1,9 @@
 // 1-bit Chimera Void - Snapshot Overlay
 // DOM-based overlay for displaying state snapshots at day/night transitions
 
-import type { StateSnapshot } from './StateSnapshotGenerator';
+import type { PatternUniforms, StateSnapshot } from './StateSnapshotGenerator';
 import { SNAPSHOT_OVERLAY_CONFIG } from '../config';
+import { isPatternWhite } from './SnapshotPattern';
 
 /**
  * Overlay display configuration. All durations are SECONDS of play time:
@@ -38,6 +39,12 @@ export class SnapshotOverlay {
     private textEl: HTMLDivElement;
     private config: OverlayConfig;
     private isVisible: boolean = false;
+
+    // F6 share card: low-key corner entry shown while a snapshot is displayed
+    // (only once a save handler is wired — no handler, no entry).
+    private readonly saveEl: HTMLButtonElement;
+    private readonly boundSave: (e: Event) => void;
+    private onSave: ((snapshot: StateSnapshot) => void) | null = null;
 
     // Play-time display clock (advanced by update(delta); frozen while paused).
     private displayTime: number = 0;
@@ -114,6 +121,42 @@ export class SnapshotOverlay {
         `;
         this.container.appendChild(this.textEl);
 
+        // F6 share card: "keep this" in the corner. The container stays
+        // pointer-events: none (the ritual is not a dialog); only this entry
+        // re-enables events, and its click never bubbles to the document
+        // enter-game/pointer-lock handlers — saving is not an intent to
+        // resume play. Touch taps land here directly; desktop reaches it
+        // after ESC (the pause gate freezes the display clock, so the
+        // overlay waits instead of expiring).
+        this.saveEl = document.createElement('button');
+        this.saveEl.id = 'snapshot-save';
+        this.saveEl.textContent = '⤓ 留存';
+        this.saveEl.style.cssText = `
+            position: absolute;
+            right: 20px;
+            bottom: 20px;
+            z-index: 2;
+            pointer-events: auto;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            color: #ffffff;
+            background: rgba(0, 0, 0, 0.6);
+            border: none;
+            text-decoration: underline;
+            opacity: 0.55;
+            padding: 10px 12px;
+            display: none;
+        `;
+        this.boundSave = (e: Event) => {
+            e.stopPropagation();
+            if (this.activeSnapshot && this.onSave) {
+                this.onSave(this.activeSnapshot);
+            }
+        };
+        this.saveEl.addEventListener('click', this.boundSave);
+        this.container.appendChild(this.saveEl);
+
         // Get 2D context
         const ctx = this.canvas.getContext('2d');
         if (!ctx) {
@@ -149,8 +192,24 @@ export class SnapshotOverlay {
         this.container.style.opacity = '1';
         this.textEl.textContent = snapshot.text;
         this.textEl.style.opacity = '0';
+        this.syncSaveEntry();
 
         console.log('[SnapshotOverlay] Showing snapshot:', snapshot.tags.join(', '));
+    }
+
+    /**
+     * Wire the share-card export (F6). The corner entry only appears while a
+     * snapshot is actually being displayed AND a handler is wired.
+     */
+    setOnSave(handler: (snapshot: StateSnapshot) => void): void {
+        this.onSave = handler;
+        this.syncSaveEntry();
+    }
+
+    /** Show/hide the corner save entry from the current display state. */
+    private syncSaveEntry(): void {
+        const available = this.isVisible && this.activeSnapshot !== null && this.onSave !== null;
+        this.saveEl.style.display = available ? 'block' : 'none';
     }
 
     /**
@@ -177,6 +236,14 @@ export class SnapshotOverlay {
      */
     seedLastSnapshot(snapshot: StateSnapshot): void {
         this.lastSnapshot = snapshot;
+    }
+
+    /**
+     * Drop the cached last snapshot (the forgetting, F2 #4): the replay and
+     * save-card entries lose their source and hide on the next sync.
+     */
+    clearLastSnapshot(): void {
+        this.lastSnapshot = null;
     }
 
     /**
@@ -218,6 +285,7 @@ export class SnapshotOverlay {
     hide(): void {
         this.isVisible = false;
         this.activeSnapshot = null;
+        this.syncSaveEntry();
 
         // Fade out
         this.container.style.opacity = '0';
@@ -225,14 +293,10 @@ export class SnapshotOverlay {
     }
 
     /**
-     * Render the 1-bit pattern on the fixed-size canvas
+     * Render the 1-bit pattern on the fixed-size canvas. The pattern math
+     * lives in SnapshotPattern (shared with the F6 share card).
      */
-    private renderPattern(pattern: {
-        uPatternMode: number;
-        uDensity: number;
-        uFrequency: number;
-        uPhase: number;
-    }): void {
+    private renderPattern(pattern: PatternUniforms): void {
         const { width, height } = this.canvas;
         const imageData = this.imageData;
         const data = imageData.data;
@@ -247,27 +311,8 @@ export class SnapshotOverlay {
                 const u = sx / scaledWidth;
                 const v = sy / scaledHeight;
 
-                let value = 0;
-
-                switch (pattern.uPatternMode) {
-                    case 0: // Noise
-                        value = this.noise(u * pattern.uFrequency, v * pattern.uFrequency + this.patternTime * 0.1);
-                        break;
-                    case 1: // Stripes
-                        value = Math.sin((u + v * Math.tan(pattern.uPhase)) * pattern.uFrequency) * 0.5 + 0.5;
-                        break;
-                    case 2: // Checkerboard
-                        value = (Math.floor(u * pattern.uFrequency) + Math.floor(v * pattern.uFrequency)) % 2;
-                        break;
-                    case 3: // Radial
-                        const dx = u - 0.5;
-                        const dy = v - 0.5;
-                        value = Math.sin(Math.sqrt(dx * dx + dy * dy) * pattern.uFrequency + pattern.uPhase + this.patternTime * 0.5) * 0.5 + 0.5;
-                        break;
-                }
-
-                // Apply threshold for 1-bit output
-                const isWhite = value > (1.0 - pattern.uDensity);
+                // Evaluate + threshold for 1-bit output (shared math).
+                const isWhite = isPatternWhite(pattern, u, v, this.patternTime);
                 const color = isWhite ? 255 : 0;
                 const alpha = 180; // Semi-transparent
 
@@ -290,40 +335,6 @@ export class SnapshotOverlay {
     }
 
     /**
-     * Simple 2D noise function
-     */
-    private noise(x: number, y: number): number {
-        const ix = Math.floor(x);
-        const iy = Math.floor(y);
-        const fx = x - ix;
-        const fy = y - iy;
-
-        // Smoothstep
-        const sx = fx * fx * (3 - 2 * fx);
-        const sy = fy * fy * (3 - 2 * fy);
-
-        // Hash corners
-        const a = this.hash(ix, iy);
-        const b = this.hash(ix + 1, iy);
-        const c = this.hash(ix, iy + 1);
-        const d = this.hash(ix + 1, iy + 1);
-
-        // Bilinear interpolation
-        return this.mix(this.mix(a, b, sx), this.mix(c, d, sx), sy);
-    }
-
-    private hash(x: number, y: number): number {
-        // Proper fract() (matching the GLSL twin); JS `% 1` is signed and biases
-        // half the grid negative, darkening the noise pattern.
-        const h = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-        return h - Math.floor(h);
-    }
-
-    private mix(a: number, b: number, t: number): number {
-        return a + (b - a) * t;
-    }
-
-    /**
      * Check if overlay is currently visible
      */
     isShowing(): boolean {
@@ -335,6 +346,7 @@ export class SnapshotOverlay {
      */
     dispose(): void {
         this.hide();
+        this.saveEl.removeEventListener('click', this.boundSave);
         if (this.container.parentNode) {
             this.container.parentNode.removeChild(this.container);
         }

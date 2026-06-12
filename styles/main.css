@@ -83,6 +83,35 @@ body {
     text-decoration: underline;
 }
 
+/* Snapshot share-card export (F6): sits under the replay entry on the
+   start/pause panel, same low-key treatment. Its click is stopPropagation'd
+   in StatsSunsetUpdater — saving is not an intent to enter the game. */
+#save-snapshot-card {
+    pointer-events: auto;
+    cursor: pointer;
+    font-size: 12px;
+    opacity: 0.65;
+    text-decoration: underline;
+}
+
+/* Cross-run scar reset (F2 #4): the quiet right to be forgotten. Even more
+   subdued than the replay entry — present, never advertised. Shown only
+   while the system remembers something (scars or completed runs). */
+#forget-scars {
+    pointer-events: auto;
+    cursor: pointer;
+    font-size: 11px;
+    opacity: 0.35;
+    text-decoration: underline;
+}
+
+/* Two-step in-screen confirm (the forgetting never leaves the 1-bit screen
+   language): the armed entry reads "再点一次以遗忘" and lifts to the replay
+   entries' emphasis until the second click — or the window lapses. */
+#forget-scars.armed {
+    opacity: 0.65;
+}
+
 /* Touch controls (touch fallback mode only): shared 1-bit button look for
    the flower +/- pair, the hold-to-resist entry, and the pause entry
    (flow-audit C3: override + pause were unreachable on pure touch). */

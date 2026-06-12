@@ -21,6 +21,13 @@ export interface StateSnapshot {
     pattern: PatternUniforms;
     text: string;
     textKey: string; // For localization lookup
+    /**
+     * Play-time seconds of the run this snapshot settled (F6 share-card
+     * footer). Stamped by StatsSunsetUpdater (the generator only sees
+     * normalized metrics); optional — snapshots persisted before F6 and
+     * generator outputs carry none.
+     */
+    durationSeconds?: number;
 }
 
 /**

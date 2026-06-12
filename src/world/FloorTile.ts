@@ -1,6 +1,7 @@
 // 1-bit Chimera Void - Floor Tile Generator
 import * as THREE from 'three';
 import { hash } from '../utils/hash';
+import { chunkToCluster } from './RoomConfig';
 
 /**
  * Deterministic pseudo-random generator seeded by chunk coords plus a
@@ -14,6 +15,31 @@ function makeSeededRandom(cx: number, cz: number): () => number {
         // Spread the counter across both hash inputs for good distribution
         return hash(cx * 17.31 + counter * 0.613, cz * 11.97 + counter * 1.193);
     };
+}
+
+/**
+ * Jagged-edge erosion depth (m) at a given WORLD z for one side of the FA
+ * rift. Seeded by the room CLUSTER (chunkToCluster — the single source of
+ * cluster conversion) and parameterized by world z, NOT by the chunk + its
+ * local z: the two z-stacked chunks of one cluster therefore evaluate the
+ * exact same function at their shared seam vertices, so the crack's jagged
+ * edges connect into one continuous line per cluster. Position-pure hash
+ * noise (no call-order-dependent RNG) keeps it deterministic per session.
+ * @param clusterX - Room-cluster x coordinate (chunkToCluster(cx)).
+ * @param clusterZ - Room-cluster z coordinate (chunkToCluster(cz)).
+ * @param worldZ - World-space z of the vertex (cz * chunkSize + localZ).
+ * @param side - 0 = left (negative-x) crack edge, 1 = right (positive-x);
+ *   keeps the two edges decorrelated (historical 123.4 phase offset).
+ */
+function crackJagOffset(clusterX: number, clusterZ: number, worldZ: number, side: number): number {
+    // Jagged noise: mix of sine waves + deterministic positional jitter,
+    // magnitudes unchanged from the historical per-chunk version.
+    const wave = Math.sin(worldZ * 0.5 + side * 123.4) * 0.8 + Math.sin(worldZ * 2.1) * 0.3;
+    const jitter = (hash(
+        clusterX * 17.31 + worldZ * 0.613,
+        clusterZ * 11.97 + worldZ * 1.193 + side * 5.77,
+    ) - 0.5) * 0.4;
+    return Math.abs(wave + jitter) * 0.8;
 }
 
 /**
@@ -64,13 +90,30 @@ export function createFloorMesh(chunkSize: number, material: THREE.Material): TH
     return floor;
 }
 
+// Abyss-fog particle count for a full (chunk-interior) crack. When the crack
+// line sits on a chunk footprint edge (the cluster-shared rift: both adjacent
+// chunks emit fog into the SAME crack volume), each chunk spawns half so the
+// combined density matches a single interior crack.
+const ABYSS_FOG_PARTICLES = 400;
+
 /**
- * Creates a floor with a central crack/rift for FORCED_ALIGNMENT rooms
- * The crack splits the floor into two halves with pure black abyss in between
- * Now features jagged texturing and geometry
+ * Creates a floor with a crack/rift for FORCED_ALIGNMENT rooms.
+ * The crack splits the floor into two parts with pure black abyss in between.
+ * Features jagged texturing and geometry.
+ *
+ * The crack line may sit anywhere inside the chunk, including ON a footprint
+ * edge (crackLocalX = ±chunkSize/2): rooms are 2x2-chunk clusters and the one
+ * shared rift runs along the cluster center, which is the seam between the
+ * cluster's two chunk columns — so each FA chunk carries the half of the
+ * crack that overlaps its own floor, and a side with no remaining floor strip
+ * is skipped entirely.
+ *
  * @param chunkSize - Size of the chunk
  * @param material - Floor material
- * @param crackWidth - Base width of the central crack (default 4 meters)
+ * @param crackWidth - Base width of the crack (default 4 meters)
+ * @param cx - Chunk X coordinate (cluster jagged-edge seed + fog seed)
+ * @param cz - Chunk Z coordinate (cluster jagged-edge seed + world-z base + fog seed)
+ * @param crackLocalX - Chunk-local x of the crack center line (default 0)
  */
 export function createCrackedFloorMesh(
     chunkSize: number,
@@ -78,85 +121,109 @@ export function createCrackedFloorMesh(
     crackWidth: number = 4,
     cx: number = 0,
     cz: number = 0,
+    crackLocalX: number = 0,
 ): { group: THREE.Group; fog?: THREE.InstancedMesh; disposables: THREE.Material[] } {
     const group = new THREE.Group();
     const disposables: THREE.Material[] = [];
 
-    // Deterministic per-chunk RNG so re-entering a chunk looks identical
+    // Deterministic per-chunk RNG (abyss fog only — the jagged edges use the
+    // cluster-seeded crackJagOffset) so re-entering a chunk looks identical.
     const rand = makeSeededRandom(cx, cz);
 
-    // Calculate half-floor dimensions
-    const halfFloorWidth = (chunkSize - crackWidth) / 2;
+    // Jagged-edge seed: the room CLUSTER, not the chunk, so the two z-stacked
+    // FA chunks of one cluster draw a single continuous crack line.
+    const clusterX = chunkToCluster(cx);
+    const clusterZ = chunkToCluster(cz);
+
+    // Floor strip widths on each side of the crack, clamped to the chunk
+    // footprint (a crack on the footprint edge leaves one side empty).
+    const halfChunk = chunkSize / 2;
     const halfCrackWidth = crackWidth / 2;
+    const leftFloorWidth = Math.max(0, crackLocalX - halfCrackWidth + halfChunk);
+    const rightFloorWidth = Math.max(0, halfChunk - (crackLocalX + halfCrackWidth));
 
     // Geometry with segments for vertex manipulation (jagged edge)
     const segmentsZ = 32; // More segments along Z for jagged detail
     const segmentsX = 4;
 
-    // --- Left Floor Half (Negative X) ---
-    const leftGeo = new THREE.PlaneGeometry(halfFloorWidth, chunkSize, segmentsX, segmentsZ);
-    const leftPos = leftGeo.attributes.position;
+    // --- Left Floor Part (negative-x side of the crack) ---
+    if (leftFloorWidth > 0) {
+        const leftGeo = new THREE.PlaneGeometry(leftFloorWidth, chunkSize, segmentsX, segmentsZ);
+        const leftPos = leftGeo.attributes.position;
 
-    for (let i = 0; i < leftPos.count; i++) {
-        const x = leftPos.getX(i);
-        const z = -leftPos.getY(i); // Plane is created in XY, mapped to XZ. Y in geo is -Z in world
+        for (let i = 0; i < leftPos.count; i++) {
+            const x = leftPos.getX(i);
+            const z = -leftPos.getY(i); // Plane is created in XY, mapped to XZ. Y in geo is -Z in world
 
-        // Right edge of left floor is at x = halfFloorWidth / 2
-        // We want to perturb vertices near this edge
-        if (x > halfFloorWidth / 2 - 0.1) {
-            // Jagged noise: mix of sine waves
-            const noise = Math.sin(z * 0.5) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
-            // Subtract from X (move left, widening gap randomly) or add (narrowing)
-            // But we want to keep a minimum gap, so let's mostly erode
-            leftPos.setX(i, x - Math.abs(noise) * 0.8);
+            // Right edge of left floor is at x = leftFloorWidth / 2
+            // We want to perturb vertices near this edge
+            if (x > leftFloorWidth / 2 - 0.1) {
+                // World-z-parameterized, cluster-seeded jag: continuous across
+                // the z seam between the cluster's two chunks. Mostly erode
+                // (move left, widening the gap) to keep a minimum gap.
+                leftPos.setX(i, x - crackJagOffset(clusterX, clusterZ, cz * chunkSize + z, 0));
+            }
         }
+        leftPos.needsUpdate = true;
+        leftGeo.computeVertexNormals();
+
+        const leftFloor = new THREE.Mesh(leftGeo, material);
+        leftFloor.rotation.x = -Math.PI / 2;
+        leftFloor.position.x = -halfChunk + leftFloorWidth / 2;
+        leftFloor.receiveShadow = true;
+        group.add(leftFloor);
     }
-    leftPos.needsUpdate = true;
-    leftGeo.computeVertexNormals();
 
-    const leftFloor = new THREE.Mesh(leftGeo, material);
-    leftFloor.rotation.x = -Math.PI / 2;
-    leftFloor.position.x = -(halfCrackWidth + halfFloorWidth / 2);
-    leftFloor.receiveShadow = true;
-    group.add(leftFloor);
+    // --- Right Floor Part (positive-x side of the crack) ---
+    if (rightFloorWidth > 0) {
+        const rightGeo = new THREE.PlaneGeometry(rightFloorWidth, chunkSize, segmentsX, segmentsZ);
+        const rightPos = rightGeo.attributes.position;
 
-    // --- Right Floor Half (Positive X) ---
-    const rightGeo = new THREE.PlaneGeometry(halfFloorWidth, chunkSize, segmentsX, segmentsZ);
-    const rightPos = rightGeo.attributes.position;
+        for (let i = 0; i < rightPos.count; i++) {
+            const x = rightPos.getX(i);
+            const z = -rightPos.getY(i);
 
-    for (let i = 0; i < rightPos.count; i++) {
-        const x = rightPos.getX(i);
-        const z = -rightPos.getY(i);
-
-        // Left edge of right floor is at x = -halfFloorWidth / 2
-        if (x < -halfFloorWidth / 2 + 0.1) {
-            const noise = Math.sin(z * 0.5 + 123.4) * 0.8 + Math.sin(z * 2.1) * 0.3 + (rand() - 0.5) * 0.4;
-            // Add to X (move right, widening gap)
-            rightPos.setX(i, x + Math.abs(noise) * 0.8);
+            // Left edge of right floor is at x = -rightFloorWidth / 2
+            if (x < -rightFloorWidth / 2 + 0.1) {
+                // Add to X (move right, widening gap); side 1 = the crack's
+                // right edge, decorrelated from the left by the 123.4 phase.
+                rightPos.setX(i, x + crackJagOffset(clusterX, clusterZ, cz * chunkSize + z, 1));
+            }
         }
+        rightPos.needsUpdate = true;
+        rightGeo.computeVertexNormals();
+
+        const rightFloor = new THREE.Mesh(rightGeo, material);
+        rightFloor.rotation.x = -Math.PI / 2;
+        rightFloor.position.x = halfChunk - rightFloorWidth / 2;
+        rightFloor.receiveShadow = true;
+        group.add(rightFloor);
     }
-    rightPos.needsUpdate = true;
-    rightGeo.computeVertexNormals();
 
-    const rightFloor = new THREE.Mesh(rightGeo, material);
-    rightFloor.rotation.x = -Math.PI / 2;
-    rightFloor.position.x = halfCrackWidth + halfFloorWidth / 2;
-    rightFloor.receiveShadow = true;
-    group.add(rightFloor);
-
-    // Abyss plane (pure black) - per-chunk material, must be disposed explicitly
+    // Abyss plane (pure black) - per-chunk material, must be disposed explicitly.
+    // Centered under the crack and clipped to the chunk footprint; the
+    // neighboring chunk of a shared edge crack covers the other half.
+    const abyssHalfWidth = halfCrackWidth + 3; // historical crackWidth + 6 total
+    const abyssMinX = Math.max(-halfChunk, crackLocalX - abyssHalfWidth);
+    const abyssMaxX = Math.min(halfChunk, crackLocalX + abyssHalfWidth);
     const abyssMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
     disposables.push(abyssMaterial);
     const abyssFloor = new THREE.Mesh(
-        new THREE.PlaneGeometry(crackWidth + 6, chunkSize),
+        new THREE.PlaneGeometry(abyssMaxX - abyssMinX, chunkSize),
         abyssMaterial,
     );
     abyssFloor.rotation.x = -Math.PI / 2;
+    abyssFloor.position.x = (abyssMinX + abyssMaxX) / 2;
     abyssFloor.position.y = -8; // Deep abyss
     group.add(abyssFloor);
 
     // --- Abyss Fog ---
-    const fog = createAbyssFog(chunkSize, crackWidth, rand);
+    // Edge cracks are shared with the x-neighbor chunk (same crack volume), so
+    // each contributes half the particles to keep the combined density stable.
+    const isSharedEdgeCrack = leftFloorWidth <= 0 || rightFloorWidth <= 0;
+    const fogParticles = isSharedEdgeCrack ? ABYSS_FOG_PARTICLES / 2 : ABYSS_FOG_PARTICLES;
+    const fog = createAbyssFog(chunkSize, crackWidth, rand, fogParticles);
+    fog.position.x = crackLocalX; // rise out of the crack, wherever it sits
     fog.position.y = -5; // Start fog deep down
     group.add(fog);
     // Fog material is per-chunk; the InstancedMesh GPU buffer is freed by the
@@ -174,8 +241,8 @@ export function createAbyssFog(
     chunkSize: number,
     crackWidth: number,
     rand: () => number = Math.random,
+    particleCount: number = ABYSS_FOG_PARTICLES,
 ): THREE.InstancedMesh {
-    const particleCount = 400;
     const geometry = new THREE.PlaneGeometry(1.5, 1.5);
     const material = new THREE.MeshBasicMaterial({
         color: 0x333333, // Dark grey fog
