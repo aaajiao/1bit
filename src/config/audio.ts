@@ -292,16 +292,78 @@ export const POLARIZED_BEAT_CONFIG = {
 };
 
 /**
- * Weather audio configuration
+ * Weather audio configuration (legacy oscillator/note tables).
+ * Presence-layer tunables (gain, onset swell, per-type flavours) live in
+ * WEATHER_AUDIO below.
  */
 export const WEATHER_AUDIO_CONFIG = {
     /** Static drone frequency */
     staticFrequency: 50,
     /** Rain note frequencies (pentatonic scale) */
     rainNotes: [1200, 900, 800, 600, 400, 300],
-    /** Rain note interval (ms) */
-    rainInterval: 500,
     /** Glitch frequency range */
     glitchMinFreq: 2000,
     glitchMaxFreq: 6000,
+};
+
+/**
+ * Weather presence layer (weather-presence): loudness, the onset swell that
+ * broadcasts "weather has started", and the per-type flavours that bind each
+ * weather to its room identity (RAIN -> INFO_OVERFLOW data downpour,
+ * STATIC -> FORCED_ALIGNMENT scan-storm, GLITCH -> POLARIZED rupture).
+ */
+export const WEATHER_AUDIO = {
+    /** Weather layer gain at full intensity (was a hardcoded 0.15). */
+    baseGain: 0.3,
+    /**
+     * Gain multiplier at onset = 1: the layer opens at
+     * intensity * baseGain * onsetSwellMult while the event's broadcast
+     * window (WeatherState.weatherOnset, 1 -> 0) plays out, then settles.
+     */
+    onsetSwellMult: 1.8,
+    /** setTargetAtTime time constant (s) for weather-layer gain moves. */
+    gainSmoothing: 0.1,
+
+    // ---- RAIN flavour (INFO_OVERFLOW's signature: data downpour) ----
+    /** Rain tick interval (ms) at intensity 0 (sparse) and intensity 1 (dense). */
+    rainIntervalMaxMs: 500,
+    rainIntervalMinMs: 140,
+    /**
+     * High hiss wash riding the rain: bandpass-filtered looping noise whose
+     * sub-gain scales with intensity INSIDE the intensity-scaled layer
+     * (quadratic overall), so a strong storm audibly turns into a downpour.
+     */
+    rainHissFreq: 5000,
+    rainHissQ: 0.7,
+    rainHissMaxGain: 0.5,
+
+    // ---- STATIC flavour (FORCED_ALIGNMENT's signature: scan-storm) ----
+    /**
+     * Slow amplitude-modulation LFO on the whole static bed: each cycle reads
+     * as a scan band sweeping past. Rate is randomized per event in [min, max].
+     */
+    staticTremoloRateMin: 0.5,
+    staticTremoloRateMax: 1.5,
+    /** Modulation depth: the tremolo gain swings 1 +/- depth. */
+    staticTremoloDepth: 0.5,
+
+    // ---- GLITCH flavour (POLARIZED's signature: rupture thunderstorm) ----
+    /**
+     * Sparse hard snap transients echoing the visual invert strikes: one every
+     * snapIntervalMin..Max seconds during a full-length glitch storm. The
+     * first snap waits a full interval, so sub-second transient ambient
+     * glitches only ever get the existing one-shot burst.
+     */
+    glitchSnapIntervalMinS: 2,
+    glitchSnapIntervalMaxS: 4,
+    /** Per-snap in-layer volume and decay length (s) — short and sharp. */
+    glitchSnapVolume: 0.8,
+    glitchSnapDuration: 0.07,
+    /**
+     * First-snap delay (ms) for REAL glitch events (weatherOnset > 0 at
+     * start): one early snap lands inside the onset window so POLARIZED's
+     * opening is carried by more than the legacy burst. Long enough for the
+     * smoothed layer gain (gainSmoothing) to open first.
+     */
+    glitchOnsetSnapDelayMs: 250,
 };

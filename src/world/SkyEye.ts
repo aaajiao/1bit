@@ -1,7 +1,7 @@
 import type { AudioSystemInterface } from '../types';
 // 1-bit Chimera Void - Sky Eye System
 import * as THREE from 'three';
-import { SKY_EYE_AWARENESS, SKY_EYE_DOMINANCE, SKY_EYE_FAMILIARITY } from '../config';
+import { SKY_EYE_AWARENESS, SKY_EYE_DOMINANCE, SKY_EYE_FAMILIARITY, SKY_EYE_WEATHER } from '../config';
 import { removeAndDispose } from '../utils/dispose';
 import { hash } from '../utils/hash';
 import { RoomType } from './RoomConfig';
@@ -126,6 +126,22 @@ export function computeEyeAwareness(
     out.pupilCenterPull = g;
     out.ringSpeedMult = 1 + g * (a.RING_SPEED_GAZE_MULT - 1);
     return out;
+}
+
+/**
+ * Storm blink response (weather presence): below the SKY_EYE_WEATHER
+ * intensity threshold the multiplier is exactly 1 (calm weather leaves the
+ * eye unchanged); above it, the blink rate ramps linearly up to
+ * (1 + BLINK_RATE_STORM_GAIN)x at full storm intensity — the eye is visibly
+ * agitated while weather rages. Input is clamped to [0,1]. Pure; exported
+ * for testing.
+ */
+export function stormBlinkMultiplier(weatherIntensity: number): number {
+    const w = Math.max(0, Math.min(1, weatherIntensity));
+    const { INTENSITY_THRESHOLD, BLINK_RATE_STORM_GAIN } = SKY_EYE_WEATHER;
+    if (w <= INTENSITY_THRESHOLD)
+        return 1;
+    return 1 + ((w - INTENSITY_THRESHOLD) / (1 - INTENSITY_THRESHOLD)) * BLINK_RATE_STORM_GAIN;
 }
 
 /**
@@ -285,6 +301,9 @@ export class SkyEye {
      * @param gazeIntensity - 0-1 smoothed gaze intensity (stare-back response)
      * @param currentRoomType - Player's room; in POLARIZED the eye dominates
      *   the sky (flow-audit enhancement #11), easing back out on leaving.
+     * @param weatherIntensity - 0-1 current weather intensity; above the
+     *   SKY_EYE_WEATHER threshold the eye blinks faster (storm agitation).
+     *   0 (default) reproduces the calm behavior exactly.
      */
     update(
         delta: number,
@@ -293,6 +312,7 @@ export class SkyEye {
         flowerIntensity: number = 0,
         gazeIntensity: number = 0,
         currentRoomType: RoomType | null = null,
+        weatherIntensity: number = 0,
     ): void {
         const eyePos = this.group.position;
 
@@ -356,8 +376,9 @@ export class SkyEye {
 
         // Random blinking: blinkRate is blinks/SECOND, scaled by delta so the
         // cadence is frame-rate independent (~the old 0.001/frame at 60fps when
-        // neutral); a bright flower blinks more, a direct gaze suppresses it.
-        if (!this.isBlinking && Math.random() < aw.blinkRate * delta) {
+        // neutral); a bright flower blinks more, a direct gaze suppresses it,
+        // and a raging storm overhead agitates it (stormBlinkMultiplier).
+        if (!this.isBlinking && Math.random() < aw.blinkRate * stormBlinkMultiplier(weatherIntensity) * delta) {
             this.triggerBlink(audio);
         }
 

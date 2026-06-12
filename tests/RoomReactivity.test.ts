@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { WORLD } from '../src/config';
 import {
     clusterCenterWorld,
+    DEFAULT_WEATHER_PROFILE,
     DEFAULT_WEATHER_WEIGHTS,
     faSideAxisX,
     faSideNoiseDensity,
@@ -14,6 +15,7 @@ import {
     reactiveRoomShaderConfig,
     riftLineXForWorldX,
     ROOM_CONFIGS,
+    ROOM_WEATHER_PROFILES,
     ROOM_WEATHER_WEIGHTS,
     RoomType,
 } from '../src/world/RoomConfig';
@@ -272,8 +274,116 @@ describe('rOOM_WEATHER_WEIGHTS (room-weighted weather selection table)', () => {
         expect(w.rain).toBeGreaterThan(w.glitch);
     });
 
+    it('favors STATIC in FORCED_ALIGNMENT (scan-storm is its signature weather)', () => {
+        const w = ROOM_WEATHER_WEIGHTS[RoomType.FORCED_ALIGNMENT];
+        expect(w.static).toBeGreaterThan(w.rain);
+        expect(w.static).toBeGreaterThan(w.glitch);
+    });
+
+    it('de-emphasizes STATIC in IN_BETWEEN (misregistration favors RAIN/GLITCH)', () => {
+        const w = ROOM_WEATHER_WEIGHTS[RoomType.IN_BETWEEN];
+        expect(w.rain).toBeGreaterThan(w.static);
+        expect(w.glitch).toBeGreaterThan(w.static);
+    });
+
     it('keeps the default weights at equal thirds (historical rotation odds)', () => {
         expect(DEFAULT_WEATHER_WEIGHTS.static).toBe(DEFAULT_WEATHER_WEIGHTS.rain);
         expect(DEFAULT_WEATHER_WEIGHTS.rain).toBe(DEFAULT_WEATHER_WEIGHTS.glitch);
+    });
+});
+
+describe('per-room weather flavor scalars (weather-presence pass)', () => {
+    it('defines all four scalars for every room', () => {
+        for (const room of Object.values(RoomType)) {
+            const s = ROOM_CONFIGS[room].shader;
+            expect(s.weatherRainDensity).toBeGreaterThanOrEqual(0);
+            expect(s.weatherBandStrength).toBeGreaterThanOrEqual(0);
+            expect(s.weatherBandStrength).toBeLessThanOrEqual(1);
+            expect(s.weatherMisregisterBoost).toBeGreaterThanOrEqual(0);
+            expect(s.weatherMisregisterBoost).toBeLessThanOrEqual(1);
+            expect(s.weatherInvertStrike).toBeGreaterThanOrEqual(0);
+            expect(s.weatherInvertStrike).toBeLessThanOrEqual(1);
+        }
+    });
+
+    it('gives INFO_OVERFLOW the 2.5x data downpour and nothing else', () => {
+        const s = ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader;
+        expect(s.weatherRainDensity).toBeCloseTo(2.5, 9);
+        expect(s.weatherBandStrength).toBe(0);
+        expect(s.weatherMisregisterBoost).toBe(0);
+        expect(s.weatherInvertStrike).toBe(0);
+    });
+
+    it('reserves the scan-storm band for FORCED_ALIGNMENT', () => {
+        for (const room of Object.values(RoomType)) {
+            const expected = room === RoomType.FORCED_ALIGNMENT ? 1 : 0;
+            expect(ROOM_CONFIGS[room].shader.weatherBandStrength).toBe(expected);
+        }
+    });
+
+    it('reserves the misregistered double-print rain for IN_BETWEEN', () => {
+        for (const room of Object.values(RoomType)) {
+            const expected = room === RoomType.IN_BETWEEN ? 1 : 0;
+            expect(ROOM_CONFIGS[room].shader.weatherMisregisterBoost).toBe(expected);
+        }
+    });
+
+    it('makes POLARIZED the full invert-strike room, with a faint IN_BETWEEN echo', () => {
+        expect(ROOM_CONFIGS[RoomType.POLARIZED].shader.weatherInvertStrike).toBe(1);
+        expect(ROOM_CONFIGS[RoomType.POLARIZED].shader.weatherRainDensity).toBe(0);
+        expect(ROOM_CONFIGS[RoomType.IN_BETWEEN].shader.weatherInvertStrike).toBeCloseTo(0.25, 9);
+        expect(ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader.weatherInvertStrike).toBe(0);
+        expect(ROOM_CONFIGS[RoomType.FORCED_ALIGNMENT].shader.weatherInvertStrike).toBe(0);
+    });
+
+    it('interpolates through lerpRoomShaderConfig like every other scalar', () => {
+        const from = ROOM_CONFIGS[RoomType.INFO_OVERFLOW].shader; // rain 2.5, strike 0
+        const to = ROOM_CONFIGS[RoomType.POLARIZED].shader; // rain 0, strike 1
+        const mid = lerpRoomShaderConfig(from, to, 0.5);
+        expect(mid.weatherRainDensity).toBeCloseTo(1.25, 9);
+        expect(mid.weatherInvertStrike).toBeCloseTo(0.5, 9);
+        expect(lerpRoomShaderConfig(from, to, 0).weatherRainDensity).toBeCloseTo(2.5, 9);
+        expect(lerpRoomShaderConfig(from, to, 1).weatherInvertStrike).toBeCloseTo(1, 9);
+    });
+});
+
+describe('rOOM_WEATHER_PROFILES (per-room weather lifecycle table)', () => {
+    const allProfiles = [
+        ...Object.values(RoomType).map(room => ROOM_WEATHER_PROFILES[room]),
+        DEFAULT_WEATHER_PROFILE,
+    ];
+
+    it('orders every range as [min, max] within sane bounds', () => {
+        for (const p of allProfiles) {
+            expect(p.cooldownRange[0]).toBeGreaterThan(0);
+            expect(p.cooldownRange[1]).toBeGreaterThanOrEqual(p.cooldownRange[0]);
+            expect(p.durationRange[0]).toBeGreaterThan(0);
+            expect(p.durationRange[1]).toBeGreaterThanOrEqual(p.durationRange[0]);
+            expect(p.intensityRange[0]).toBeGreaterThanOrEqual(0);
+            expect(p.intensityRange[1]).toBeGreaterThanOrEqual(p.intensityRange[0]);
+            expect(p.intensityRange[1]).toBeLessThanOrEqual(1);
+        }
+    });
+
+    it('makes POLARIZED storms rare, short and violent', () => {
+        const p = ROOM_WEATHER_PROFILES[RoomType.POLARIZED];
+        expect(p.durationRange).toEqual([8, 16]);
+        expect(p.intensityRange[0]).toBeGreaterThanOrEqual(0.9);
+        // Longer minimum calm than every other room.
+        for (const room of Object.values(RoomType)) {
+            if (room === RoomType.POLARIZED)
+                continue;
+            expect(p.cooldownRange[0]).toBeGreaterThan(ROOM_WEATHER_PROFILES[room].cooldownRange[0]);
+        }
+    });
+
+    it('makes INFO_OVERFLOW downpours the most frequent', () => {
+        const p = ROOM_WEATHER_PROFILES[RoomType.INFO_OVERFLOW];
+        for (const room of Object.values(RoomType)) {
+            if (room === RoomType.INFO_OVERFLOW)
+                continue;
+            expect(p.cooldownRange[0]).toBeLessThanOrEqual(ROOM_WEATHER_PROFILES[room].cooldownRange[0]);
+            expect(p.cooldownRange[1]).toBeLessThanOrEqual(ROOM_WEATHER_PROFILES[room].cooldownRange[1]);
+        }
     });
 });

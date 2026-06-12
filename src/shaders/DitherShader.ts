@@ -22,6 +22,15 @@ export const DitherShader: ShaderDefinition = {
         weatherType: { value: 0 }, // 0=clear, 1=static, 2=rain, 3=glitch
         weatherIntensity: { value: 0.0 },
         weatherTime: { value: 0.0 },
+        // Weather-presence pass: onset broadcast (1 -> 0 over the event's first
+        // ~1.6s, from WeatherState) + per-room weather flavor (RoomShaderConfig,
+        // baked through the RoomTransition lerp). Defaults = pre-pass look.
+        uWeatherOnset: { value: 0.0 },
+        uWeatherIsEvent: { value: 0.0 }, // 1 = real event, 0 = transient ambient glitch (gates invert strikes)
+        uWeatherRainDensity: { value: 1.0 }, // RAIN column density/speed/trail multiplier
+        uWeatherBandStrength: { value: 0.0 }, // STATIC pressed into scan bands (FA)
+        uWeatherMisregisterBoost: { value: 0.0 }, // RAIN double-print ghost (IN_BETWEEN)
+        uWeatherInvertStrike: { value: 0.0 }, // GLITCH full-screen invert strikes (POLARIZED)
         // Room-specific uniforms (mental state spaces)
         uNoiseDensity: { value: 0.5 }, // 0-1, controls dither pattern density
         uThresholdBias: { value: 0.0 }, // -0.5 to 0.5, black/white balance offset
@@ -116,6 +125,13 @@ export const DitherShader: ShaderDefinition = {
         uniform int weatherType;
         uniform float weatherIntensity;
         uniform float weatherTime;
+        // Weather-presence pass: onset broadcast + per-room weather flavor
+        uniform float uWeatherOnset;            // 1 -> 0 over the event's first ~1.6s
+        uniform float uWeatherIsEvent;          // 1 = real event, 0 = transient ambient glitch
+        uniform float uWeatherRainDensity;      // RAIN density/speed/trail multiplier
+        uniform float uWeatherBandStrength;     // STATIC scan-band organization (FA)
+        uniform float uWeatherMisregisterBoost; // RAIN misregistered ghost copy (IN_BETWEEN)
+        uniform float uWeatherInvertStrike;     // GLITCH invert-strike strength (POLARIZED)
         // Room-specific uniforms
         uniform float uNoiseDensity;
         uniform float uThresholdBias;
@@ -288,26 +304,76 @@ export const DitherShader: ShaderDefinition = {
 
         // ===== WEATHER EFFECTS =====
 
+        // --- Weather tuning constants (weather-presence pass) ---
+        // STATIC: fraction of the frame inverted at full intensity (raised
+        // from the historical 0.3 so weather is unmistakable).
+        const float STATIC_COVERAGE = 0.45;
+        // Scan-storm bands (FORCED_ALIGNMENT): band repeats across the screen,
+        // sweep speed (band phases/s), band window half-width in phase units,
+        // and the outside-band noise floor (snow nearly silenced off-band).
+        const float STATIC_BAND_COUNT = 4.0;
+        const float STATIC_BAND_SPEED = 0.5;
+        const float STATIC_BAND_HALF_WIDTH = 0.18;
+        const float STATIC_BAND_FLOOR = 0.2;
+        // RAIN: base column count (density 1 = the historical 50 columns) and
+        // the historical active-column share (step(0.85) = 15%); both scale
+        // with uWeatherRainDensity.
+        const float RAIN_BASE_COLUMNS = 50.0;
+        const float RAIN_COLUMN_SHARE = 0.15;
+        // RAIN misregistration (IN_BETWEEN): ghost copy's horizontal offset
+        // (UV units), its breathing speed (rad/s), and its invert mix.
+        const float RAIN_MISREG_OFFSET = 0.012;
+        const float RAIN_MISREG_DRIFT_SPEED = 1.3;
+        const float RAIN_MISREG_GHOST_MIX = 0.8;
+        // Weather-coupled duotone misregistration (IN_BETWEEN, any weather
+        // type): extra slip amplitude, widened breathing swing, and a slow
+        // phase wander (amplitude in rad, wander rate in rad/s) so the two
+        // plates visibly drift/breathe for the storm's whole duration.
+        const float MISREG_WX_SLIP_GAIN = 0.5;
+        const float MISREG_WX_BREATH_GAIN = 0.35;
+        const float MISREG_WX_DRIFT = 3.0;
+        const float MISREG_WX_DRIFT_SPEED = 0.45;
+        // GLITCH: bar row count / racing speed (shared with glitchEffect) and
+        // the horizontal displacement amplitude (UV units) at full intensity.
+        const float GLITCH_ROW_COUNT = 30.0;
+        const float GLITCH_BAR_SPEED = 100.0;
+        const float GLITCH_SHIFT_AMP = 0.06;
+        // Invert strikes (POLARIZED rupture-storm): one Bernoulli roll per
+        // window (~2-4s cadence), hit probability at strike=1, full-screen
+        // invert duration, tear-line half-thickness (px) and row shift (UV).
+        const float STRIKE_WINDOW_SECONDS = 3.0;
+        const float STRIKE_CHANCE = 0.85;
+        const float STRIKE_SECONDS = 0.12;
+        const float STRIKE_TEAR_PX = 3.0;
+        const float STRIKE_TEAR_SHIFT = 0.08;
+        // Onset broadcast: edge-band square-wave strobe frequency (Hz), band
+        // peak mix toward paper, and the sweep line half-thickness (px).
+        const float ONSET_FLICKER_HZ = 8.0;
+        const float ONSET_BAND_MIX = 0.85;
+        const float ONSET_SWEEP_PX = 1.5;
+
         // Static noise (TV snow)
         float staticNoise(vec2 coord, float t) {
             return fract(sin(dot(coord + t, vec2(12.9898, 78.233))) * 43758.5453);
         }
 
-        // Digital rain effect
-        float digitalRain(vec2 uv, float t) {
-            float column = floor(uv.x * 50.0);
-            float speed = fract(sin(column * 123.456) * 789.0) * 2.0 + 0.5;
+        // Digital rain effect. density scales column count, fall speed, trail
+        // length and the active-column share (1.0 = the historical look;
+        // INFO_OVERFLOW's 2.5 turns it into a true downpour).
+        float digitalRain(vec2 uv, float t, float density) {
+            float column = floor(uv.x * RAIN_BASE_COLUMNS * density);
+            float speed = (fract(sin(column * 123.456) * 789.0) * 2.0 + 0.5) * density;
             float phase = fract(sin(column * 456.789) * 123.0);
             float y = fract(uv.y * 2.0 + t * speed + phase);
-            float dropLength = 0.05 + fract(sin(column * 789.0) * 12.0) * 0.1;
+            float dropLength = (0.05 + fract(sin(column * 789.0) * 12.0) * 0.1) * density;
             float drop = step(1.0 - dropLength, y);
-            float columnMask = step(0.85, fract(sin(column * 234.0) * 567.0));
+            float columnMask = step(1.0 - RAIN_COLUMN_SHARE * density, fract(sin(column * 234.0) * 567.0));
             return drop * columnMask;
         }
 
         // Glitch effect (horizontal bars + offset)
         float glitchEffect(vec2 uv, float t) {
-            float bar = step(0.92, fract(uv.y * 30.0 + t * 100.0));
+            float bar = step(0.92, fract(uv.y * GLITCH_ROW_COUNT + t * GLITCH_BAR_SPEED));
             float flicker = step(0.97, fract(sin(t * 500.0) * 12345.0));
             return bar * flicker;
         }
@@ -438,11 +504,19 @@ export const DitherShader: ShaderDefinition = {
             // 1px-style channel slip — by nudging finalColor toward the inverted
             // palette only on edge pixels. Stays on the duotone axis (greyscale-/1bit-
             // consistent) and is exactly inert at uMisregister = 0.
-            if (uMisregister > 0.0) {
+            // Weather couples in through uWeatherMisregisterBoost (weather-presence
+            // pass): while ANY weather is active the slip amplitude widens, the
+            // breathing swing deepens, and the shimmer phase wanders slowly — the
+            // room's duotone offset visibly drifts/breathes for the storm's whole
+            // duration. Exactly inert where the room scalar is 0.
+            float wxMisreg = (weatherType > 0) ? uWeatherMisregisterBoost * weatherIntensity : 0.0;
+            if (uMisregister > 0.0 || wxMisreg > 0.0) {
                 float fringe = smoothstep(outlineStrength * 0.5, outlineStrength, edge);
                 // Tiny temporal shimmer so the slip "breathes" rather than sitting still.
-                float slip = fringe * uMisregister * (0.35 + 0.15 * sin(animTime * 1.7 + vUv.y * 40.0));
-                finalColor = mix(finalColor, duoInvert(finalColor), slip);
+                float breath = 0.35 + (0.15 + wxMisreg * MISREG_WX_BREATH_GAIN)
+                    * sin(animTime * 1.7 + vUv.y * 40.0 + wxMisreg * MISREG_WX_DRIFT * sin(animTime * MISREG_WX_DRIFT_SPEED));
+                float slip = fringe * min(1.0, uMisregister + wxMisreg * MISREG_WX_SLIP_GAIN) * breath;
+                finalColor = mix(finalColor, duoInvert(finalColor), clamp(slip, 0.0, 1.0));
             }
 
             // Glitch effect (room-specific). uGlitchAmount scales BOTH line density
@@ -498,30 +572,107 @@ export const DitherShader: ShaderDefinition = {
                 finalColor = mix(finalColor, uPaperColor, sustainBand * uOverrideSustain * 0.6);
             }
 
-            // Weather effects
-            if (weatherType > 0 && weatherIntensity > 0.0) {
+            // Weather effects (per-room flavor via the uWeather* room scalars)
+            if (weatherType > 0) {
                 vec2 pixelUV = gl_FragCoord.xy / resolution;
                 // Wrap weather time to keep high-frequency sin/fract stable over long runs.
                 float wTime = mod(weatherTime, 3600.0);
 
-                if (weatherType == 1) {
-                    // Static snow
-                    float noise = staticNoise(gl_FragCoord.xy * 0.15, wTime * 15.0);
-                    if (noise > 1.0 - weatherIntensity * 0.3) {
-                        finalColor = duoInvert(finalColor);
+                if (weatherIntensity > 0.0) {
+                    if (weatherType == 1) {
+                        // Static snow (coverage raised to STATIC_COVERAGE)
+                        float noise = staticNoise(gl_FragCoord.xy * 0.15, wTime * 15.0);
+                        // FORCED_ALIGNMENT "inspection scan-storm": the snow is
+                        // pressed into horizontal bands sweeping the screen (the
+                        // room's CRT scan language); off-band noise is nearly
+                        // silenced, so the frame reads as reviewed line by line.
+                        if (uWeatherBandStrength > 0.0) {
+                            float bandPhase = fract(pixelUV.y * STATIC_BAND_COUNT - wTime * STATIC_BAND_SPEED);
+                            float band = 1.0 - smoothstep(STATIC_BAND_HALF_WIDTH * 0.5, STATIC_BAND_HALF_WIDTH, abs(bandPhase - 0.5));
+                            noise *= mix(1.0, mix(STATIC_BAND_FLOOR, 1.0, band), uWeatherBandStrength);
+                        }
+                        if (noise > 1.0 - weatherIntensity * STATIC_COVERAGE) {
+                            finalColor = duoInvert(finalColor);
+                        }
+                    } else if (weatherType == 2) {
+                        // Digital rain; column density / fall speed / trail length
+                        // follow the room's rain flavor (INFO_OVERFLOW's downpour).
+                        float rainDensity = max(uWeatherRainDensity, 0.0);
+                        float rain = digitalRain(pixelUV, wTime, rainDensity);
+                        if (rain > 0.5) {
+                            finalColor = uPaperColor;  // Paper-colored rain drops (on-palette)
+                        }
+                        // IN_BETWEEN misregistration: a second, horizontally offset
+                        // copy of the same rain — two systems print one storm and
+                        // miss. The slip drifts/breathes so the misprint is alive.
+                        if (uWeatherMisregisterBoost > 0.0) {
+                            float slip = RAIN_MISREG_OFFSET * (0.6 + 0.4 * sin(wTime * RAIN_MISREG_DRIFT_SPEED));
+                            float ghost = digitalRain(pixelUV + vec2(slip, 0.0), wTime, rainDensity);
+                            if (ghost > 0.5) {
+                                finalColor = mix(finalColor, duoInvert(finalColor), RAIN_MISREG_GHOST_MIX * uWeatherMisregisterBoost);
+                            }
+                        }
+                    } else if (weatherType == 3) {
+                        // Signal glitch: bars now DISPLACE the image — the hit row
+                        // is re-sampled with a horizontal shift and re-thresholded
+                        // to the inverted duotone (stronger than the old flat flip).
+                        float glitch = glitchEffect(pixelUV, wTime);
+                        if (glitch > 0.5) {
+                            float barIdx = floor(pixelUV.y * GLITCH_ROW_COUNT + wTime * GLITCH_BAR_SPEED);
+                            float barSeed = fract(sin(barIdx * 91.7) * 43758.5453);
+                            float shift = (barSeed - 0.5) * GLITCH_SHIFT_AMP * weatherIntensity;
+                            vec3 shiftedSrc = texture2D(tDiffuse, vec2(fract(vUv.x + shift), vUv.y)).rgb;
+                            vec3 shifted = (getLuminance(shiftedSrc) < 0.5) ? uInkColor : uPaperColor;
+                            finalColor = duoInvert(shifted);
+                        }
+                        // POLARIZED "rupture-storm" (uWeatherInvertStrike): one
+                        // hash Bernoulli roll per ~3s window; a hit inverts the
+                        // whole frame for ~0.12s and tears 1-2 thin rows sideways.
+                        // Missed windows keep the glitch above subdued — the dead
+                        // calm between strikes IS the room. Gated on uWeatherIsEvent
+                        // so 0.1-0.5s transient ambient glitches keep only the bar
+                        // flicker above — hard strikes stay reserved for the rare
+                        // full-length rupture events.
+                        if (uWeatherInvertStrike > 0.0 && uWeatherIsEvent > 0.5) {
+                            float windowIdx = floor(wTime / STRIKE_WINDOW_SECONDS);
+                            float tInWindow = wTime - windowIdx * STRIKE_WINDOW_SECONDS;
+                            float strikeRoll = fract(sin(windowIdx * 127.1) * 43758.5453);
+                            if (strikeRoll < uWeatherInvertStrike * STRIKE_CHANCE && tInWindow < STRIKE_SECONDS) {
+                                finalColor = duoInvert(finalColor);
+                                // 1-2 horizontal tear lines: hard-shifted rows
+                                // re-thresholded WITHOUT the invert, so they stand
+                                // out against the struck frame.
+                                float tearV1 = fract(sin((windowIdx + 1.0) * 311.7) * 43758.5453);
+                                float tearV2 = fract(sin((windowIdx + 2.0) * 269.5) * 43758.5453);
+                                float hasSecond = step(0.5, fract(sin((windowIdx + 3.0) * 183.3) * 43758.5453));
+                                float nearTear = step(abs(vUv.y - tearV1) * resolution.y, STRIKE_TEAR_PX)
+                                    + hasSecond * step(abs(vUv.y - tearV2) * resolution.y, STRIKE_TEAR_PX);
+                                if (nearTear > 0.0) {
+                                    float tearShift = (fract(sin(windowIdx * 97.3) * 43758.5453) - 0.5) * STRIKE_TEAR_SHIFT;
+                                    vec3 tearSrc = texture2D(tDiffuse, vec2(fract(vUv.x + tearShift), vUv.y)).rgb;
+                                    finalColor = (getLuminance(tearSrc) < 0.5) ? uInkColor : uPaperColor;
+                                }
+                            }
+                        }
                     }
-                } else if (weatherType == 2) {
-                    // Digital rain
-                    float rain = digitalRain(pixelUV, wTime);
-                    if (rain > 0.5) {
-                        finalColor = uPaperColor;  // Paper-colored rain drops (on-palette)
-                    }
-                } else if (weatherType == 3) {
-                    // Signal glitch
-                    float glitch = glitchEffect(pixelUV, wTime);
-                    if (glitch > 0.5) {
-                        finalColor = duoInvert(finalColor);
-                    }
+                }
+
+                // ===== ONSET BROADCAST (uWeatherOnset: 1 -> 0 over ~1.6s) =====
+                // "Weather just started" must be unmissable: the screen-edge band
+                // (sustain-band geometry) strobes as a fast square wave, and a
+                // thin paper line sweeps from the top of the screen to the bottom
+                // as the onset window decays. Gated on weatherType only, so the
+                // broadcast fires even while intensity is still ramping in.
+                if (uWeatherOnset > 0.0) {
+                    vec2 onsetCentered = vUv - 0.5;
+                    float onsetDist = max(abs(onsetCentered.x), abs(onsetCentered.y));
+                    float onsetBand = smoothstep(0.4, 0.5, onsetDist);
+                    float strobe = step(0.5, fract(animTime * ONSET_FLICKER_HZ));
+                    finalColor = mix(finalColor, uPaperColor, onsetBand * strobe * uWeatherOnset * ONSET_BAND_MIX);
+                    // Sweep line: vUv.y = uWeatherOnset runs top (1) -> bottom (0)
+                    // across the onset window.
+                    float sweepPx = abs(vUv.y - uWeatherOnset) * resolution.y;
+                    finalColor = mix(finalColor, uPaperColor, step(sweepPx, ONSET_SWEEP_PX));
                 }
             }
 

@@ -127,6 +127,33 @@ function ensureDuotoneUniforms(
         u.tBlueNoise = { value: null };
         injected = true;
     }
+    // Weather-presence pass: onset broadcast + per-room weather flavor. Same
+    // lazy-inject guard; defaults reproduce the pre-pass weather look exactly
+    // (no onset flash, rain density 1, no bands/misregistration/strikes).
+    if (!u.uWeatherOnset) {
+        u.uWeatherOnset = { value: 0.0 };
+        injected = true;
+    }
+    if (!u.uWeatherIsEvent) {
+        u.uWeatherIsEvent = { value: 0.0 };
+        injected = true;
+    }
+    if (!u.uWeatherRainDensity) {
+        u.uWeatherRainDensity = { value: 1.0 };
+        injected = true;
+    }
+    if (!u.uWeatherBandStrength) {
+        u.uWeatherBandStrength = { value: 0.0 };
+        injected = true;
+    }
+    if (!u.uWeatherMisregisterBoost) {
+        u.uWeatherMisregisterBoost = { value: 0.0 };
+        injected = true;
+    }
+    if (!u.uWeatherInvertStrike) {
+        u.uWeatherInvertStrike = { value: 0.0 };
+        injected = true;
+    }
 
     if (injected) {
         // Force the renderer to rebuild its cached uniform list so the freshly
@@ -217,7 +244,7 @@ export function createShaderUniformParams(
     return {
         shaderQuad,
         t: 0,
-        weather: { weatherType: 0, weatherIntensity: 0, weatherTime: 0 },
+        weather: { weatherType: 0, weatherIntensity: 0, weatherTime: 0, weatherOnset: 0, weatherIsEvent: 0 },
         shaderConfig,
         flowerIntensity: 0,
         colorInversion: 0,
@@ -261,6 +288,11 @@ export function updateShaderUniforms(params: ShaderUniformParams): void {
     u.weatherType.value = weather.weatherType;
     u.weatherIntensity.value = weather.weatherIntensity;
     u.weatherTime.value = weather.weatherTime;
+    // Onset broadcast + real-event flag (weather-presence pass): global
+    // player layer straight from the WeatherState, like type/intensity/time
+    // above. The flag gates real-event-only effects (POLARIZED strikes).
+    u.uWeatherOnset.value = Math.min(1, Math.max(0, weather.weatherOnset));
+    u.uWeatherIsEvent.value = weather.weatherIsEvent > 0 ? 1 : 0;
 
     // Room scalars. The reactive per-room overrides (flow-audit breaks #7/#8:
     // INFO_OVERFLOW flower noise/jitter, FORCED_ALIGNMENT side asymmetry) are
@@ -288,6 +320,13 @@ export function updateShaderUniforms(params: ShaderUniformParams): void {
     // POLARIZED's pristine 0 is never quite 0 again this run.
     u.uMisregister.value = Math.min(1, shaderConfig.uMisregister + overrideResidue);
     u.uFlowerThresholdGain.value = shaderConfig.uFlowerThresholdGain;
+    // Per-room weather flavor (weather-presence pass): baked through the
+    // RoomTransition lerp upstream like every other room scalar; clamp as a
+    // final guard (rain density is an open-ended >=0 multiplier).
+    u.uWeatherRainDensity.value = Math.max(0, shaderConfig.weatherRainDensity);
+    u.uWeatherBandStrength.value = Math.min(1, Math.max(0, shaderConfig.weatherBandStrength));
+    u.uWeatherMisregisterBoost.value = Math.min(1, Math.max(0, shaderConfig.weatherMisregisterBoost));
+    u.uWeatherInvertStrike.value = Math.min(1, Math.max(0, shaderConfig.weatherInvertStrike));
     // F5 dither language: the room's pattern crossfade triple (categorical
     // ids + output-blend factor, baked upstream by RoomTransition — never
     // numerically lerped) and the global stress-driven grain scale.

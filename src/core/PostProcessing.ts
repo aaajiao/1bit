@@ -50,6 +50,16 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
                 weatherType: { value: 0 },
                 weatherIntensity: { value: 0.0 },
                 weatherTime: { value: 0.0 },
+                // Weather-presence pass: onset broadcast + per-room weather
+                // flavor. Defaults = pre-pass look (no onset flash, rain
+                // density 1, no bands / misregistration / invert strikes);
+                // overwritten each frame by ShaderUniformUpdater.
+                uWeatherOnset: { value: 0.0 },
+                uWeatherIsEvent: { value: 0.0 },
+                uWeatherRainDensity: { value: 1.0 },
+                uWeatherBandStrength: { value: 0.0 },
+                uWeatherMisregisterBoost: { value: 0.0 },
+                uWeatherInvertStrike: { value: 0.0 },
                 // Room-specific uniforms
                 uNoiseDensity: { value: 0.5 },
                 uThresholdBias: { value: 0.0 },

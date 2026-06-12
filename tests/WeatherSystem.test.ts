@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RoomType } from '../src/world/RoomConfig';
-import { WEATHER_TYPES, WeatherSystem } from '../src/world/WeatherSystem';
+import { ONSET_SECONDS, WEATHER_TYPES, WeatherSystem } from '../src/world/WeatherSystem';
 
 describe('weatherSystem', () => {
     let weather: WeatherSystem;
@@ -38,6 +38,7 @@ describe('weatherSystem', () => {
             expect(state).toHaveProperty('weatherType');
             expect(state).toHaveProperty('weatherIntensity');
             expect(state).toHaveProperty('weatherTime');
+            expect(state).toHaveProperty('weatherOnset');
         });
 
         it('should keep intensity clamped within [0, 1] across many random steps', () => {
@@ -361,6 +362,166 @@ describe('weatherSystem', () => {
                 const state = weather.update(0.1, i * 0.1, RoomType.POLARIZED);
                 expect(state.weatherType).toBe(WEATHER_TYPES.RAIN);
             }
+        });
+    });
+
+    describe('onset broadcast (weatherOnset)', () => {
+        it('should report onset 0 while CLEAR', () => {
+            const state = weather.update(0.016, 0);
+            expect(state.weatherType).toBe(WEATHER_TYPES.CLEAR);
+            expect(state.weatherOnset).toBe(0);
+        });
+
+        it('should decay linearly from 1 over ONSET_SECONDS for a forced real event', () => {
+            // forceWeather('static') resets elapsed to 0; each update then adds
+            // delta, so onset must track 1 - elapsed / ONSET_SECONDS exactly.
+            weather.forceWeather('static', 30);
+            expect(weather.update(0.4, 0).weatherOnset).toBeCloseTo(1 - 0.4 / ONSET_SECONDS, 9);
+            expect(weather.update(0.4, 0.4).weatherOnset).toBeCloseTo(1 - 0.8 / ONSET_SECONDS, 9);
+            expect(weather.update(0.4, 0.8).weatherOnset).toBeCloseTo(1 - 1.2 / ONSET_SECONDS, 9);
+        });
+
+        it('should clamp onset at 0 once the broadcast window has passed', () => {
+            weather.forceWeather('rain', 30);
+            weather.update(1.0, 0);
+            // elapsed = 2.0 > ONSET_SECONDS (1.6): window over, event still on.
+            const state = weather.update(1.0, 1.0);
+            expect(state.weatherType).toBe(WEATHER_TYPES.RAIN);
+            expect(state.weatherOnset).toBe(0);
+        });
+
+        it('should start at exactly 1 on the frame a natural event begins', () => {
+            // Drain the cooldown in tiny steps so elapsed is 0 on the frame
+            // startRandomWeather fires — onset must open at exactly 1.
+            const r = vi.spyOn(Math, 'random');
+            r.mockReturnValue(0.5);
+            const sys = new WeatherSystem(); // cooldown = 45
+            let state = sys.update(0.016, 0);
+            for (let i = 0; i < 7000 && state.weatherType === WEATHER_TYPES.CLEAR; i++)
+                state = sys.update(0.01, i * 0.01);
+            expect(state.weatherType).not.toBe(WEATHER_TYPES.CLEAR);
+            expect(state.weatherOnset).toBe(1);
+        });
+
+        it('should broadcast for a natural full-length GLITCH event', () => {
+            // Draw 0.999 lands in the GLITCH band of the default rotation; this
+            // is a REAL full-duration event (isGlitchEvent = false), so unlike
+            // ambient flickers it announces itself.
+            const r = vi.spyOn(Math, 'random');
+            r.mockReturnValue(0.5); // constructor cooldown = 45
+            const sys = new WeatherSystem();
+            r.mockReturnValue(0.999);
+            const state = sys.update(61, 61);
+            expect(state.weatherType).toBe(WEATHER_TYPES.GLITCH);
+            expect(state.weatherOnset).toBe(1);
+        });
+
+        it('should never broadcast for a forced transient glitch (eclipse path)', () => {
+            weather.forceWeather('glitch', 0.5);
+            const state = weather.update(0.016, 0);
+            expect(state.weatherType).toBe(WEATHER_TYPES.GLITCH);
+            expect(state.weatherOnset).toBe(0);
+        });
+
+        it('should keep onset at 0 through an ambient transient glitch and preserve the cooldown', () => {
+            const r = vi.spyOn(Math, 'random');
+            r.mockReturnValue(0.5);
+            const sys = new WeatherSystem(); // cooldown = 45
+            // Burn 1s of cooldown in clear frames (no glitch at draw 0.5).
+            for (let i = 0; i < 10; i++)
+                sys.update(0.1, i * 0.1);
+
+            // Fire a transient glitch (0.001 < 0.12 * 0.016) — silent onset.
+            r.mockReturnValue(0.001);
+            const glitching = sys.update(0.016, 2);
+            expect(glitching.weatherType).toBe(WEATHER_TYPES.GLITCH);
+            expect(glitching.weatherOnset).toBe(0);
+
+            // Let the ~0.1s glitch end; the saved cooldown (~44s left) must be
+            // restored rather than redrawn (a fresh DEFAULT draw at 0.5 would
+            // be 60s). Stepping ~47.5s must therefore trigger the next event.
+            r.mockReturnValue(0.5);
+            let state = sys.update(0.2, 3);
+            expect(state.weatherType).toBe(WEATHER_TYPES.CLEAR);
+            for (let i = 0; i < 95 && state.weatherType === WEATHER_TYPES.CLEAR; i++)
+                state = sys.update(0.5, 10 + i * 0.5);
+            expect(state.weatherType).not.toBe(WEATHER_TYPES.CLEAR);
+        });
+    });
+
+    describe('per-room lifecycle profiles', () => {
+        // Starts a natural event in `room` with all RNG pinned at 0.5 (one big
+        // frame drains the 45s constructor cooldown), then runs it to
+        // completion in 0.1s steps. Returns the system, the measured active
+        // duration, and the peak intensity reached.
+        function runRoomEvent(room: RoomType): { sys: WeatherSystem; active: number; peak: number } {
+            const sys = new WeatherSystem(); // cooldown = 45 (random pinned 0.5)
+            let state = sys.update(61, 61, room);
+            expect(state.weatherType).not.toBe(WEATHER_TYPES.CLEAR);
+            let active = 0;
+            let peak = 0;
+            for (let i = 0; i < 1200 && state.weatherType !== WEATHER_TYPES.CLEAR; i++) {
+                state = sys.update(0.1, 62 + i * 0.1, room);
+                if (state.weatherType !== WEATHER_TYPES.CLEAR) {
+                    active += 0.1;
+                    peak = Math.max(peak, state.weatherIntensity);
+                }
+            }
+            return { sys, active, peak };
+        }
+
+        it('should keep POLARIZED rupture-storms within the 8-16s profile window', () => {
+            // POLARIZED profile: duration = 8 + 0.5 * 8 = 12s at the pinned draw.
+            const { active } = runRoomEvent(RoomType.POLARIZED);
+            expect(active).toBeGreaterThanOrEqual(8 - 0.2);
+            expect(active).toBeLessThanOrEqual(16 + 0.2);
+            expect(active).toBeCloseTo(12, 0);
+        });
+
+        it('should pin POLARIZED intensity to the violent 0.9-1.0 band', () => {
+            // targetIntensity = 0.9 + 0.5 * 0.1 = 0.95 (the DEFAULT profile
+            // would have settled at 0.8 for the same draw).
+            const { peak } = runRoomEvent(RoomType.POLARIZED);
+            expect(peak).toBeGreaterThanOrEqual(0.9 - 1e-3);
+            expect(peak).toBeCloseTo(0.95, 2);
+        });
+
+        it('should draw the post-event cooldown from the room profile (POLARIZED 50-110s)', () => {
+            // After endWeather in POLARIZED: cooldown = 50 + 0.5 * 60 = 80s.
+            const { sys } = runRoomEvent(RoomType.POLARIZED);
+            // 70s later — well past a DEFAULT draw (60s) — still dead calm...
+            let state = sys.update(0.5, 200, RoomType.POLARIZED);
+            for (let i = 0; i < 139; i++) {
+                state = sys.update(0.5, 201 + i * 0.5, RoomType.POLARIZED);
+                expect(state.weatherType).toBe(WEATHER_TYPES.CLEAR);
+            }
+            // ...and within the next ~12s the 80s profile cooldown expires.
+            for (let i = 0; i < 24 && state.weatherType === WEATHER_TYPES.CLEAR; i++)
+                state = sys.update(0.5, 300 + i * 0.5, RoomType.POLARIZED);
+            expect(state.weatherType).not.toBe(WEATHER_TYPES.CLEAR);
+        });
+
+        it('should adopt the INFO_OVERFLOW intensity floor (0.75-1.0) for natural events', () => {
+            const sys = new WeatherSystem(); // cooldown = 45 (random pinned 0.5)
+            let state = sys.update(61, 61, RoomType.INFO_OVERFLOW);
+            // Weights 1/6/1: the pinned draw lands in the wide RAIN band.
+            expect(state.weatherType).toBe(WEATHER_TYPES.RAIN);
+            // Duration = 25 + 0.5 * 25 = 37.5s, so 10s of ramping stays clear
+            // of the fade-out; intensity settles on the profile target
+            // 0.75 + 0.5 * 0.25 = 0.875 (DEFAULT would have been 0.8).
+            for (let i = 0; i < 100; i++)
+                state = sys.update(0.1, 62 + i * 0.1, RoomType.INFO_OVERFLOW);
+            expect(state.weatherIntensity).toBeCloseTo(0.875, 3);
+        });
+
+        it('should fall back to the DEFAULT profile when no room is given', () => {
+            const sys = new WeatherSystem(); // cooldown = 45 (random pinned 0.5)
+            let state = sys.update(61, 61, null);
+            expect(state.weatherType).toBe(WEATHER_TYPES.RAIN);
+            // DEFAULT intensity target: 0.6 + 0.5 * 0.4 = 0.8.
+            for (let i = 0; i < 100; i++)
+                state = sys.update(0.1, 62 + i * 0.1, null);
+            expect(state.weatherIntensity).toBeCloseTo(0.8, 3);
         });
     });
 });

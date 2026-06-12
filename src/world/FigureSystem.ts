@@ -90,6 +90,14 @@ const { BODY_RADIUS_FRAC, BODY_HEIGHT_FRAC, HEAD_RADIUS_FRAC, CHEST_HEIGHT_FRAC,
 const LOD_DISTANCE_SQ = WORLD.ANIMATION_LOD_DISTANCE * WORLD.ANIMATION_LOD_DISTANCE;
 
 /**
+ * Storm response (weather presence): the figures' glitch-flicker clock runs
+ * (1 + weatherIntensity * gain)x faster while weather rages, so the MISREAD
+ * swap and the rebel strobe shimmer harder under a storm. Intensity 0
+ * reproduces the calm cadence exactly.
+ */
+const WEATHER_FLICKER_GAIN = 1;
+
+/**
  * Deterministic figure count for a chunk: 0, 1 or 2, drawn against the
  * room's density knobs (RoomConfig.ROOM_FIGURE_DENSITY). The host gate and
  * the second-figure gate use decorrelated hash draws, and the draws are
@@ -344,6 +352,12 @@ export class FigureSystem {
 
     /** Accumulated play-time clock (s) — delta-driven, frozen while paused. */
     private clock = 0;
+    /**
+     * Flicker clock (s): the play-time clock accelerated by the current
+     * weather intensity (WEATHER_FLICKER_GAIN) — drives the MISREAD flicker
+     * and the rebel glitch strobe only; sway/breathing stay on `clock`.
+     */
+    private flickerClock = 0;
     private lastCx: number | null = null;
     private lastCz = 0;
 
@@ -378,6 +392,9 @@ export class FigureSystem {
      * @param currentRoomType - The player's room; only used as the per-chunk
      *   room fallback when no room source was injected.
      * @param audio - Distant-tear sink for rebel events (AudioController).
+     * @param weatherIntensity - 0-1 current weather intensity; gently speeds
+     *   the figures' flicker clock (WEATHER_FLICKER_GAIN). 0 (default)
+     *   reproduces the calm behavior exactly.
      */
     update(
         delta: number,
@@ -385,8 +402,10 @@ export class FigureSystem {
         playerState: FigurePlayerRead,
         currentRoomType: RoomType,
         audio?: FigureAudio,
+        weatherIntensity: number = 0,
     ): void {
         this.clock += delta;
+        this.flickerClock += delta * (1 + Math.max(0, weatherIntensity) * WEATHER_FLICKER_GAIN);
         this.syncChunks(playerPos, currentRoomType);
         this.animateFigures(delta, playerPos, playerState, audio);
         this.updateRebelScheduler(delta, playerPos);
@@ -584,8 +603,9 @@ export class FigureSystem {
         // MISREAD (IN_BETWEEN): low-frequency flicker between two render
         // parameter sets — solid ink vs wireframe, both shared assets — the
         // room's "read differently by both systems" language at figure scale.
+        // Runs on the weather-accelerated flicker clock (storms misread harder).
         if (p.archetype === 'MISREAD') {
-            const t = (this.clock + p.phase) % FIGURES.MISREAD_FLICKER_PERIOD;
+            const t = (this.flickerClock + p.phase) % FIGURES.MISREAD_FLICKER_PERIOD;
             const wire = t < FIGURES.MISREAD_FLICKER_ON;
             if (wire !== fig.misreadWire) {
                 fig.misreadWire = wire;
@@ -657,8 +677,9 @@ export class FigureSystem {
 
         // FLICKER: the GLITCH weather language localized — a rapid visibility
         // strobe plus a deterministic per-step horizontal dislocation (hash of
-        // the quantized clock step: frame-rate independent, no Math.random).
-        const step = Math.floor((this.clock + fig.placement.phase) * FIGURES.REBEL_FLICKER_RATE);
+        // the quantized step of the weather-accelerated flicker clock:
+        // frame-rate independent, no Math.random).
+        const step = Math.floor((this.flickerClock + fig.placement.phase) * FIGURES.REBEL_FLICKER_RATE);
         fig.group.visible = step % 2 === 0;
         fig.group.position.x = fig.baseX
             + (hash(step, REBEL_JITTER_SALT) - 0.5) * FIGURES.REBEL_JITTER_AMPLITUDE;

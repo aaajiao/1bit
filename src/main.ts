@@ -213,7 +213,8 @@ class ChimeraVoid {
         // then room-weighted weather selection (flow-audit medium #3).
         this.statsSunset.update(delta, playerState, playerPos, currentRoomType);
         const weatherState = this.weather.update(delta, t, currentRoomType);
-        this.audio.updateWeatherAudio(weatherState.weatherType, weatherState.weatherIntensity);
+        this.audio.updateWeatherAudio(weatherState.weatherType, weatherState.weatherIntensity, weatherState.weatherOnset);
+        this.roomFlow.setWeather(weatherState.weatherType, weatherState.weatherIntensity);
 
         // 6. Shaders & visuals: core/ShaderSyncUpdater mutates ONE reused
         // params object (no per-frame allocation) and owns stress->grain (F5).
@@ -226,11 +227,10 @@ class ChimeraVoid {
             this.statsSunset.getSunsetForeshadow(),
         );
 
-        // Audio tick
         this.audio.tick(delta);
 
-        // Sky Eye (perceives the flower's brightness and the player's gaze —
-        // flow-audit break #4 — and dominates POLARIZED's sky, enhancement #11)
+        // Sky Eye (perceives the flower, the gaze — flow-audit break #4 —
+        // the storm overhead, and dominates POLARIZED's sky, enhancement #11)
         this.skyEye.update(
             delta,
             playerPos,
@@ -238,6 +238,7 @@ class ChimeraVoid {
             playerState.flowerIntensity,
             playerState.gazeIntensity,
             currentRoomType,
+            weatherState.weatherIntensity,
         );
 
         // Scanner Light

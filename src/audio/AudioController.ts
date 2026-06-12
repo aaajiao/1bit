@@ -20,6 +20,7 @@ import {
     ROOM_AMBIENT_CONFIG,
     SNAPSHOT_AUDIO_CONFIG,
     SUNSET_FORESHADOW_AUDIO,
+    WEATHER_AUDIO,
     WEATHER_AUDIO_CONFIG,
 } from '../config';
 import { RoomType } from '../world/RoomConfig';
@@ -51,6 +52,14 @@ export class AudioController implements AudioSystemInterface {
     private weatherRainInterval: number | null = null;
     private currentWeatherType: number = 0;
     private _staticExtra: OscillatorNode[] | null = null;
+    // Rain hiss wash (INFO downpour flavour): looping bandpass noise whose
+    // sub-gain rides the intensity; torn down with the rain ambient.
+    private weatherRainHiss: { source: AudioBufferSourceNode; filter: BiquadFilterNode; gain: GainNode } | null = null;
+    // GLITCH snap scheduler (POLARIZED rupture flavour): rain-style
+    // setTimeout chain firing sparse hard transients every 2-4s.
+    private weatherGlitchSnapTimer: number | null = null;
+    /** Latest weather intensity, fed per frame; live-read by the rain scheduler. */
+    private weatherIntensity: number = 0;
 
     // Flower state
     private lastFlowerState: number = -1;
@@ -449,28 +458,58 @@ export class AudioController implements AudioSystemInterface {
 
     // ==================== Weather ====================
 
-    updateWeatherAudio(weatherType: number, intensity: number): void {
+    /**
+     * Per-frame weather layer drive. `onset` (0-1, default 0) is the event's
+     * opening-broadcast window (WeatherState.weatherOnset): the layer gain
+     * swells by onsetSwellMult inside it, so "weather has started" is
+     * unmissable, then settles to intensity * baseGain.
+     */
+    updateWeatherAudio(weatherType: number, intensity: number, onset: number = 0): void {
         const ctx = this.engine.getContext();
         const master = this.engine.getMasterGain();
         if (!ctx || !master)
             return;
 
+        this.weatherIntensity = intensity;
+
         if (weatherType !== this.currentWeatherType) {
             this.stopStaticAmbient();
             this.stopRainAmbient();
+            this.stopGlitchAmbient();
 
             if (weatherType === 1)
                 this.startStaticAmbient();
             else if (weatherType === 2)
                 this.startRainAmbient();
             else if (weatherType === 3)
-                this.playGlitchBurst();
+                this.startGlitchAmbient(onset > 0);
 
             this.currentWeatherType = weatherType;
         }
 
         if (this.weatherNoiseGain) {
-            this.weatherNoiseGain.gain.setTargetAtTime(intensity * 0.15, ctx.currentTime, 0.1);
+            // Decouple the swell from the still-ramping intensity: natural
+            // events ramp intensity from 0 over ~1s, which would cancel the
+            // onset swell to a ~+1.7dB bump. Driving the layer with
+            // max(intensity, onset) opens it at baseGain * onsetSwellMult the
+            // moment a real event starts, then settles to intensity * baseGain
+            // as the onset window decays — the designed surge-then-settle.
+            const drive = Math.max(intensity, onset);
+            const swell = 1 + onset * (WEATHER_AUDIO.onsetSwellMult - 1);
+            this.weatherNoiseGain.gain.setTargetAtTime(
+                drive * WEATHER_AUDIO.baseGain * swell,
+                ctx.currentTime,
+                WEATHER_AUDIO.gainSmoothing,
+            );
+        }
+        if (this.weatherRainHiss) {
+            // Intensity again INSIDE the intensity-scaled layer (quadratic
+            // overall): high intensity reads as a downpour wash.
+            this.weatherRainHiss.gain.gain.setTargetAtTime(
+                intensity * WEATHER_AUDIO.rainHissMaxGain,
+                ctx.currentTime,
+                WEATHER_AUDIO.gainSmoothing,
+            );
         }
     }
 
@@ -483,6 +522,21 @@ export class AudioController implements AudioSystemInterface {
         this.weatherNoiseGain = ctx.createGain();
         this.weatherNoiseGain.gain.value = 0;
         this.weatherNoiseGain.connect(master);
+
+        // Scan-band tremolo (FORCED_ALIGNMENT flavour): a slow LFO modulates
+        // the whole static bed's amplitude, each cycle a scan band sweeping
+        // past. The bed routes through this before the layer gain.
+        const tremolo = ctx.createGain();
+        tremolo.gain.value = 1;
+        tremolo.connect(this.weatherNoiseGain);
+        const ampLfo = ctx.createOscillator();
+        ampLfo.type = 'sine';
+        ampLfo.frequency.value = WEATHER_AUDIO.staticTremoloRateMin
+            + Math.random() * (WEATHER_AUDIO.staticTremoloRateMax - WEATHER_AUDIO.staticTremoloRateMin);
+        const ampLfoGain = ctx.createGain();
+        ampLfoGain.gain.value = WEATHER_AUDIO.staticTremoloDepth;
+        ampLfo.connect(ampLfoGain);
+        ampLfoGain.connect(tremolo.gain);
 
         const drone = ctx.createOscillator();
         drone.type = 'triangle';
@@ -499,7 +553,7 @@ export class AudioController implements AudioSystemInterface {
         const droneGain = ctx.createGain();
         droneGain.gain.value = 0.25;
         drone.connect(droneGain);
-        droneGain.connect(this.weatherNoiseGain);
+        droneGain.connect(tremolo);
 
         const harmonic = ctx.createOscillator();
         harmonic.type = 'sine';
@@ -507,14 +561,18 @@ export class AudioController implements AudioSystemInterface {
         const harmonicGain = ctx.createGain();
         harmonicGain.gain.value = 0.08;
         harmonic.connect(harmonicGain);
-        harmonicGain.connect(this.weatherNoiseGain);
+        harmonicGain.connect(tremolo);
 
         drone.start();
         lfo.start();
         harmonic.start();
+        ampLfo.start();
 
         this.weatherNoiseSource = drone as unknown as AudioBufferSourceNode;
-        this._staticExtra = [lfo, harmonic];
+        // ampLfo joins the stop list: once all oscillators are stopped and the
+        // layer gain is disconnected, the whole subgraph (tremolo included) is
+        // collectable — same lifecycle as droneGain/harmonicGain.
+        this._staticExtra = [lfo, harmonic, ampLfo];
     }
 
     private stopStaticAmbient(): void {
@@ -544,11 +602,37 @@ export class AudioController implements AudioSystemInterface {
         this.weatherNoiseGain.gain.value = 0;
         this.weatherNoiseGain.connect(master);
 
+        // High hiss wash (INFO_OVERFLOW downpour flavour): looping bandpass
+        // noise under the rain ticks. Reuses the pooled noise-bed buffer; the
+        // sub-gain starts silent and rides the intensity in updateWeatherAudio.
+        const hissBuffer = this.getNoiseBedBuffer();
+        if (hissBuffer) {
+            const source = ctx.createBufferSource();
+            source.buffer = hissBuffer;
+            source.loop = true;
+            const filter = ctx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.value = WEATHER_AUDIO.rainHissFreq;
+            filter.Q.value = WEATHER_AUDIO.rainHissQ;
+            const gain = ctx.createGain();
+            gain.gain.value = 0;
+            source.connect(filter);
+            filter.connect(gain);
+            gain.connect(this.weatherNoiseGain);
+            source.start();
+            this.weatherRainHiss = { source, filter, gain };
+        }
+
         const notes = WEATHER_AUDIO_CONFIG.rainNotes;
         let noteIndex = 0;
 
         const playTone = () => {
-            if (!ctx || !this.weatherNoiseGain)
+            // Suspended context (ESC pause): skip the tick but keep the
+            // setTimeout chain alive so the rhythm resumes after unpause
+            // (playSnap pattern). Without this, every tick stacks an
+            // oscillator on the frozen ctx.currentTime and they all fire
+            // at once on resume — a clipping blast after a long pause.
+            if (!ctx || !this.weatherNoiseGain || ctx.state !== 'running')
                 return;
             const now = ctx.currentTime;
             const osc = ctx.createOscillator();
@@ -570,7 +654,12 @@ export class AudioController implements AudioSystemInterface {
             if (this.weatherRainInterval === null)
                 return;
             playTone();
-            this.weatherRainInterval = window.setTimeout(schedule, WEATHER_AUDIO_CONFIG.rainInterval);
+            // Live intensity compresses the tick interval: drizzle at 0,
+            // downpour density at 1 (INFO_OVERFLOW's data rain).
+            const interval = WEATHER_AUDIO.rainIntervalMaxMs
+                - this.weatherIntensity
+                * (WEATHER_AUDIO.rainIntervalMaxMs - WEATHER_AUDIO.rainIntervalMinMs);
+            this.weatherRainInterval = window.setTimeout(schedule, interval);
         };
         this.weatherRainInterval = window.setTimeout(schedule, 0);
     }
@@ -579,6 +668,89 @@ export class AudioController implements AudioSystemInterface {
         if (this.weatherRainInterval !== null) {
             clearTimeout(this.weatherRainInterval);
             this.weatherRainInterval = null;
+        }
+        if (this.weatherRainHiss) {
+            const { source, filter, gain } = this.weatherRainHiss;
+            this.weatherRainHiss = null;
+            try { source.stop(); }
+            catch { }
+            source.disconnect();
+            filter.disconnect();
+            gain.disconnect();
+        }
+        this.weatherNoiseGain?.disconnect();
+        this.weatherNoiseGain = null;
+    }
+
+    /**
+     * GLITCH ambient (POLARIZED rupture flavour): keep the existing one-shot
+     * burst as the event's opening, then schedule sparse hard snap transients
+     * — short square pops every 2-4s — through the weather layer gain,
+     * echoing the visual duoInvert strikes. For REAL glitch events
+     * (onsetSnap = true, derived from weatherOnset > 0) the first snap fires
+     * after a short glitchOnsetSnapDelayMs so the opening surge is carried by
+     * more than the legacy burst; transient ambient glitches keep waiting a
+     * full random interval, so they only ever get the burst.
+     */
+    private startGlitchAmbient(onsetSnap: boolean = false): void {
+        const ctx = this.engine.getContext();
+        const master = this.engine.getMasterGain();
+        if (!ctx || !master || this.weatherGlitchSnapTimer !== null)
+            return;
+
+        this.playGlitchBurst();
+
+        this.weatherNoiseGain = ctx.createGain();
+        this.weatherNoiseGain.gain.value = 0;
+        this.weatherNoiseGain.connect(master);
+
+        const cfg = WEATHER_AUDIO;
+        const playSnap = (): void => {
+            // Suspended context (paused): skip the snap but keep the
+            // scheduler alive (polarized-beat pattern).
+            const layer = this.weatherNoiseGain;
+            if (!layer || ctx.state !== 'running')
+                return;
+            const now = ctx.currentTime;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'square';
+            osc.frequency.value = WEATHER_AUDIO_CONFIG.glitchMinFreq
+                + Math.random() * (WEATHER_AUDIO_CONFIG.glitchMaxFreq - WEATHER_AUDIO_CONFIG.glitchMinFreq);
+            gain.gain.setValueAtTime(cfg.glitchSnapVolume, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + cfg.glitchSnapDuration);
+            osc.connect(gain);
+            gain.connect(layer);
+            osc.start(now);
+            osc.stop(now + cfg.glitchSnapDuration + 0.02);
+        };
+
+        const nextInterval = (): number => (cfg.glitchSnapIntervalMinS
+            + Math.random() * (cfg.glitchSnapIntervalMaxS - cfg.glitchSnapIntervalMinS)) * 1000;
+
+        const schedule = (): void => {
+            if (this.weatherGlitchSnapTimer === null)
+                return;
+            playSnap();
+            this.weatherGlitchSnapTimer = window.setTimeout(schedule, nextInterval());
+        };
+        // The short onset delay also lets the layer gain (smoothed by
+        // gainSmoothing, set right after this call) open before the snap.
+        this.weatherGlitchSnapTimer = window.setTimeout(
+            schedule,
+            onsetSnap ? cfg.glitchOnsetSnapDelayMs : nextInterval(),
+        );
+    }
+
+    /**
+     * Stop the GLITCH ambient: cancel the snap scheduler synchronously and
+     * release the layer gain (rain teardown pattern; the per-snap one-shot
+     * nodes self-stop and need no tracking).
+     */
+    private stopGlitchAmbient(): void {
+        if (this.weatherGlitchSnapTimer !== null) {
+            clearTimeout(this.weatherGlitchSnapTimer);
+            this.weatherGlitchSnapTimer = null;
         }
         this.weatherNoiseGain?.disconnect();
         this.weatherNoiseGain = null;
@@ -1331,6 +1503,7 @@ export class AudioController implements AudioSystemInterface {
         // Stop all active sounds
         this.stopStaticAmbient();
         this.stopRainAmbient();
+        this.stopGlitchAmbient();
         this.stopRoomNoiseBed();
         this.stopBinauralBeat();
         this.stopPolarizedBeat();
