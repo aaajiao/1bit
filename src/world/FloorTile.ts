@@ -1,7 +1,7 @@
 // 1-bit Chimera Void - Floor Tile Generator
 import * as THREE from 'three';
 import { hash } from '../utils/hash';
-import { chunkToCluster } from './RoomConfig';
+import { FA_RIFT } from './RoomConfig';
 
 /**
  * Deterministic pseudo-random generator seeded by chunk coords plus a
@@ -18,26 +18,30 @@ function makeSeededRandom(cx: number, cz: number): () => number {
 }
 
 /**
- * Jagged-edge erosion depth (m) at a given WORLD z for one side of the FA
- * rift. Seeded by the room CLUSTER (chunkToCluster — the single source of
- * cluster conversion) and parameterized by world z, NOT by the chunk + its
- * local z: the two z-stacked chunks of one cluster therefore evaluate the
- * exact same function at their shared seam vertices, so the crack's jagged
- * edges connect into one continuous line per cluster. Position-pure hash
+ * Jagged-edge erosion depth (m) at a given WORLD z for one side of an FA
+ * rift. Seeded by the chunk COLUMN (cx — every FA column carries its own
+ * crack at its center) and parameterized by world z, NOT by the chunk + its
+ * local z: all z-stacked chunks of one column therefore evaluate the exact
+ * same function at their shared seam vertices, so a column's jagged edges
+ * connect into one continuous line along z. The cx salt also lands in the
+ * sine phases so the TWO parallel cracks of one cluster (adjacent columns)
+ * draw genuinely different jags — never mirror twins. Position-pure hash
  * noise (no call-order-dependent RNG) keeps it deterministic per session.
- * @param clusterX - Room-cluster x coordinate (chunkToCluster(cx)).
- * @param clusterZ - Room-cluster z coordinate (chunkToCluster(cz)).
+ * @param cx - Chunk COLUMN x coordinate (the crack's owner column).
  * @param worldZ - World-space z of the vertex (cz * chunkSize + localZ).
- * @param side - 0 = left (negative-x) crack edge, 1 = right (positive-x);
- *   keeps the two edges decorrelated (historical 123.4 phase offset).
+ * @param side - 0 = left (negative-x) crack edge, 1 = right (positive-x),
+ *   2 = the void tear's ragged top edge; the phase term keeps each
+ *   decorrelated from the others (historical 123.4 phase offset).
  */
-function crackJagOffset(clusterX: number, clusterZ: number, worldZ: number, side: number): number {
+function crackJagOffset(cx: number, worldZ: number, side: number): number {
     // Jagged noise: mix of sine waves + deterministic positional jitter,
-    // magnitudes unchanged from the historical per-chunk version.
-    const wave = Math.sin(worldZ * 0.5 + side * 123.4) * 0.8 + Math.sin(worldZ * 2.1) * 0.3;
+    // magnitudes unchanged from the historical per-chunk version; the cx
+    // phase salts decorrelate neighboring columns' cracks.
+    const wave = Math.sin(worldZ * 0.5 + side * 123.4 + cx * 7.93) * 0.8
+        + Math.sin(worldZ * 2.1 + cx * 3.71) * 0.3;
     const jitter = (hash(
-        clusterX * 17.31 + worldZ * 0.613,
-        clusterZ * 11.97 + worldZ * 1.193 + side * 5.77,
+        cx * 17.31 + worldZ * 0.613,
+        cx * 11.97 + worldZ * 1.193 + side * 5.77,
     ) - 0.5) * 0.4;
     return Math.abs(wave + jitter) * 0.8;
 }
@@ -90,10 +94,11 @@ export function createFloorMesh(chunkSize: number, material: THREE.Material): TH
     return floor;
 }
 
-// Abyss-fog particle count for a full (chunk-interior) crack. When the crack
-// line sits on a chunk footprint edge (the cluster-shared rift: both adjacent
-// chunks emit fog into the SAME crack volume), each chunk spawns half so the
-// combined density matches a single interior crack.
+// Abyss-fog particle count for a full (chunk-interior) crack — the regular
+// path now that every FA chunk carries its own complete crack at local x=0.
+// The edge-crack case (crack ON a footprint edge, shared with the x-neighbor:
+// both chunks emit fog into the SAME crack volume) is retained capability;
+// there each chunk spawns half so the combined density matches one crack.
 const ABYSS_FOG_PARTICLES = 400;
 
 /**
@@ -101,18 +106,19 @@ const ABYSS_FOG_PARTICLES = 400;
  * The crack splits the floor into two parts with pure black abyss in between.
  * Features jagged texturing and geometry.
  *
- * The crack line may sit anywhere inside the chunk, including ON a footprint
- * edge (crackLocalX = ±chunkSize/2): rooms are 2x2-chunk clusters and the one
- * shared rift runs along the cluster center, which is the seam between the
- * cluster's two chunk columns — so each FA chunk carries the half of the
- * crack that overlaps its own floor, and a side with no remaining floor strip
- * is skipped entirely.
+ * REGULAR PATH: every FA chunk column carries its own complete crack at the
+ * chunk center, so ChunkManager always passes crackLocalX = 0 (one crack per
+ * 80m, restored from the one-per-cluster experiment). The crack line may
+ * still sit anywhere inside the chunk, including ON a footprint edge
+ * (crackLocalX = ±chunkSize/2) — retained capability: an edge crack is
+ * shared with the x-neighbor, each chunk carries the half overlapping its
+ * own floor, and a side with no remaining floor strip is skipped entirely.
  *
  * @param chunkSize - Size of the chunk
  * @param material - Floor material
  * @param crackWidth - Base width of the crack (default 4 meters)
- * @param cx - Chunk X coordinate (cluster jagged-edge seed + fog seed)
- * @param cz - Chunk Z coordinate (cluster jagged-edge seed + world-z base + fog seed)
+ * @param cx - Chunk X coordinate (column jagged-edge seed + fog seed)
+ * @param cz - Chunk Z coordinate (world-z base + fog seed)
  * @param crackLocalX - Chunk-local x of the crack center line (default 0)
  */
 export function createCrackedFloorMesh(
@@ -127,13 +133,8 @@ export function createCrackedFloorMesh(
     const disposables: THREE.Material[] = [];
 
     // Deterministic per-chunk RNG (abyss fog only — the jagged edges use the
-    // cluster-seeded crackJagOffset) so re-entering a chunk looks identical.
+    // column-seeded crackJagOffset) so re-entering a chunk looks identical.
     const rand = makeSeededRandom(cx, cz);
-
-    // Jagged-edge seed: the room CLUSTER, not the chunk, so the two z-stacked
-    // FA chunks of one cluster draw a single continuous crack line.
-    const clusterX = chunkToCluster(cx);
-    const clusterZ = chunkToCluster(cz);
 
     // Floor strip widths on each side of the crack, clamped to the chunk
     // footprint (a crack on the footprint edge leaves one side empty).
@@ -158,10 +159,10 @@ export function createCrackedFloorMesh(
             // Right edge of left floor is at x = leftFloorWidth / 2
             // We want to perturb vertices near this edge
             if (x > leftFloorWidth / 2 - 0.1) {
-                // World-z-parameterized, cluster-seeded jag: continuous across
-                // the z seam between the cluster's two chunks. Mostly erode
-                // (move left, widening the gap) to keep a minimum gap.
-                leftPos.setX(i, x - crackJagOffset(clusterX, clusterZ, cz * chunkSize + z, 0));
+                // World-z-parameterized, column-seeded jag: continuous across
+                // every z seam of the chunk column. Mostly erode (move left,
+                // widening the gap) to keep a minimum gap.
+                leftPos.setX(i, x - crackJagOffset(cx, cz * chunkSize + z, 0));
             }
         }
         leftPos.needsUpdate = true;
@@ -187,7 +188,7 @@ export function createCrackedFloorMesh(
             if (x < -rightFloorWidth / 2 + 0.1) {
                 // Add to X (move right, widening gap); side 1 = the crack's
                 // right edge, decorrelated from the left by the 123.4 phase.
-                rightPos.setX(i, x + crackJagOffset(clusterX, clusterZ, cz * chunkSize + z, 1));
+                rightPos.setX(i, x + crackJagOffset(cx, cz * chunkSize + z, 1));
             }
         }
         rightPos.needsUpdate = true;
@@ -224,18 +225,94 @@ export function createCrackedFloorMesh(
     const fogParticles = isSharedEdgeCrack ? ABYSS_FOG_PARTICLES / 2 : ABYSS_FOG_PARTICLES;
     const fog = createAbyssFog(chunkSize, crackWidth, rand, fogParticles);
     fog.position.x = crackLocalX; // rise out of the crack, wherever it sits
-    fog.position.y = -5; // Start fog deep down
+    fog.position.y = FA_RIFT.FOG.MESH_Y; // Start fog deep down
     group.add(fog);
     // Fog material is per-chunk; the InstancedMesh GPU buffer is freed by the
     // caller via the fogSystem reference, but its material is tracked here too.
     if (fog.material instanceof THREE.Material)
         disposables.push(fog.material);
 
+    // --- Void tear (rift presence) ---
+    // A translucent pure-black plane standing in the crack so the rift reads
+    // from fog distance as a dark vertical rip crossing the whole room, not a
+    // ground-only line. On the regular path (interior crack, crackLocalX = 0)
+    // every chunk owns its own tear. The owner rule only matters for the
+    // retained edge-crack capability: a shared edge crack would otherwise get
+    // TWO coplanar tears (one per x-neighbor: z-fighting + doubled opacity),
+    // so only the chunk holding the crack on its +x side (crackLocalX >= 0)
+    // OWNS the tear — the analogue of the fog's half-density split.
+    if (crackLocalX >= 0) {
+        const tear = createVoidTear(chunkSize, cx, cz);
+        tear.position.x = crackLocalX;
+        group.add(tear);
+        disposables.push(tear.material as THREE.Material);
+    }
+
     return { group, fog, disposables };
 }
 
 /**
- * Creates an instanced mesh for rising fog particles in the abyss
+ * Builds the FORCED_ALIGNMENT "void tear": a translucent pure-black vertical
+ * plane standing in the crack (knobs in FA_RIFT.TEAR). The top edge is torn
+ * ragged by the same column-seeded, world-z-parameterized jag noise as the
+ * floor crack edges (crackJagOffset, side 2), so the tear's silhouette joins
+ * into one continuous rip across every z seam of the chunk column.
+ * DoubleSide + no depth write: it must read as a rip in space, not a wall.
+ * One plane per owning chunk — effectively zero cost.
+ *
+ * @param chunkSize - Size of the chunk (the tear spans its full z extent).
+ * @param cx - Chunk COLUMN x coordinate (jag seed).
+ * @param cz - Chunk Z coordinate (world-z base for the jag parameterization).
+ */
+function createVoidTear(
+    chunkSize: number,
+    cx: number,
+    cz: number,
+): THREE.Mesh {
+    const { HEIGHT, BASE_Y, OPACITY, JAG_SCALE } = FA_RIFT.TEAR;
+    const planeHeight = HEIGHT - BASE_Y;
+    const geometry = new THREE.PlaneGeometry(chunkSize, planeHeight, 32, 1);
+    const pos = geometry.attributes.position;
+    const topLocalY = planeHeight / 2;
+
+    for (let i = 0; i < pos.count; i++) {
+        // Only the top row is torn (the bottom row stays buried in the crack).
+        if (pos.getY(i) < topLocalY - 0.1)
+            continue;
+        // After the -90° y-rotation below, local +x maps to world +z, so the
+        // jag is parameterized by world z — continuous across the column's
+        // z seams, exactly like the floor crack edges.
+        const worldZ = cz * chunkSize + pos.getX(i);
+        pos.setY(i, topLocalY - crackJagOffset(cx, worldZ, 2) * JAG_SCALE);
+    }
+    pos.needsUpdate = true;
+
+    const material = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: OPACITY,
+        side: THREE.DoubleSide,
+        depthWrite: false, // a rip, not an occluder — never punches holes in fog
+    });
+
+    const tear = new THREE.Mesh(geometry, material);
+    tear.name = 'riftTear';
+    tear.rotation.y = -Math.PI / 2; // stand upright along the crack (z axis)
+    tear.position.y = (HEIGHT + BASE_Y) / 2;
+    return tear;
+}
+
+/**
+ * Creates an instanced mesh for rising fog particles in the abyss.
+ *
+ * Rift presence: the column no longer caps near the floor. Most particles
+ * cycle through the DENSE band (bottom .. FA_RIFT.FOG.DENSE_TOP); a sparse
+ * minority of LEAKERS — slightly larger, fewer per metre — rise on past it to
+ * FA_RIFT.FOG.LEAK_TOP, so the crack reads as a tall leak of the void without
+ * doubling the near-ground density. Per-instance recycle ceilings are written
+ * to userData.topYs (+ userData.resetY) and consumed by
+ * ChunkAnimator.animateFogSystem — the two MUST agree or particles teleport
+ * mid-rise.
  */
 export function createAbyssFog(
     chunkSize: number,
@@ -254,27 +331,43 @@ export function createAbyssFog(
     const mesh = new THREE.InstancedMesh(geometry, material, particleCount);
     const dummy = new THREE.Object3D();
 
+    // FA_RIFT.FOG heights are world-frame; the fog mesh sits at y = MESH_Y
+    // inside the chunk, so convert once into the mesh's local frame.
+    const { MESH_Y, BOTTOM, DENSE_TOP, LEAK_TOP, LEAK_FRACTION, LEAK_SCALE } = FA_RIFT.FOG;
+    const localBottom = BOTTOM - MESH_Y;
+    const localDenseTop = DENSE_TOP - MESH_Y;
+    const localLeakTop = LEAK_TOP - MESH_Y;
+
+    const speeds: number[] = [];
+    const topYs: number[] = [];
     for (let i = 0; i < particleCount; i++) {
+        // Deterministic dense/leak split (越界泄漏: 上半段稍大稍稀).
+        const isLeaker = rand() < LEAK_FRACTION;
+        const topY = isLeaker ? localLeakTop : localDenseTop;
+
         // Deterministic position within the crack volume
         dummy.position.set(
             (rand() - 0.5) * crackWidth * 1.5, // Slightly wider spread
-            -160 + rand() * 162.0, // Range from -160m to +2m
+            localBottom + rand() * (topY - localBottom), // Anywhere along its own cycle
             (rand() - 0.5) * chunkSize, // Along entire chunk length
         );
 
-        // Deterministic rotation and scale
+        // Deterministic rotation and scale (leakers slightly larger)
         dummy.rotation.set(rand() * Math.PI, rand() * Math.PI, rand() * Math.PI);
-        const s = 1.0 + rand() * 2.0;
+        const s = (1.0 + rand() * 2.0) * (isLeaker ? LEAK_SCALE : 1.0);
         dummy.scale.set(s, s, s);
 
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
 
-        // Use user data to store speed for animation
-        if (!mesh.userData.speeds)
-            mesh.userData.speeds = [];
-        mesh.userData.speeds[i] = 0.5 + rand() * 1.5; // Upward speed
+        speeds.push(0.5 + rand() * 1.5); // Upward speed
+        topYs.push(topY); // Per-instance recycle ceiling
     }
+
+    // Animation data consumed by ChunkAnimator.animateFogSystem.
+    mesh.userData.speeds = speeds;
+    mesh.userData.topYs = topYs;
+    mesh.userData.resetY = localBottom;
 
     mesh.instanceMatrix.needsUpdate = true;
     return mesh;

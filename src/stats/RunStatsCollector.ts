@@ -169,9 +169,9 @@ export class RunStatsCollector {
         this.stats.xPositionMax = Math.max(this.stats.xPositionMax, playerX);
 
         // Track time on crack (neutral zone in FORCED_ALIGNMENT). The crack
-        // is the cluster's rift line (riftLineXForWorldX, the single source
-        // of the crack base point) — NOT the world origin x=0, which no rift
-        // ever passes through.
+        // is the NEAREST physical rift line — one per FA chunk column
+        // (riftLineXForWorldX, the single source of the crack base point) —
+        // NOT the cluster's semantic side axis, which is solid floor.
         if (
             Math.abs(playerX - riftLineXForWorldX(playerX)) < 5.0
             && currentRoom === RoomType.FORCED_ALIGNMENT

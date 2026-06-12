@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { LIVE_PROFILE } from '../src/config';
 import { RunStatsCollector } from '../src/stats/RunStatsCollector';
-import { riftLineXForWorldX, RoomType } from '../src/world/RoomConfig';
+import { faSideAxisX, riftLineXForWorldX, RoomType } from '../src/world/RoomConfig';
 
-// The FORCED_ALIGNMENT crack of the origin cluster: the rift line is the
-// cluster CENTER (riftLineXForWorldX), never the world origin x=0.
+// A FORCED_ALIGNMENT crack near the origin: the rift lines are the chunk
+// COLUMN centers (riftLineXForWorldX) — one crack per 80m column.
 const CRACK_X = riftLineXForWorldX(0);
+// The cluster's semantic side axis — solid mid-floor between the two cracks.
+const AXIS_X = faSideAxisX(0);
 
 describe('runStatsCollector', () => {
     let collector: RunStatsCollector;
@@ -68,17 +70,18 @@ describe('runStatsCollector', () => {
             expect(stats.xPositionMax).toBe(200);
         });
 
-        it('accumulates onCrackTime when standing on the cluster rift line in FA', () => {
-            // Within ±5m of the cluster's rift line (riftLineXForWorldX).
+        it('accumulates onCrackTime when standing on a rift line in FA', () => {
+            // Within ±5m of the nearest physical rift line (riftLineXForWorldX).
             collector.update(2.0, 0.5, false, 0, RoomType.FORCED_ALIGNMENT, CRACK_X - 2, false, false);
             collector.update(3.0, 0.5, false, 0, RoomType.FORCED_ALIGNMENT, CRACK_X + 2, false, false);
             expect(collector.getStats().onCrackTime).toBe(5.0);
         });
 
-        it('does NOT accumulate onCrackTime at the world origin (no rift passes x=0)', () => {
-            // x=0 is 35-45m from any cluster's rift line — the "orderly side".
-            expect(Math.abs(0 - riftLineXForWorldX(0))).toBeGreaterThanOrEqual(5);
-            collector.update(5.0, 0.5, false, 0, RoomType.FORCED_ALIGNMENT, 0, false, false);
+        it('does NOT accumulate onCrackTime on the cluster side axis (solid floor between cracks)', () => {
+            // The semantic axis is the midpoint between the two cracks — 40m
+            // from either rift line, the farthest-from-a-crack point there is.
+            expect(Math.abs(AXIS_X - riftLineXForWorldX(AXIS_X))).toBeGreaterThanOrEqual(5);
+            collector.update(5.0, 0.5, false, 0, RoomType.FORCED_ALIGNMENT, AXIS_X, false, false);
             expect(collector.getStats().onCrackTime).toBe(0);
         });
 

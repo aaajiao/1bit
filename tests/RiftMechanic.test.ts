@@ -45,10 +45,12 @@ function findRiftClusterWithIntactNeighborZ(): { clusterX: number; clusterZ: num
     throw new Error('No rift cluster with intact z-neighbour found');
 }
 
-// Crack center x (the cluster rift line) of the nearest FORCED_ALIGNMENT
-// cluster on cluster row 0, and a z inside that cluster row's footprint.
+// The nearest FORCED_ALIGNMENT cluster on cluster row 0: its SEMANTIC side
+// axis (the cluster center — solid floor) and its TWO physical rift lines
+// (one per chunk column, at axis ± CHUNK_SIZE/2, 80m apart).
 const riftClusterX = findClusterX(0, 1, true);
-const riftCenterX = clusterCenterWorld(riftClusterX);
+const riftAxisX = clusterCenterWorld(riftClusterX);
+const riftLines = [riftAxisX - CHUNK_SIZE / 2, riftAxisX + CHUNK_SIZE / 2];
 const row0Z = clusterCenterWorld(0); // z inside cluster row 0
 
 // Minimal fake PlayerManager recording only the methods RiftMechanic uses.
@@ -82,6 +84,7 @@ function makeAudio() {
     };
     let lastFogIntensity = -1;
     let lastBinauralOffset = Number.NaN;
+    let lastBinauralDistance = Number.NaN;
     const audio = {
         startRiftFog: () => { calls.startRiftFog++; },
         updateRiftFog: (intensity: number) => { calls.updateRiftFog++; lastFogIntensity = intensity; },
@@ -89,38 +92,45 @@ function makeAudio() {
         playRiftFall: () => { calls.playRiftFall++; },
         stopRiftFall: () => { calls.stopRiftFall++; },
         playRiftRespawn: () => { calls.playRiftRespawn++; },
-        updateBinauralPosition: (offset: number) => { calls.updateBinauralPosition++; lastBinauralOffset = offset; },
+        updateBinauralPosition: (sideOffsetX: number, riftDistance: number) => {
+            calls.updateBinauralPosition++;
+            lastBinauralOffset = sideOffsetX;
+            lastBinauralDistance = riftDistance;
+        },
     };
     return {
         audio: audio as unknown as AudioSystemInterface,
         calls,
         getFogIntensity: () => lastFogIntensity,
         getBinauralOffset: () => lastBinauralOffset,
+        getBinauralDistance: () => lastBinauralDistance,
     };
 }
 
 describe('riftMechanic', () => {
-    describe('crack / fall logic (one rift per cluster)', () => {
-        it('should engage low gravity infinite-fall ground when above the crack', () => {
-            const rift = new RiftMechanic();
-            const { player, groundLevels, gravities } = makePlayer();
-            const { audio } = makeAudio();
+    describe('crack / fall logic (one rift per chunk column)', () => {
+        it('should engage low gravity infinite-fall ground when above EITHER crack', () => {
+            // An FA cluster carries TWO cracks, one per chunk column.
+            for (const line of riftLines) {
+                const rift = new RiftMechanic();
+                const { player, groundLevels, gravities } = makePlayer();
+                const { audio } = makeAudio();
 
-            // Exactly on a rift cluster center line -> distFromCenter 0 < crackHalfWidth.
-            const pos = new THREE.Vector3(riftCenterX, 2, row0Z);
-            rift.update(player, audio, pos);
+                // Exactly on a rift line -> distFromCenter 0 < crackHalfWidth.
+                rift.update(player, audio, new THREE.Vector3(line, 2, row0Z));
 
-            expect(groundLevels).toContain(-1000);
-            expect(gravities).toContain(RIFT_PHYSICS.fallGravity);
+                expect(groundLevels).toContain(-1000);
+                expect(gravities).toContain(RIFT_PHYSICS.fallGravity);
+            }
         });
 
-        it('should keep solid ground and default gravity when away from the crack', () => {
+        it('should keep solid ground and default gravity when away from the cracks', () => {
             const rift = new RiftMechanic();
             const { player, groundLevels, gravities } = makePlayer();
             const { audio, calls } = makeAudio();
 
-            // Same rift cluster, 30m from the crack line (footprint is +/-80m).
-            const pos = new THREE.Vector3(riftCenterX + 30, 2, row0Z);
+            // 20m from the nearest crack line (cracks at axis ± 40).
+            const pos = new THREE.Vector3(riftLines[0] + 20, 2, row0Z);
             rift.update(player, audio, pos);
 
             expect(groundLevels).toContain(2.0);
@@ -129,36 +139,35 @@ describe('riftMechanic', () => {
             expect(calls.stopRiftFall).toBeGreaterThan(0);
         });
 
-        it('keeps the rift UNIQUE: no fall at any of the cluster four chunk centers', () => {
-            // The old per-chunk cracks ran along every FA chunk center line;
-            // the cluster rift replaces them with ONE line on the inner seam.
-            // Each chunk center is CHUNK_SIZE/2 = 40m from that line — solid.
+        it('keeps exactly TWO cracks, 80m apart: midpoints between them are solid', () => {
+            // The one-crack-per-cluster experiment is reverted: the cracks sit
+            // on the chunk column centers (axis ± 40), and the old single-line
+            // location — the cluster center — is now solid mid-floor, as are
+            // the cluster footprint x edges (axis ± 80).
+            expect(riftLines[1] - riftLines[0]).toBe(CHUNK_SIZE);
             const rift = new RiftMechanic();
-            for (const chunkOffsetX of [-CHUNK_SIZE / 2, CHUNK_SIZE / 2]) {
+            for (const solidX of [riftAxisX, riftAxisX - CLUSTER_SIZE / 2 + 1, riftAxisX + CLUSTER_SIZE / 2 - 1]) {
                 for (const chunkOffsetZ of [-CHUNK_SIZE / 2, CHUNK_SIZE / 2]) {
                     const { player, groundLevels } = makePlayer();
                     const { audio } = makeAudio();
-                    const pos = new THREE.Vector3(
-                        riftCenterX + chunkOffsetX,
-                        2,
-                        row0Z + chunkOffsetZ,
-                    );
-                    rift.update(player, audio, pos);
+                    rift.update(player, audio, new THREE.Vector3(solidX, 2, row0Z + chunkOffsetZ));
                     expect(groundLevels).not.toContain(-1000);
                     expect(groundLevels).toContain(2.0);
                 }
             }
         });
 
-        it('should open the fall along the WHOLE cluster z extent of the crack line', () => {
+        it('should open the fall along the WHOLE cluster z extent of both crack lines', () => {
             const rift = new RiftMechanic();
             const halfCluster = CLUSTER_SIZE / 2;
             // Near both z edges of the rift cluster row and at its center.
-            for (const dz of [-halfCluster + 0.5, 0, halfCluster - 0.5]) {
-                const { player, groundLevels } = makePlayer();
-                const { audio } = makeAudio();
-                rift.update(player, audio, new THREE.Vector3(riftCenterX, 2, row0Z + dz));
-                expect(groundLevels).toContain(-1000);
+            for (const line of riftLines) {
+                for (const dz of [-halfCluster + 0.5, 0, halfCluster - 0.5]) {
+                    const { player, groundLevels } = makePlayer();
+                    const { audio } = makeAudio();
+                    rift.update(player, audio, new THREE.Vector3(line, 2, row0Z + dz));
+                    expect(groundLevels).toContain(-1000);
+                }
             }
         });
 
@@ -168,46 +177,59 @@ describe('riftMechanic', () => {
             const { audio, calls } = makeAudio();
 
             // Above the crack, y in (-5, 0) triggers the fall sound.
-            const pos = new THREE.Vector3(riftCenterX, -2, row0Z);
+            const pos = new THREE.Vector3(riftLines[0], -2, row0Z);
             rift.update(player, audio, pos);
 
             expect(calls.playRiftFall).toBeGreaterThan(0);
         });
 
-        it('should drive rift fog intensity from proximity to the crack line', () => {
+        it('should drive rift fog intensity from proximity to the NEAREST crack line', () => {
             const rift = new RiftMechanic();
             const { player } = makePlayer();
             const { audio, calls, getFogIntensity } = makeAudio();
 
-            rift.update(player, audio, new THREE.Vector3(riftCenterX, 2, row0Z));
+            rift.update(player, audio, new THREE.Vector3(riftLines[1], 2, row0Z));
             expect(calls.startRiftFog).toBeGreaterThan(0);
-            // At the center, proximity is maxed (1).
+            // On a crack, proximity is maxed (1).
             expect(getFogIntensity()).toBeCloseTo(1, 5);
+
+            // On the axis midway between the cracks (40m out) it fades to 0.
+            rift.update(player, audio, new THREE.Vector3(riftAxisX, 2, row0Z));
+            expect(getFogIntensity()).toBeCloseTo(0, 5);
         });
 
-        it('feeds the binaural side as the SIGNED offset from the cluster rift line', () => {
+        it('feeds the binaural SIDE from the semantic axis and the LOUDNESS from the nearest crack', () => {
             const rift = new RiftMechanic();
             const { player } = makePlayer();
-            const { audio, getBinauralOffset } = makeAudio();
+            const { audio, getBinauralOffset, getBinauralDistance } = makeAudio();
 
-            // 50m right of the line — beyond a chunk half-width, only reachable
-            // because the crack base is the cluster line, not the chunk center.
-            rift.update(player, audio, new THREE.Vector3(riftCenterX + 50, 2, row0Z));
+            // 50m right of the AXIS: the side offset reads the room choice
+            // (+50, well past the right crack at +40), while the loudness
+            // distance reads the nearest PHYSICAL crack (10m away).
+            rift.update(player, audio, new THREE.Vector3(riftAxisX + 50, 2, row0Z));
             expect(getBinauralOffset()).toBeCloseTo(50, 9);
-            rift.update(player, audio, new THREE.Vector3(riftCenterX - 50, 2, row0Z));
+            expect(getBinauralDistance()).toBeCloseTo(10, 9);
+            rift.update(player, audio, new THREE.Vector3(riftAxisX - 50, 2, row0Z));
             expect(getBinauralOffset()).toBeCloseTo(-50, 9);
+            expect(getBinauralDistance()).toBeCloseTo(10, 9);
+
+            // Standing ON the left crack the side STILL reads left (-40):
+            // the semantic side never flips across a physical crack.
+            rift.update(player, audio, new THREE.Vector3(riftLines[0], 2, row0Z));
+            expect(getBinauralOffset()).toBeCloseTo(-CHUNK_SIZE / 2, 9);
+            expect(getBinauralDistance()).toBeCloseTo(0, 9);
         });
     });
 
     describe('cluster validation (round convention)', () => {
-        it('should NOT open the fall over a non-rift cluster center (intact floor)', () => {
+        it('should NOT open the fall over a non-rift cluster column center (intact floor)', () => {
             const rift = new RiftMechanic();
             const { player, groundLevels } = makePlayer();
             const { audio } = makeAudio();
 
-            // On the center line of a cluster that has no crack at all.
-            const intactCenterX = clusterCenterWorld(findClusterX(0, 1, false));
-            rift.update(player, audio, new THREE.Vector3(intactCenterX, 2, row0Z));
+            // On a chunk column center line of a cluster that has no crack.
+            const intactLineX = clusterCenterWorld(findClusterX(0, 1, false)) - CHUNK_SIZE / 2;
+            rift.update(player, audio, new THREE.Vector3(intactLineX, 2, row0Z));
 
             expect(groundLevels).not.toContain(-1000);
             expect(groundLevels).toContain(2.0);
@@ -218,11 +240,11 @@ describe('riftMechanic', () => {
             const { player, groundLevels } = makePlayer();
             const { audio } = makeAudio();
 
-            // x sits on a rift cluster's crack line, but z is on the visible
-            // floor of the +z neighbour cluster, which has no crack.
+            // x sits on a rift cluster's left crack line, but z is on the
+            // visible floor of the +z neighbour cluster, which has no crack.
             const { clusterX, neighborClusterZ } = findRiftClusterWithIntactNeighborZ();
             const pos = new THREE.Vector3(
-                clusterCenterWorld(clusterX),
+                clusterCenterWorld(clusterX) - CHUNK_SIZE / 2,
                 2,
                 clusterCenterWorld(neighborClusterZ),
             );
@@ -240,7 +262,11 @@ describe('riftMechanic', () => {
             // Just inside the rift cluster's footprint near the z boundary.
             const { clusterX, clusterZ } = findRiftClusterWithIntactNeighborZ();
             const zNearBoundary = clusterCenterWorld(clusterZ) + CLUSTER_SIZE / 2 - 0.5;
-            rift.update(player, audio, new THREE.Vector3(clusterCenterWorld(clusterX), 2, zNearBoundary));
+            rift.update(player, audio, new THREE.Vector3(
+                clusterCenterWorld(clusterX) - CHUNK_SIZE / 2,
+                2,
+                zNearBoundary,
+            ));
 
             expect(groundLevels).toContain(-1000);
         });
@@ -250,8 +276,8 @@ describe('riftMechanic', () => {
             const { player, groundLevels } = makePlayer();
             const { audio } = makeAudio();
 
-            const negRiftCenterX = clusterCenterWorld(findClusterX(0, -1, true));
-            rift.update(player, audio, new THREE.Vector3(negRiftCenterX, 2, row0Z));
+            const negRiftLineX = clusterCenterWorld(findClusterX(0, -1, true)) - CHUNK_SIZE / 2;
+            rift.update(player, audio, new THREE.Vector3(negRiftLineX, 2, row0Z));
 
             expect(groundLevels).toContain(-1000);
         });
@@ -264,7 +290,7 @@ describe('riftMechanic', () => {
             const { audio, calls } = makeAudio();
 
             // y just above threshold (-150): -149 is not < -150.
-            rift.update(player, audio, new THREE.Vector3(riftCenterX, RIFT_PHYSICS.respawnHeight + 1, row0Z));
+            rift.update(player, audio, new THREE.Vector3(riftLines[0], RIFT_PHYSICS.respawnHeight + 1, row0Z));
             expect(teleports.length).toBe(0);
             expect(calls.playRiftRespawn).toBe(0);
         });
@@ -274,28 +300,31 @@ describe('riftMechanic', () => {
             const { player, teleports } = makePlayer();
             const { audio, calls } = makeAudio();
 
-            rift.update(player, audio, new THREE.Vector3(riftCenterX, RIFT_PHYSICS.respawnHeight - 1, row0Z));
+            rift.update(player, audio, new THREE.Vector3(riftLines[0], RIFT_PHYSICS.respawnHeight - 1, row0Z));
             expect(teleports.length).toBe(1);
             expect(calls.playRiftRespawn).toBe(1);
         });
 
-        it('should respawn within rift line +/- safeSpawnDistance and reset y to surface', () => {
-            const rift = new RiftMechanic();
-            const { player, teleports } = makePlayer();
-            const { audio } = makeAudio();
+        it('should respawn within the NEAREST rift line +/- safeSpawnDistance and reset y to surface', () => {
+            // Each crack respawns onto its own banks (both lines exercised).
+            for (const line of riftLines) {
+                const rift = new RiftMechanic();
+                const { player, teleports } = makePlayer();
+                const { audio } = makeAudio();
 
-            // Player slightly positive of the rift line -> sign +1.
-            const z = row0Z + 12.34;
-            rift.update(player, audio, new THREE.Vector3(riftCenterX + 0.5, -200, z));
+                // Player slightly positive of this rift line -> sign +1.
+                const z = row0Z + 12.34;
+                rift.update(player, audio, new THREE.Vector3(line + 0.5, -200, z));
 
-            expect(teleports.length).toBe(1);
-            const t = teleports[0];
-            const lineX = riftLineXForWorldX(riftCenterX + 0.5);
-            expect(lineX).toBe(riftCenterX); // sanity: same cluster line
-            expect(Math.abs(t.x - lineX)).toBeCloseTo(RIFT_PHYSICS.safeSpawnDistance, 5);
-            expect(t.x).toBeCloseTo(lineX + RIFT_PHYSICS.safeSpawnDistance, 5);
-            expect(t.y).toBe(2.0);
-            expect(t.z).toBe(z); // z preserved
+                expect(teleports.length).toBe(1);
+                const t = teleports[0];
+                const lineX = riftLineXForWorldX(line + 0.5);
+                expect(lineX).toBe(line); // sanity: nearest line is this crack
+                expect(Math.abs(t.x - lineX)).toBeCloseTo(RIFT_PHYSICS.safeSpawnDistance, 5);
+                expect(t.x).toBeCloseTo(lineX + RIFT_PHYSICS.safeSpawnDistance, 5);
+                expect(t.y).toBe(2.0);
+                expect(t.z).toBe(z); // z preserved
+            }
         });
 
         it('should respawn on the negative side when player fell on the negative side of the line', () => {
@@ -304,9 +333,9 @@ describe('riftMechanic', () => {
             const { audio } = makeAudio();
 
             // x just negative of the rift line -> sign -1.
-            rift.update(player, audio, new THREE.Vector3(riftCenterX - 0.5, -300, row0Z));
+            rift.update(player, audio, new THREE.Vector3(riftLines[1] - 0.5, -300, row0Z));
             const t = teleports[0];
-            expect(t.x).toBeCloseTo(riftCenterX - RIFT_PHYSICS.safeSpawnDistance, 5);
+            expect(t.x).toBeCloseTo(riftLines[1] - RIFT_PHYSICS.safeSpawnDistance, 5);
         });
 
         it('should reset gravity to default on respawn', () => {
@@ -314,7 +343,7 @@ describe('riftMechanic', () => {
             const { player, gravities } = makePlayer();
             const { audio } = makeAudio();
 
-            rift.update(player, audio, new THREE.Vector3(riftCenterX, -200, row0Z));
+            rift.update(player, audio, new THREE.Vector3(riftLines[0], -200, row0Z));
             // Last gravity write should be the default reset.
             expect(gravities[gravities.length - 1]).toBe(29.4);
         });

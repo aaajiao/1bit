@@ -800,23 +800,25 @@ export class AudioController implements AudioSystemInterface {
     }
 
     /**
-     * Drive the binaural beat from the player's SIGNED x offset to the rift
-     * crack center (flow-audit break #7). |offset| keeps the historical
-     * proximity loudness; the SIGN now retunes the beat — the left (negative)
-     * side narrows it toward consonance, the right (positive) side widens it
-     * toward dissonance — so the player can hear which side they chose.
+     * Drive the binaural beat from the two rift readings (flow-audit break
+     * #7, split into the two rift concepts): `riftDistance` — the distance to
+     * the nearest PHYSICAL crack — drives loudness (each crack carries its
+     * own fieldWidth-sized sound field), while the SIGNED `sideOffsetX` from
+     * the room's SEMANTIC axis (faSideAxisX, the cluster center) retunes the
+     * beat — the left (negative) side narrows it toward consonance, the right
+     * (positive) side widens it toward dissonance — so the player hears which
+     * side of the ROOM they chose, not which side of the nearest crack.
      */
-    updateBinauralPosition(signedOffsetX: number, crackWidth: number): void {
+    updateBinauralPosition(sideOffsetX: number, riftDistance: number): void {
         const ctx = this.engine.getContext();
         if (!this.binauralGain || !ctx)
             return;
 
-        const distanceFromCrack = Math.abs(signedOffsetX);
-        const intensity = Math.max(0, 1 - distanceFromCrack / crackWidth);
+        const intensity = Math.max(0, 1 - riftDistance / BINAURAL_SIDE_CONFIG.fieldWidth);
         this.binauralGain.gain.setTargetAtTime(intensity, ctx.currentTime, 0.1);
 
         if (this.binauralRight && this.binauralBeatFreq > 0) {
-            const side = Math.max(-1, Math.min(1, signedOffsetX / crackWidth));
+            const side = Math.max(-1, Math.min(1, sideOffsetX / BINAURAL_SIDE_CONFIG.sideHalfRange));
             const beat = this.binauralBeatFreq * (1 + side * BINAURAL_SIDE_CONFIG.detuneGain);
             this.binauralRight.frequency.setTargetAtTime(
                 this.binauralBaseFreq + beat,

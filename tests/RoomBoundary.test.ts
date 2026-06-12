@@ -4,6 +4,7 @@ import { RIFT_PHYSICS } from '../src/config/physics';
 import {
     chunkToCluster,
     clusterCenterWorld,
+    faSideAxisX,
     getRoomTypeAtWorldPosition,
     getRoomTypeForCluster,
     getRoomTypeFromPosition,
@@ -99,7 +100,7 @@ describe('room boundary attribution (round convention)', () => {
         });
     });
 
-    describe('clusterCenterWorld / riftLineXForWorldX', () => {
+    describe('clusterCenterWorld / faSideAxisX / riftLineXForWorldX', () => {
         it('places the cluster center on the seam between the cluster chunk columns', () => {
             for (const k of [-2, 0, 3]) {
                 const center = clusterCenterWorld(k, S);
@@ -110,18 +111,46 @@ describe('room boundary attribution (round convention)', () => {
             }
         });
 
-        it('returns the same rift line for every world x inside one cluster', () => {
+        it('keeps the SEMANTIC side axis at the cluster center for every x inside one cluster', () => {
             for (const k of [-2, 0, 5]) {
                 const center = clusterCenterWorld(k, S);
                 const halfCluster = (CC * S) / 2;
-                const line = riftLineXForWorldX(center, S);
-                expect(line).toBe(center);
-                // Anywhere in the cluster footprint maps to the same line.
+                expect(faSideAxisX(center, S)).toBe(center);
+                // Anywhere in the cluster footprint maps to the same axis.
                 for (const off of [-halfCluster, -30, 0, 30, halfCluster - 0.01]) {
-                    expect(riftLineXForWorldX(center + off, S)).toBe(center);
+                    expect(faSideAxisX(center + off, S)).toBe(center);
                 }
-                // The next cluster has its own line, one cluster width away.
-                expect(riftLineXForWorldX(center + halfCluster, S)).toBe(center + CC * S);
+                // The next cluster has its own axis, one cluster width away.
+                expect(faSideAxisX(center + halfCluster, S)).toBe(center + CC * S);
+            }
+        });
+
+        it('returns the nearest chunk COLUMN center as the physical rift line', () => {
+            for (const k of [-3, 0, 4]) {
+                const line = k * S; // chunk k's column center
+                // Every x on chunk k's visible floor maps to chunk k's line
+                // (+0 normalizes the -0 that Math.round(-0.5)*S produces).
+                for (const off of [-HALF, -30, 0, 30, HALF - 0.01]) {
+                    expect(riftLineXForWorldX(line + off, S) + 0).toBe(line);
+                }
+                // The next column has its own line, one chunk width away.
+                expect(riftLineXForWorldX(line + HALF, S)).toBe(line + S);
+            }
+        });
+
+        it('gives each FA cluster exactly TWO rift lines, 80m apart, at the axis ±S/2', () => {
+            for (const k of [-2, 0, 5]) {
+                const axis = clusterCenterWorld(k, S);
+                const halfCluster = (CC * S) / 2;
+                // Collect the distinct rift lines met while walking the footprint.
+                const lines = new Set<number>();
+                for (let off = -halfCluster; off < halfCluster; off += 1)
+                    lines.add(riftLineXForWorldX(axis + off, S));
+                expect([...lines].sort((a, b) => a - b)).toEqual([axis - S / 2, axis + S / 2]);
+                // Adjacent crack spacing is exactly one chunk (80m).
+                expect(axis + S / 2 - (axis - S / 2)).toBe(S);
+                // The axis itself is NOT a rift line — solid mid-floor.
+                expect(Math.abs(axis - riftLineXForWorldX(axis, S))).toBe(S / 2);
             }
         });
     });
@@ -197,16 +226,19 @@ describe('room boundary attribution (round convention)', () => {
             }
         });
 
-        it('attributes the rift crack strip around the cluster center to that cluster', () => {
-            // The FORCED_ALIGNMENT crack runs along the CLUSTER center line, so
-            // anywhere within the crack half-width must belong to that cluster.
+        it('attributes each rift crack strip (around a chunk column center) to that chunk and cluster', () => {
+            // The FORCED_ALIGNMENT cracks run along the CHUNK column centers
+            // (riftLineXForWorldX), so anywhere within the crack half-width
+            // must belong to that chunk — and through it to its cluster.
             const dxs = [-RIFT_PHYSICS.crackHalfWidth + 0.01, 0, RIFT_PHYSICS.crackHalfWidth - 0.01];
-            for (const k of [-3, 0, 5]) {
-                const line = clusterCenterWorld(k, S);
+            for (const c of [-3, 0, 5]) {
+                const line = c * S; // chunk c's column center = its rift line
+                expect(riftLineXForWorldX(line, S)).toBe(line);
                 for (const dx of dxs) {
-                    expect(chunkToCluster(chunkOf(line + dx))).toBe(k);
-                    expect(getRoomTypeAtWorldPosition(line + dx, clusterCenterWorld(k, S), S))
-                        .toBe(getRoomTypeForCluster(k, k));
+                    expect(chunkOf(line + dx)).toBe(c);
+                    expect(chunkToCluster(chunkOf(line + dx))).toBe(chunkToCluster(c));
+                    expect(getRoomTypeAtWorldPosition(line + dx, clusterCenterWorld(chunkToCluster(c), S), S))
+                        .toBe(getRoomTypeForCluster(chunkToCluster(c), chunkToCluster(c)));
                 }
             }
         });

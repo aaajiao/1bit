@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createCrackedFloorMesh, createSeamFloorMesh, disposeFloorPool } from '../src/world/FloorTile';
+import { FA_RIFT } from '../src/world/RoomConfig';
 
 const CHUNK_SIZE = 80;
 
@@ -77,10 +78,11 @@ describe('floorTile createSeamFloorMesh (POLARIZED checkerboard)', () => {
     });
 });
 
-// F0 room clustering — the FORCED_ALIGNMENT rift is ONE line per 2x2-chunk
-// cluster, running along the cluster center (a chunk footprint edge), so each
-// FA chunk carries only the crack half overlapping its own floor.
-describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
+// The FORCED_ALIGNMENT rift is one line per CHUNK COLUMN at the chunk center
+// (crackLocalX = 0 is the regular path ChunkManager always takes). The
+// edge-crack capability (crack ON a footprint edge, shared with the
+// x-neighbor) is retained and still exercised here.
+describe('floorTile createCrackedFloorMesh (per-column rift)', () => {
     const floorMaterial = new THREE.MeshLambertMaterial();
     const CRACK_WIDTH = 4;
 
@@ -112,7 +114,7 @@ describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
         return (mesh.geometry as THREE.PlaneGeometry).parameters.width;
     }
 
-    it('keeps the historical centered layout when the crack is at local x=0', () => {
+    it('keeps the historical centered layout when the crack is at local x=0 (the regular path)', () => {
         const { floors, abyss } = build(0);
         expect(floors).toHaveLength(2);
         const expectedWidth = (CHUNK_SIZE - CRACK_WIDTH) / 2; // 38
@@ -175,10 +177,10 @@ describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
         }
     });
 
-    it('connects the jagged edge across the z seam inside a cluster (one continuous crack)', () => {
-        // Chunks (0,0) and (0,1) form one column of cluster (0,0)
-        // (CLUSTER_CHUNKS=2); the column left of the rift carries the crack on
-        // its +x footprint edge (crackLocalX = +CHUNK_SIZE/2) in both chunks.
+    it('connects the jagged edge across z seams within one chunk column (one continuous crack)', () => {
+        // Chunks (0,0) and (0,1) are z-stacked in column cx=0. The jag is
+        // column-seeded (cx) and world-z-parameterized, so the crack edges of
+        // every z-stacked chunk meet at the shared seam vertices.
         const a = build(CHUNK_SIZE / 2, 0, 0);
         const b = build(CHUNK_SIZE / 2, 0, 1);
 
@@ -206,5 +208,179 @@ describe('floorTile createCrackedFloorMesh (cluster-shared rift)', () => {
         // away from the un-perturbed strip edge.
         const stripHalfWidth = (CHUNK_SIZE - CRACK_WIDTH / 2) / 2; // 39
         expect(Math.max(...seamA)).toBeLessThan(stripHalfWidth);
+    });
+
+    it('decorrelates the jags of ADJACENT chunk columns (two parallel cracks, no twins)', () => {
+        // The two cracks of one FA cluster live in columns cx and cx+1. The
+        // cx salt in the jag wave/jitter must give them genuinely different
+        // silhouettes at the same world z — never a copied or mirrored twin.
+        const a = build(0, 0, 0);
+        const b = build(0, 1, 0);
+
+        const edgeXs = (mesh: THREE.Mesh): number[] => {
+            // Right (crack-side) edge rows of the LEFT floor strip: the
+            // eroded vertices (x near the strip half-width before erosion).
+            const pos = mesh.geometry.attributes.position;
+            const geo = mesh.geometry as THREE.PlaneGeometry;
+            const halfW = geo.parameters.width / 2;
+            const xs: number[] = [];
+            for (let i = 0; i < pos.count; i++) {
+                if (pos.getX(i) > halfW - 2)
+                    xs.push(pos.getX(i));
+            }
+            return xs;
+        };
+        const jagA = edgeXs(a.floors[0]);
+        const jagB = edgeXs(b.floors[0]);
+        expect(jagA.length).toBe(jagB.length);
+        expect(jagA.length).toBeGreaterThan(0);
+        // Strict identity must fail on a clear majority of vertices.
+        let differing = 0;
+        for (let i = 0; i < jagA.length; i++) {
+            if (jagA[i] !== jagB[i])
+                differing++;
+        }
+        expect(differing).toBeGreaterThan(jagA.length / 2);
+    });
+});
+
+// Rift presence — the FA crack must be legible from anywhere in the room, so
+// the floor system grows two vertical layers: a raised abyss-fog column (with
+// sparse larger "leak" particles above the dense band) and a translucent
+// pure-black "void tear" plane standing in the crack. Knobs in FA_RIFT.
+describe('floorTile rift presence (fog column + void tear)', () => {
+    const floorMaterial = new THREE.MeshLambertMaterial();
+    const CRACK_WIDTH = 4;
+
+    function build(crackLocalX: number, cx = 0, cz = 0): ReturnType<typeof createCrackedFloorMesh> {
+        return createCrackedFloorMesh(CHUNK_SIZE, floorMaterial, CRACK_WIDTH, cx, cz, crackLocalX);
+    }
+
+    function tearOf(group: THREE.Group): THREE.Mesh | undefined {
+        return group.getObjectByName('riftTear') as THREE.Mesh | undefined;
+    }
+
+    describe('abyss-fog column', () => {
+        it('writes per-instance recycle ceilings reaching the leak top', () => {
+            const { fog } = build(CHUNK_SIZE / 2);
+            const topYs = fog!.userData.topYs as number[];
+            expect(topYs).toHaveLength(fog!.count);
+
+            const { MESH_Y, DENSE_TOP, LEAK_TOP, BOTTOM } = FA_RIFT.FOG;
+            const localDenseTop = DENSE_TOP - MESH_Y;
+            const localLeakTop = LEAK_TOP - MESH_Y;
+            // Every ceiling is one of the two bands, and both bands occur.
+            for (const top of topYs)
+                expect(top === localDenseTop || top === localLeakTop).toBe(true);
+            expect(topYs).toContain(localDenseTop);
+            expect(topYs).toContain(localLeakTop);
+            // The shared reset floor matches the configured column bottom.
+            expect(fog!.userData.resetY).toBe(BOTTOM - MESH_Y);
+        });
+
+        it('keeps the leakers a sparse minority (稍稀)', () => {
+            const { fog } = build(0);
+            const topYs = fog!.userData.topYs as number[];
+            const localLeakTop = FA_RIFT.FOG.LEAK_TOP - FA_RIFT.FOG.MESH_Y;
+            const leakers = topYs.filter(t => t === localLeakTop).length;
+            expect(leakers).toBeGreaterThan(0);
+            expect(leakers / topYs.length).toBeLessThan(0.5);
+        });
+
+        it('no particle starts above its own recycle ceiling (no boot teleport)', () => {
+            const { fog } = build(CHUNK_SIZE / 2, 3, -7);
+            const topYs = fog!.userData.topYs as number[];
+            const m = new THREE.Matrix4();
+            const p = new THREE.Vector3();
+            const q = new THREE.Quaternion();
+            const s = new THREE.Vector3();
+            for (let i = 0; i < fog!.count; i++) {
+                fog!.getMatrixAt(i, m);
+                m.decompose(p, q, s);
+                expect(p.y).toBeLessThanOrEqual(topYs[i]);
+                expect(p.y).toBeGreaterThanOrEqual(fog!.userData.resetY as number);
+            }
+        });
+    });
+
+    describe('void tear plane', () => {
+        it('stands a translucent black DoubleSide plane on the crack line', () => {
+            const { group } = build(CHUNK_SIZE / 2);
+            const tear = tearOf(group)!;
+            expect(tear).toBeDefined();
+            expect(tear.position.x).toBeCloseTo(CHUNK_SIZE / 2, 9);
+            expect(tear.position.y).toBeCloseTo((FA_RIFT.TEAR.HEIGHT + FA_RIFT.TEAR.BASE_Y) / 2, 9);
+
+            const geo = tear.geometry as THREE.PlaneGeometry;
+            expect(geo.parameters.width).toBe(CHUNK_SIZE);
+            expect(geo.parameters.height).toBe(FA_RIFT.TEAR.HEIGHT - FA_RIFT.TEAR.BASE_Y);
+
+            const mat = tear.material as THREE.MeshBasicMaterial;
+            expect(mat.transparent).toBe(true);
+            expect(mat.opacity).toBe(FA_RIFT.TEAR.OPACITY);
+            expect(mat.side).toBe(THREE.DoubleSide);
+            expect(mat.depthWrite).toBe(false);
+            expect(mat.color.getHex()).toBe(0x000000);
+        });
+
+        it('is owned by the +x-side chunk only (shared edge crack never doubles)', () => {
+            // crackLocalX >= 0 owns the tear; the -x-edge twin contributes none,
+            // mirroring the fog's half-density rule for a one-plane element.
+            expect(tearOf(build(CHUNK_SIZE / 2).group)).toBeDefined();
+            expect(tearOf(build(0).group)).toBeDefined();
+            expect(tearOf(build(-CHUNK_SIZE / 2).group)).toBeUndefined();
+        });
+
+        it('tracks the tear material in the disposables (dispose chain)', () => {
+            const { group, disposables } = build(CHUNK_SIZE / 2);
+            const tear = tearOf(group)!;
+            expect(disposables).toContain(tear.material as THREE.Material);
+        });
+
+        it('tears the top edge ragged within the configured amplitude', () => {
+            const { group } = build(CHUNK_SIZE / 2);
+            const pos = (tearOf(group)!.geometry as THREE.PlaneGeometry).attributes.position;
+            const topLocalY = (FA_RIFT.TEAR.HEIGHT - FA_RIFT.TEAR.BASE_Y) / 2;
+            // crackJagOffset is bounded by |wave| + |jitter| <= 1.5, times 0.8.
+            const maxJag = 1.5 * 0.8 * FA_RIFT.TEAR.JAG_SCALE;
+
+            let torn = 0;
+            for (let i = 0; i < pos.count; i++) {
+                const y = pos.getY(i);
+                if (y < 0)
+                    continue; // bottom row stays buried in the crack
+                expect(y).toBeLessThanOrEqual(topLocalY);
+                expect(y).toBeGreaterThanOrEqual(topLocalY - maxJag);
+                if (y < topLocalY - 1e-6)
+                    torn++;
+            }
+            expect(torn).toBeGreaterThan(0); // non-vacuous: the edge IS ragged
+        });
+
+        it('joins the torn silhouette across a column z seam (one continuous rip)', () => {
+            // Chunks (0,0) and (0,1) are z-stacked in column cx=0; both own
+            // the tear (crackLocalX >= 0). Local +x maps to world +z, so chunk
+            // (0,0)'s +z end is x=+40 (worldZ 40) and chunk (0,1)'s -z end is
+            // x=-40 (worldZ 40) — the torn top heights must meet exactly.
+            const topAt = (group: THREE.Group, localX: number): number => {
+                const pos = (tearOf(group)!.geometry as THREE.PlaneGeometry).attributes.position;
+                for (let i = 0; i < pos.count; i++) {
+                    if (pos.getX(i) === localX && pos.getY(i) > 0)
+                        return pos.getY(i);
+                }
+                throw new Error(`no top vertex at local x=${localX}`);
+            };
+            const a = topAt(build(CHUNK_SIZE / 2, 0, 0).group, CHUNK_SIZE / 2);
+            const b = topAt(build(CHUNK_SIZE / 2, 0, 1).group, -CHUNK_SIZE / 2);
+            expect(a).toBeCloseTo(b, 12);
+        });
+
+        it('is deterministic per seed (re-entering regenerates the identical tear)', () => {
+            const a = (tearOf(build(CHUNK_SIZE / 2, 3, -7).group)!.geometry as THREE.PlaneGeometry).attributes.position.array;
+            const b = (tearOf(build(CHUNK_SIZE / 2, 3, -7).group)!.geometry as THREE.PlaneGeometry).attributes.position.array;
+            expect(a.length).toBe(b.length);
+            for (let i = 0; i < a.length; i++)
+                expect(a[i]).toBe(b[i]);
+        });
     });
 });

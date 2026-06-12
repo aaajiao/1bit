@@ -12,6 +12,7 @@ import {
 } from '../src/world/FigureSystem';
 import {
     FA_FIGURE_PLACEMENT,
+    faSideAxisX,
     riftLineXForWorldX,
     ROOM_FIGURE_DENSITY,
     RoomType,
@@ -150,11 +151,14 @@ describe('figureSystem (F3 silhouettes)', () => {
                 .toBeGreaterThanOrEqual(FA_FIGURE_PLACEMENT.CRACK_CLEARANCE);
         });
 
-        it('keeps every FORCED_ALIGNMENT figure outside the rift clearance', () => {
+        it('keeps every FORCED_ALIGNMENT figure outside the clearance of its chunk own crack', () => {
             const { CRACK_CLEARANCE } = FA_FIGURE_PLACEMENT;
             for (let cx = -20; cx <= 20; cx++) {
                 for (let cz = -20; cz <= 20; cz++) {
+                    // The physical crack runs through every FA chunk's center:
+                    // chunk-local x = 0 (riftLineXForWorldX of the chunk center).
                     const crackLocalX = riftLineXForWorldX(cx * CHUNK) - cx * CHUNK;
+                    expect(crackLocalX).toBe(0);
                     for (const p of figurePlacementsForChunk(cx, cz, RoomType.FORCED_ALIGNMENT)) {
                         expect(Math.abs(p.x - crackLocalX))
                             .toBeGreaterThanOrEqual(CRACK_CLEARANCE);
@@ -163,19 +167,22 @@ describe('figureSystem (F3 silhouettes)', () => {
             }
         });
 
-        it('ranks the tidy LEFT side: shared distance, grid z, exact facing, no overlap', () => {
+        it('ranks the tidy LEFT side (semantic axis, not crack): shared distance, grid z, exact facing', () => {
             const { ROW_DISTANCE, ROW_SNAP } = FA_FIGURE_PLACEMENT;
             let leftChunksSeen = 0;
             for (let cx = -20; cx <= 20; cx++) {
                 for (let cz = -20; cz <= 20; cz++) {
-                    const crackLocalX = riftLineXForWorldX(cx * CHUNK) - cx * CHUNK;
-                    if (crackLocalX <= 0)
-                        continue; // chunk lies right of its cluster's rift
+                    // Tidy treatment belongs to chunks WEST of the room's
+                    // semantic side axis (the cluster center).
+                    if (cx * CHUNK > faSideAxisX(cx * CHUNK))
+                        continue; // chunk lies right of its cluster's axis
                     const placements = figurePlacementsForChunk(cx, cz, RoomType.FORCED_ALIGNMENT);
                     if (placements.length > 0)
                         leftChunksSeen++;
                     for (const p of placements) {
-                        expect(p.x).toBeCloseTo(crackLocalX - ROW_DISTANCE, 10);
+                        // Rank stands ROW_DISTANCE west of the chunk's own
+                        // crack (local x = 0).
+                        expect(p.x).toBeCloseTo(-ROW_DISTANCE, 10);
                         expect(p.rotationY).toBe(Math.PI / 2); // facing the crack
                         // z snapped to the rank grid.
                         expect(Math.abs(p.z / ROW_SNAP - Math.round(p.z / ROW_SNAP)))
@@ -189,16 +196,16 @@ describe('figureSystem (F3 silhouettes)', () => {
             expect(leftChunksSeen).toBeGreaterThan(10);
         });
 
-        it('scatters the broken RIGHT side: varied depth, untidy crack-facing', () => {
+        it('scatters the broken RIGHT side (semantic axis): varied depth, untidy crack-facing', () => {
             const { CRACK_CLEARANCE, SCATTER_DEPTH, SCATTER_FACING_JITTER } = FA_FIGURE_PLACEMENT;
             const depths = new Set<number>();
             for (let cx = -21; cx <= 21; cx++) {
                 for (let cz = -20; cz <= 20; cz++) {
-                    const crackLocalX = riftLineXForWorldX(cx * CHUNK) - cx * CHUNK;
-                    if (crackLocalX >= 0)
-                        continue; // chunk lies left of its cluster's rift
+                    if (cx * CHUNK < faSideAxisX(cx * CHUNK))
+                        continue; // chunk lies left of its cluster's axis
                     for (const p of figurePlacementsForChunk(cx, cz, RoomType.FORCED_ALIGNMENT)) {
-                        const depth = p.x - crackLocalX;
+                        // Scatter sits east of the chunk's own crack (local 0).
+                        const depth = p.x;
                         expect(depth).toBeGreaterThanOrEqual(CRACK_CLEARANCE);
                         expect(depth).toBeLessThanOrEqual(CRACK_CLEARANCE + SCATTER_DEPTH);
                         depths.add(Math.round(depth * 100));

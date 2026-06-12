@@ -1,6 +1,8 @@
 // Audio Configuration
 // All audio-related constants for easy tuning
 
+import { WORLD } from './constants';
+
 /**
  * Master audio settings
  */
@@ -140,8 +142,15 @@ export const INFO_CHIRP_CONFIG = {
 
 /**
  * FORCED_ALIGNMENT binaural side asymmetry (flow-audit break #7): the beat
- * frequency narrows toward consonance on the LEFT of the rift and widens
+ * frequency narrows toward consonance on the LEFT of the room and widens
  * toward dissonance on the RIGHT, matching the tidy-left/broken-right visuals.
+ *
+ * The two rift concepts feed it separately (RiftMechanic →
+ * AudioController.updateBinauralPosition): the SIDE (detune direction) is the
+ * signed offset from the room's semantic axis (faSideAxisX, the cluster
+ * center), normalized by sideHalfRange; the INTENSITY (loudness) is the
+ * distance to the nearest PHYSICAL crack (riftLineXForWorldX), normalized by
+ * fieldWidth.
  */
 export const BINAURAL_SIDE_CONFIG = {
     /**
@@ -152,18 +161,27 @@ export const BINAURAL_SIDE_CONFIG = {
     /** setTargetAtTime time constant (s) for side-driven beat retunes */
     glide: 0.15,
     /**
-     * Audible half-width (meters) of the binaural field around the rift crack:
-     * beat intensity fades to 0 at this distance from the crack center, and
-     * the signed side displacement is normalized by it (RiftMechanic ->
-     * AudioController.updateBinauralPosition). Sized to the 160m cluster room
-     * (one crack per cluster) so the beat gradient is audible from anywhere
-     * in FORCED_ALIGNMENT and leads toward the rift.
+     * Audible half-width (meters) of EACH physical crack's own binaural sound
+     * field: beat intensity is 1 on a crack and fades to 0 at this distance.
+     * Cracks repeat every chunk column (CHUNK_SIZE = 80m apart in FA), so
+     * half a chunk means adjacent fields tile the room exactly — the beat
+     * only falls silent on the midlines between cracks (the cluster center
+     * and the cluster footprint edges).
      */
-    fieldWidth: 80,
+    fieldWidth: WORLD.CHUNK_SIZE / 2,
     /**
-     * Audible range (meters) of the rift fog sound: full volume at the crack,
-     * fading to 0 at this distance. Room-scale "you are getting closer" cue;
-     * the binaural beat above carries the side information.
+     * Normalization half-range (meters) of the SIGNED side displacement from
+     * the room's semantic axis (faSideAxisX = the cluster center): the detune
+     * saturates to full consonance/dissonance at the cluster footprint edge.
+     * Matches FORCED_ALIGNMENT_SIDE_NOISE.halfRange so the ear and the eye
+     * agree on how "deep into a side" the player is.
+     */
+    sideHalfRange: (WORLD.CHUNK_SIZE * WORLD.CLUSTER_CHUNKS) / 2,
+    /**
+     * Audible range (meters) of the rift fog sound: full volume at the
+     * nearest crack, fading to 0 at this distance. With cracks every 80m it
+     * covers the room wall-to-wall; the binaural beat above carries the side
+     * information.
      */
     fogAudibleRange: 40,
 };

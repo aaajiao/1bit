@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { PERFORMANCE, WORLD } from '../src/config';
+import { RIFT_PHYSICS } from '../src/config/physics';
 import {
     chunkToCluster,
     DEFAULT_ROOM_FOG,
+    FA_RIFT,
     getRoomTypeForCluster,
     getRoomTypeFromPosition,
     IN_BETWEEN_EDGE_GHOSTS,
     inBetweenEdgeFactor,
+    isWithinRiftClearance,
     lerpRoomShaderConfig,
+    riftLineXForWorldX,
     ROOM_CONFIGS,
     ROOM_FOG,
     RoomType,
@@ -291,6 +295,87 @@ describe('roomConfig', () => {
             expect(minReachableEdgeDist).toBeLessThanOrEqual(IN_BETWEEN_EDGE_GHOSTS.INNER_DISTANCE);
             // And the interior must still contain a zero-factor region.
             expect(inBetweenEdgeFactor(0, 0, 0, 0)).toBe(0);
+        });
+    });
+
+    // Rift presence — the FA shore corridor gate + the FA_RIFT knob contracts.
+    describe('isWithinRiftClearance (FA shore corridor)', () => {
+        // Use a few different columns (positive and negative x) so the gate
+        // is exercised against more than one rift line.
+        const riftLines = [0, 200, -300].map(x => riftLineXForWorldX(x));
+
+        it('is true ON the rift line and strictly inside the clearance', () => {
+            for (const line of riftLines) {
+                expect(isWithinRiftClearance(line)).toBe(true);
+                expect(isWithinRiftClearance(line + FA_RIFT.CLEARANCE - 0.01)).toBe(true);
+                expect(isWithinRiftClearance(line - FA_RIFT.CLEARANCE + 0.01)).toBe(true);
+            }
+        });
+
+        it('is false AT the clearance boundary (buildings may sit exactly on it)', () => {
+            for (const line of riftLines) {
+                expect(isWithinRiftClearance(line + FA_RIFT.CLEARANCE)).toBe(false);
+                expect(isWithinRiftClearance(line - FA_RIFT.CLEARANCE)).toBe(false);
+            }
+        });
+
+        it('is false deep on either bank', () => {
+            for (const line of riftLines) {
+                expect(isWithinRiftClearance(line + 30)).toBe(false);
+                expect(isWithinRiftClearance(line - 30)).toBe(false);
+            }
+        });
+
+        it('repeats the corridor for EVERY chunk column (one crack per 80m)', () => {
+            for (const line of riftLines) {
+                // The next column's crack has its own corridor…
+                expect(isWithinRiftClearance(line + WORLD.CHUNK_SIZE)).toBe(true);
+                expect(isWithinRiftClearance(line - WORLD.CHUNK_SIZE)).toBe(true);
+                // …and the midline between two cracks stays buildable.
+                expect(isWithinRiftClearance(line + WORLD.CHUNK_SIZE / 2)).toBe(false);
+            }
+        });
+
+        it('leaves a buildable band on each flank of a column (corridor < layout bound)', () => {
+            // Building positions are bounded to ±(CHUNK_SIZE-20)/2 = ±30 of a
+            // chunk center; the corridor (±12) must leave real room outside it
+            // or FA chunks could never place a single building.
+            const layoutHalf = (WORLD.CHUNK_SIZE - 20) / 2;
+            expect(FA_RIFT.CLEARANCE).toBeLessThan(layoutHalf);
+        });
+    });
+
+    describe('fa rift knob contracts (FA_RIFT)', () => {
+        it('keeps the corridor wider than the physical crack', () => {
+            expect(FA_RIFT.CLEARANCE).toBeGreaterThan(RIFT_PHYSICS.crackHalfWidth);
+        });
+
+        it('orders the fog column heights (bottom < dense top < leak top)', () => {
+            const { BOTTOM, DENSE_TOP, LEAK_TOP, LEAK_FRACTION, LEAK_SCALE } = FA_RIFT.FOG;
+            expect(BOTTOM).toBeLessThan(DENSE_TOP);
+            expect(DENSE_TOP).toBeLessThan(LEAK_TOP);
+            expect(LEAK_FRACTION).toBeGreaterThan(0);
+            expect(LEAK_FRACTION).toBeLessThan(1);
+            expect(LEAK_SCALE).toBeGreaterThanOrEqual(1);
+        });
+
+        it('keeps the void tear translucent and rising out of the crack', () => {
+            const { HEIGHT, BASE_Y, OPACITY } = FA_RIFT.TEAR;
+            expect(BASE_Y).toBeLessThan(0);
+            expect(HEIGHT).toBeGreaterThan(0);
+            expect(OPACITY).toBeGreaterThan(0);
+            expect(OPACITY).toBeLessThan(1);
+        });
+
+        it('tunes the banner droop to a taut sub-metre sag over the corridor span', () => {
+            // CableSystem sag formula: droop - span * 0.1, clamped at 0.
+            const span = 2 * FA_RIFT.CLEARANCE;
+            const sag = Math.max(0, FA_RIFT.BANNER.DROOP - span * 0.1);
+            expect(sag).toBeGreaterThanOrEqual(0);
+            expect(sag).toBeLessThan(1);
+            // And the banners hang above head height even at full sag + tremble.
+            expect(FA_RIFT.BANNER.HEIGHT_BASE - sag - FA_RIFT.BANNER.TREMBLE_AMPLITUDE)
+                .toBeGreaterThan(2);
         });
     });
 });
