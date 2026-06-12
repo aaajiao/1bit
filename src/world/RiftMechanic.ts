@@ -63,9 +63,9 @@ export class RiftMechanic {
         // Start if not already playing (internal check handles redundancy)
         audio.startRiftFog();
 
-        // Intensity based on proximity (closer = louder)
-        // Normalized: 1.0 at 0m, 0.0 at 10m
-        const riftProximity = Math.max(0, 1 - distFromCenter / 10);
+        // Intensity based on proximity (closer = louder), audible across the
+        // cluster-scale room so the crack can be found from its far edge
+        const riftProximity = Math.max(0, 1 - distFromCenter / BINAURAL_SIDE_CONFIG.fogAudibleRange);
         audio.updateRiftFog(riftProximity);
 
         // Crack half-width (meters from center), gated on the chunk actually

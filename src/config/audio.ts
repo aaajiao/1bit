@@ -155,9 +155,17 @@ export const BINAURAL_SIDE_CONFIG = {
      * Audible half-width (meters) of the binaural field around the rift crack:
      * beat intensity fades to 0 at this distance from the crack center, and
      * the signed side displacement is normalized by it (RiftMechanic ->
-     * AudioController.updateBinauralPosition).
+     * AudioController.updateBinauralPosition). Sized to the 160m cluster room
+     * (one crack per cluster) so the beat gradient is audible from anywhere
+     * in FORCED_ALIGNMENT and leads toward the rift.
      */
-    fieldWidth: 20,
+    fieldWidth: 80,
+    /**
+     * Audible range (meters) of the rift fog sound: full volume at the crack,
+     * fading to 0 at this distance. Room-scale "you are getting closer" cue;
+     * the binaural beat above carries the side information.
+     */
+    fogAudibleRange: 40,
 };
 
 /**
