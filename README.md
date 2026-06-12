@@ -389,8 +389,8 @@ generateTags(): BehaviorTag[] {
 Detailed design philosophy, technical interaction loops, and project roadmap are available in:
 详细的设计哲学、技术交互闭环和项目路线图请参阅：
 
-- [English Version (EN)](DESIGN_PHILOSOPHY_AND_ROADMAP_EN.md)
-- [中文版本 (ZH)](DESIGN_PHILOSOPHY_AND_ROADMAP_ZH.md)
+- [English Version (EN)](docs/DESIGN_PHILOSOPHY_AND_ROADMAP_EN.md)
+- [中文版本 (ZH)](docs/DESIGN_PHILOSOPHY_AND_ROADMAP_ZH.md)
 
 ---
 
@@ -398,19 +398,16 @@ Detailed design philosophy, technical interaction loops, and project roadmap are
 
 ### 开发模式（推荐，支持热更新）
 ```bash
-npm install      # 首次运行需要安装依赖
-npm run dev      # 启动 Vite 开发服务器
+bun install      # 首次运行需要安装依赖
+bun run dev      # 启动 Vite 开发服务器
 # 访问 http://localhost:5173
 ```
 
 ### 静态服务器
 ```bash
-npm run serve
+bun run serve
 # 访问 http://localhost:3000
 ```
-
-### 单文件版本
-直接在浏览器中打开 `1-bit.html`
 
 ---
 
@@ -419,19 +416,29 @@ npm run serve
 ```
 1bit/
 ├── index.html              # 入口 HTML（ES6 模块）
-├── package.json            # 项目配置
+├── package.json            # 项目配置（包管理器：Bun）
 ├── tsconfig.json           # TypeScript 配置
 ├── vite.config.js          # Vite 构建配置
 ├── README.md               # 本文档
+├── docs/                   # 技术与设计文档（见文末索引）
+├── tests/                  # Vitest 单元测试（纯逻辑，30 个文件）
 ├── styles/
 │   └── main.css            # 样式表（扫描线效果等）
 └── src/
-    ├── main.ts             # 主程序入口（ChimeraVoid，手动编排所有系统）
-    ├── core/
+    ├── main.ts             # 主程序入口（ChimeraVoid，仅接线：导入/构造/逐帧调用）
+    ├── core/               # 场景初始化与逐帧更新辅助
     │   ├── SceneSetup.ts          # 场景/相机/渲染器初始化
     │   ├── PostProcessing.ts      # 后处理 composer
     │   ├── ShaderUniformUpdater.ts # 每帧同步着色器 uniform
-    │   └── CableAudioUpdater.ts    # 线缆接近度音频更新
+    │   ├── ShaderSyncUpdater.ts    # 聚合每帧着色器参数对象
+    │   ├── CableAudioUpdater.ts    # 线缆接近度音频更新
+    │   ├── RoomFlowUpdater.ts      # 房间归属/行为画像/世界系统驱动
+    │   ├── StatsSunsetUpdater.ts   # 日落快照/遗忘入口/疤痕记录
+    │   ├── StressLevel.ts          # 应激等级（抖动语言驱动）
+    │   ├── HudUpdater.ts           # HUD 逐帧更新
+    │   ├── PauseController.ts      # 暂停控制
+    │   ├── BootGuard.ts            # 启动守卫
+    │   └── FrameClock.ts           # 帧时钟
     ├── config/
     │   ├── constants.ts    # 玩法常量与阈值（单一真相源）
     │   ├── physics.ts      # 物理/裂隙常量
@@ -441,12 +448,14 @@ npm run serve
     │   ├── AudioController.ts # 音频业务逻辑
     │   └── AudioEngine.ts     # Web Audio API 封装
     ├── shaders/
-    │   └── DitherShader.ts # 1-bit 抖动着色器 + 线缆脉冲着色器
+    │   ├── DitherShader.ts     # 1-bit 抖动着色器 + 线缆脉冲着色器
+    │   └── BlueNoiseTexture.ts # 蓝噪声纹理生成
     ├── player/
     │   ├── PlayerManager.ts    # 组合并编排玩家子系统
     │   ├── Controls.ts         # 第一人称移动控制
     │   ├── HandsModel.ts       # 解剖学精确的手部模型
     │   ├── FlowerProp.ts       # 手持发光花朵
+    │   ├── FlowerHintMechanic.ts # 花朵提示机制
     │   ├── GazeMechanic.ts     # 凝视机制
     │   └── OverrideMechanic.ts # 反抗（override）机制
     ├── world/
@@ -457,15 +466,26 @@ npm run serve
     │   ├── FloraFactory.ts    # 树木/植物生成器
     │   ├── FloorTile.ts       # 地板/裂纹/深渊雾生成
     │   ├── CableSystem.ts     # 动态线缆系统
-    │   ├── RoomConfig.ts      # 房间类型与着色器配置
+    │   ├── RoomConfig.ts      # 房间类型/着色器配置/逐房间旋钮
+    │   ├── RoomGeneration.ts  # 逐房间生成规则（纯函数）
+    │   ├── RoomLedger.ts      # 会话内房间归属台账（行为偏置）
+    │   ├── RoomTransition.ts  # 房间过渡与着色器配置烘焙
     │   ├── RiftMechanic.ts    # 裂隙坠落机制
-    │   ├── WeatherSystem.ts   # 天气效果系统
+    │   ├── FigureSystem.ts    # 剪影人物
+    │   ├── GhostSystem.ts     # 上一局轨迹幽灵
+    │   ├── ScarField.ts       # 跨局疤痕场
+    │   ├── WeatherSystem.ts   # 天气效果系统（逐房间签名天气）
     │   ├── DayNightCycle.ts   # 昼夜循环系统
     │   └── SkyEye.ts          # 天空之眼
     ├── stats/
     │   ├── RunStatsCollector.ts      # 行为追踪
     │   ├── StateSnapshotGenerator.ts # 快照生成
-    │   └── SnapshotOverlay.ts        # 日落快照叠层显示
+    │   ├── SnapshotOverlay.ts        # 日落快照叠层显示
+    │   ├── SnapshotCard.ts           # 可分享快照卡
+    │   ├── SnapshotPattern.ts        # 快照图案
+    │   ├── SnapshotStorage.ts        # 快照持久化（localStorage，可注入）
+    │   ├── ScarStorage.ts            # 跨局疤痕持久化
+    │   └── TrailRecorder.ts          # 轨迹记录
     ├── ui/
     │   └── HUD.ts          # 抬头显示
     ├── types/             # 模块化类型定义（index.ts 统一再导出）
@@ -492,8 +512,9 @@ npm run serve
 ### 类型检查
 
 ```bash
-npm run typecheck   # 运行 TypeScript 类型检查
-npm run build       # 类型检查 + 生产构建
+bun run typecheck   # 运行 TypeScript 类型检查
+bun run build       # 类型检查 + 生产构建
+bun run test        # 运行单元测试（vitest）
 ```
 
 ---
@@ -783,10 +804,10 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 
 | 文档 | 内容 | 推荐读者 |
 |------|------|---------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 代码架构与开发规范 | 开发者 |
-| [AUDIO_SYSTEM.md](AUDIO_SYSTEM.md) | 程序化音效系统详细文档 | 开发者/音效设计师 |
-| [DESIGN_PHILOSOPHY_EN.md](DESIGN_PHILOSOPHY_AND_ROADMAP_EN.md) | 设计哲学与路线图 (英文) | 设计师/研究者 |
-| [DESIGN_PHILOSOPHY_ZH.md](DESIGN_PHILOSOPHY_AND_ROADMAP_ZH.md) | 设计哲学与路线图 (中文) | 设计师/研究者 |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 代码架构与开发规范 | 开发者 |
+| [AUDIO_SYSTEM.md](docs/AUDIO_SYSTEM.md) | 程序化音效系统详细文档 | 开发者/音效设计师 |
+| [DESIGN_PHILOSOPHY_AND_ROADMAP_EN.md](docs/DESIGN_PHILOSOPHY_AND_ROADMAP_EN.md) | 设计哲学与路线图 (英文) | 设计师/研究者 |
+| [DESIGN_PHILOSOPHY_AND_ROADMAP_ZH.md](docs/DESIGN_PHILOSOPHY_AND_ROADMAP_ZH.md) | 设计哲学与路线图 (中文) | 设计师/研究者 |
 
 ---
 
@@ -842,8 +863,9 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 
 | 指标 | 数值 |
 |------|------|
-| TypeScript 代码 | ~5,000 行 |
-| 设计文档 | ~180,000 行 |
+| TypeScript 代码 | ~18,500 行（另有 ~8,000 行测试） |
+| 单元测试 | 706 个（30 个文件） |
+| 设计文档 | ~80,000 字 |
 | 核心机制 | 4 个 |
 | 房间状态 | 4 种 |
 | 建筑风格 | 4 类 |
