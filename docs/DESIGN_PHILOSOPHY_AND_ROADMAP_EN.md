@@ -9,6 +9,8 @@ In *1bit*, 1-bit is not a retro stylistic choice; it is a metaphysical statement
 - **White (#FFFFFF) represents the Self**: The signal, the ephemeral, the observer.
 - **Dithering represents Noise**: The friction between the system and the self.
 
+> Implementation note: at runtime each room uses a near-black / near-white duotone ink/paper pair (see RoomConfig ink/paperColor — INFO cyan, FORCED_ALIGNMENT amber, IN_BETWEEN violet, POLARIZED warm-red / bone); pure #000/#FFF black-and-white is the conceptual baseline and metaphorical anchor.
+
 ### 2. Narrative Arc: "Repression & Desire" (The Ang Lee Approach)
 
 We treat the interaction not as a game, but as a psychological pressure cooker.
@@ -411,6 +413,8 @@ Using the same tags, a combination of pre-written sentences creates the text sna
 
 **Text Library (Edward Yang Tone):**
 
+> Runtime text is bilingual pairs (zh primary + en secondary); see StateSnapshotGenerator.TEXT_TABLE.
+
 The tone is observational, non-judgmental, slightly melancholic, and specific to the archetype each player is inhabiting.
 
 ```typescript
@@ -658,7 +662,7 @@ Total submission to 1-bit logic: no gray, no dithering, only hard decisions. Thi
 
 **Visual Language**
 
-- **Zero dithering**: Pure 1-bit rendering. The world is composed entirely of solid black and solid white, with razor-sharp boundaries.
+- **Zero dithering**: Pure 1-bit rendering. The world is composed entirely of solid black and solid white (implemented as a warm-red / bone duotone), with razor-sharp boundaries.
 - **No gradients or shadows**: All surfaces are either fully lit (white) or completely in shadow (black).
 - **Geometric precision**: All geometry is made of rectangles, cubes, and lines. No curves, no organic shapes.
 - **Chessboard floors**: The most iconic 1-bit pattern, emphasizing the black-and-white duality.
@@ -707,6 +711,8 @@ uniform float uSaturation;      // 0–1, 0=grayscale, 1=full color
 Before implementing the roadmap, here is an assessment of the existing codebase:
 
 ### Existing Modules
+
+> Note: this table is a pre-development snapshot. Every module listed here is now implemented and wired in.
 
 | Module | Status | Notes |
 |--------|--------|-------|
@@ -1064,6 +1070,8 @@ if (settings.disableFlashing) {
 
 ### Phase 1: The Foundation (Shader & State)
 
+> Status: Shipped (v1.0)
+
 **Objectives:**
 
 - Refactor `ChunkManager` to support `roomType` enum and per-room configuration.
@@ -1088,6 +1096,8 @@ if (settings.disableFlashing) {
 
 ### Phase 2: The Discipline (Mechanic)
 
+> Status: Shipped (v1.0)
+
 **Objectives:**
 
 - Implement the Gaze mechanic: automatic intensity reduction when gazing at Sky Eye.
@@ -1111,6 +1121,8 @@ if (settings.disableFlashing) {
 ---
 
 ### Phase 3: Mental State Rooms
+
+> Status: Shipped (v1.0)
 
 **Objectives:**
 
@@ -1138,6 +1150,8 @@ if (settings.disableFlashing) {
 
 ### Phase 4: The Resistance (Override Mechanic)
 
+> Status: Shipped (v1.0)
+
 **Objectives:**
 
 - Implement the Override key mechanic: holding a specific key in POLARIZED room forces flower intensity to 1.0.
@@ -1163,6 +1177,8 @@ if (settings.disableFlashing) {
 ---
 
 ### Phase 5: State Snapshot (End-of-Run Summary)
+
+> Status: Shipped (v1.0)
 
 **Objectives:**
 
@@ -1197,6 +1213,19 @@ if (settings.disableFlashing) {
 - Multi-language support optimization (Simplified Chinese/English text library improvements).
 - Run data persistence and history viewing.
 - Audio description features (narrate room transitions for visually impaired players).
+
+---
+
+## Shipped (beyond the original roadmap)
+
+The following systems were not in the original five-phase roadmap, but are implemented and shipped:
+
+- **Per-room signature weather** (`WeatherSystem`): weighted selection of STATIC/RAIN/GLITCH by the current room, each room with its own cooldown/duration/intensity; GLITCH is now in the regular rotation.
+- **Behavior-driven room attribution** (`RoomLedger`): a cluster's room is locked once generated within a session; never-visited clusters are gently biased by the player's behavior profile.
+- **Cross-run scars** (`ScarField` + `ScarStorage`): the real coordinates where you resisted leave a scar in later runs, anchoring that place.
+- **Silhouette figures** (`FigureSystem`): distant scattered 1-bit human forms across the ruins.
+- **Previous-run ghost trail** (`GhostSystem`): the previous run's walking trail returns as a ghost, consumed on load.
+- **Shareable snapshot card** (`SnapshotCard`): the sunset snapshot exports as a 1080×1350 PNG; observation text is bilingual (Chinese primary / English secondary).
 
 ---
 
