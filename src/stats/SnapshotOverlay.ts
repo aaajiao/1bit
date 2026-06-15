@@ -149,11 +149,13 @@ export class SnapshotOverlay {
         `;
         this.textEl.appendChild(this.hairlineEl);
 
-        // English secondary: smaller (15px) and dimmer (opacity 0.6), below.
+        // English secondary: smaller (19px) and dimmer (opacity 0.6), below.
+        // Still clearly subordinate to the 24px Chinese, but the earlier 15px
+        // read as too small on screen (the share card's larger en is fine).
         this.textElEn = document.createElement('div');
         this.textElEn.style.cssText = `
             font-family: 'Courier New', monospace;
-            font-size: 15px;
+            font-size: 19px;
             color: #ffffff;
             line-height: 1.5;
             opacity: 0.6;

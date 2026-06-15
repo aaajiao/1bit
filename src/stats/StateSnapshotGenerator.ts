@@ -59,11 +59,11 @@ const TEXT_TABLE: Record<BehaviorTag, BilingualText[]> = {
         { zh: '把它开得越亮，看着就越疼。', en: 'the brighter you turned it, the more it hurt to look' },
     ],
     HIGH_GAZE: [
-        { zh: '这一趟，你大部分时间都在抬头看。', en: 'you spent most of this one looking up' },
+        { zh: '这一趟，你大部分时间都在抬头看。', en: 'you spent most of this walk looking up' },
         { zh: '那只眼睛总在那儿，你停不下来确认。', en: 'the eye was always there, and you kept checking' },
     ],
     LOW_GAZE: [
-        { zh: '很少去确认，那只眼睛还在不在。', en: 'you rarely looked up to see if the eye was still there' },
+        { zh: '很少去确认，那只眼睛还在不在。', en: 'you rarely glanced up to check the eye was still there' },
         { zh: '大多把视线放在地上。', en: 'you kept your eyes mostly on the ground' },
     ],
     INFO_MAZE: [
