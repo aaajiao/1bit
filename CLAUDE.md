@@ -34,8 +34,9 @@ Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 | Directory | Purpose |
 |-----------|---------|
-| `core/` | Scene setup, post-processing, and the per-frame update helpers `main.ts` calls (cable-audio proximity, shader-uniform sync) |
-| `config/` | All gameplay constants and thresholds (single source of truth) |
+| `core/` | Scene setup, post-processing, and the per-frame/startup helpers `main.ts` calls (room flow, HUD, pause control, cable-audio proximity, shader sync, stress level, boot guard, stats-sunset, etc. — 12 files) |
+| `config/` | All gameplay constants and thresholds (single source of truth): `constants.ts` + `audio.ts` + `physics.ts`, re-exported via `index.ts` |
+| `ui/` | HUD / DOM overlay |
 | `player/` | Player controls, hand model, flower prop, gaze/override mechanics |
 | `world/` | Chunk management, building/flora factories, cables, sky eye, weather, day/night |
 | `audio/` | AudioController (business logic) + AudioEngine (Web Audio API wrapper) |
@@ -50,9 +51,9 @@ Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 **Manager orchestration** (`player/PlayerManager.ts`): High-level managers compose subsystems (Controls, HandsModel, GazeMechanic, OverrideMechanic) and wire them together, exposing a single `update()` to `main.ts`.
 
-**Room-based state** (`world/RoomConfig.ts`): World position maps to one of four `RoomType` values (INFO_OVERFLOW, FORCED_ALIGNMENT, IN_BETWEEN, POLARIZED), each driving distinct shader parameters and audio behavior. Rooms occupy 160m clusters (2×2 chunks); `chunkToCluster`/`clusterCenterWorld`/`riftLineXForWorldX` in RoomConfig.ts are the only coordinate-conversion source. Runtime room attribution goes through `ChunkManager.getRoomTypeForChunk` (a session `RoomLedger` pins each cluster on first generation and gently biases never-visited clusters by the player's live behavior profile); the pure `getRoomTypeFromPosition` is the neutral baseline used by spawn scanning and tests only.
+**Room-based state** (`world/RoomConfig.ts`): World position maps to one of four `RoomType` values (INFO_OVERFLOW, FORCED_ALIGNMENT, IN_BETWEEN, POLARIZED), each driving distinct shader parameters and audio behavior. Rooms occupy 160m clusters (2×2 chunks); `chunkToCluster`/`clusterCenterWorld`/`riftLineXForWorldX` in RoomConfig.ts are the only coordinate-conversion source. Runtime room attribution goes through `ChunkManager.getRoomTypeForChunk` (a session `RoomLedger` pins each cluster on first generation and gently biases never-visited clusters by the player's live behavior profile); the pure `getRoomTypeFromPosition` is the neutral baseline used by spawn scanning, tests, and as the profile-free fallback (e.g. RiftMechanic when no ledger is supplied).
 
-**Centralized config** (`config/constants.ts`): All magic numbers live here — gameplay thresholds, cable proximity ranges, performance LOD distances, gaze intensity curves, etc. No hardcoded values in system files.
+**Centralized config** (`config/`): All magic numbers live here — gameplay thresholds, cable proximity ranges, performance LOD distances, gaze intensity curves, etc. Spread across `constants.ts`, `audio.ts`, and `physics.ts`, re-exported through `index.ts` (still one source of truth, just more than one file). No hardcoded values in system files.
 
 ### Entry Point & Render Loop
 
@@ -63,13 +64,13 @@ Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 ### Shader System
 
-`src/shaders/DitherShader.ts` is the core visual identity — a post-processing shader with 32+ uniforms controlling: 4x4/8x8 Bayer dithering, Sobel edge detection, weather effects (static/rain/glitch), room-specific contrast/noise, day/night color inversion, and override feedback.
+`src/shaders/DitherShader.ts` is the core visual identity — a post-processing shader with 45+ uniforms controlling: 4x4/8x8 Bayer dithering, Sobel edge detection, weather effects (static/rain/glitch), room-specific contrast/noise, day/night color inversion, and override feedback.
 
 ### Chunk-Based World
 
 `ChunkManager` handles infinite terrain with 80-unit chunks and 2-chunk render distance. Generation is deterministic via hash-based seeding from chunk coordinates (within-session only — see the reproducibility contract; behavior-biased room selection and cross-run scars intentionally vary worlds between sessions). Buildings come in 4 procedural styles (TREE, SPIKES, BLOCKS, FLUID) with LOD-based animation.
 
-Persistent state lives in three versioned localStorage keys (`1bit:lastSnapshot`, `1bit:scars`, `1bit:lastTrail` — see `stats/SnapshotStorage.ts` for the injectable pattern); the in-world "forget" entry clears all of them.
+Persistent state lives in three versioned localStorage keys (`1bit:lastSnapshot`, `1bit:scars`, `1bit:lastTrail` — the key strings are defined in `config/constants.ts`; the injectable storage pattern lives in `stats/{SnapshotStorage,ScarStorage,TrailRecorder}.ts`); the in-world "forget" entry clears all of them.
 
 ## Development Rules (from ARCHITECTURE.md)
 
@@ -81,7 +82,7 @@ Persistent state lives in three versioned localStorage keys (`1bit:lastSnapshot`
 
 ## Testing
 
-Tests live in `tests/` and cover pure logic: hash utilities, GazeMechanic (27 cases), RunStatsCollector, StateSnapshotGenerator, and config validation. Test strategy focuses on logic separation — pure functions over mocked Three.js scenes.
+Tests live in `tests/` and cover pure logic — 30 test files / 726 cases spanning hash utilities, GazeMechanic (47 cases), RunStatsCollector, StateSnapshotGenerator, room/weather/rift logic, and config validation. Test strategy focuses on logic separation — pure functions over mocked Three.js scenes.
 
 ## Dependencies
 

@@ -1,6 +1,6 @@
 # 1bit
 
-![Wired Brutalism Preview](https://github.com/user-attachments/assets/fa430efe-91ff-4c16-bcf8-f275057777a2)
+![1-Bit Chimera Void Preview](https://github.com/user-attachments/assets/fa430efe-91ff-4c16-bcf8-f275057777a2)
 
 一个基于 Three.js 的 **1-bit 抖动渲染** 交互式 3D 体验作品。玩家穿行于程序化生成的嵌合体废墟中，手持一朵发光的花。
 
@@ -198,6 +198,8 @@ if (this.isGazingEye && this.isHoldingShift && this.currentRoom === 'POLARIZED')
 | **IN_BETWEEN** | 35% 抖动，轻微故障 | 不谐和声 | 被系统误读，身份模糊 |
 | **POLARIZED** | 0% 抖动，纯 1-bit 黑白 | 极简单音 | 绝对的二元对立，无中间地带 |
 
+> 仅 **FORCED_ALIGNMENT** 房间存在「裂隙坠落」（`RiftMechanic`）：踩上对齐网格的裂缝会坠下、起雾，随后被重新放置。
+
 ```typescript
 // RoomConfig.ts - 房间配置示例
 export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
@@ -274,6 +276,8 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
 - 音频配置混合切换
 - UI 提示当前状态（可选）
 
+废墟里你并不孤独：远处散落着 1-bit 剪影人物（`FigureSystem`）；上一局的行走轨迹会化作幽灵重现（`GhostSystem`，阅后即焚、本局之后不再出现）；你曾反抗的真实坐标会留下跨局疤痕（`ScarField` + `ScarStorage`，锚定那个地点）。
+
 ---
 
 ### 阶段四：解决 (Resolution)
@@ -284,8 +288,9 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
 
 **展示方式:**
 - 屏幕出现 1-bit 风格图案覆盖层（渐入 1.5 秒）
-- 中央显示一句观察性文字
+- 中央显示一句观察性文字（中英双语，中文为主、英文为副）
 - 约 8 秒后自动消散
+- 可导出为一张可分享的快照卡（`SnapshotCard`，1080×1350 PNG）
 
 ---
 
@@ -504,9 +509,10 @@ bun run serve
 | **TypeScript** | ^5.9.3 | 类型安全的 JavaScript 超集 |
 | **Three.js** | ^0.173.0 | 3D 渲染引擎（ES6 模块版本） |
 | **@types/three** | ^0.173.0 | Three.js 类型定义 |
-| **Vite** | ^5.0.0 | 现代前端构建工具 |
+| **Vite** | ^7.3.0 | 现代前端构建工具 |
 | **Vitest** | ^4.0.16 | 单元测试框架 |
 | **ESLint** | ^9.39.2 | 代码检查工具（@antfu/eslint-config） |
+| **@antfu/eslint-config** | ^6.7.3 | ESLint 配置预设 |
 | **模块系统** | ES6 Import Map | 浏览器原生模块支持 |
 
 ### 类型检查
@@ -522,7 +528,7 @@ bun run test        # 运行单元测试（vitest）
 ## 🎨 核心视觉效果
 
 ### 1-Bit 抖动着色器 (Bayer Dithering)
-使用 **4x4 Bayer 抖动矩阵** 将所有颜色压缩为纯黑与纯白：
+使用 **多尺度 Bayer 抖动（8×8 近 / 4×4 中 / 2×2 远）+ 蓝噪声 / 镜像 / 双图案等模式** 将所有颜色压缩为纯黑与纯白：
 
 ```glsl
 float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
@@ -676,20 +682,25 @@ pupil.position.lerp(new THREE.Vector3(targetX, targetY, 0.1), 0.05);
 ```javascript
 // 调整/测试
 app.dayNight.cycleDuration = 10;  // 快速周期
-app._triggerSolarEclipse(performance.now()/1000);  // 手动日食
+app.dayNight.triggerSolarEclipse(performance.now()/1000, {
+    shaderQuad: app.composerScene.children[0],
+    weather: app.weather,
+    audio: app.audio
+});  // 手动触发日食
 ```
 
 ---
 
 ## 🌧️ 天气系统
 
-三种 1-bit 风格天气效果，随机触发：
+三种 1-bit 风格天气效果（静态雪花 STATIC / 数字雨 RAIN / 信号干扰 GLITCH），不再是均匀随机：天气按**当前房间**（`getRoomTypeForChunk`）加权选取，每个房间有自己的冷却 / 时长 / 强度档案。GLITCH 已进入常规轮换；另有一条独立的「环境瞬时故障」路径（约 0.12/秒、帧率无关）随时短促闪烁。
 
-| 效果 | 描述 | 触发间隔 |
-|------|------|---------|
-| 静态雪花 | 电视无信号噪点 | 1-3 分钟 |
-| 数字雨 | 垂直下落白色短线 | 1-3 分钟 |
-| 信号干扰 | 水平条纹闪烁 | 随机短暂 |
+| 房间 | 签名天气 | 风味 |
+|------|---------|------|
+| INFO_OVERFLOW | 数字雨 (RAIN) | 数据暴雨倾泻 |
+| FORCED_ALIGNMENT | 静态雪花 (STATIC) | 检阅般的扫描带 |
+| IN_BETWEEN | 错位漂移 | 身份模糊的漂移感 |
+| POLARIZED | 全屏反转闪击 | 罕见、短促的二元闪烁 |
 
 ```javascript
 // 手动触发天气（控制台）
@@ -706,7 +717,7 @@ app.weather.forceWeather('glitch', 1);   // 信号干扰 1 秒
 |------|------|------|
 | 半球光 | HemisphereLight | 1.2 |
 | 扫描灯 | SpotLight | 4.0 (decay=1) |
-| 花蕊光 | PointLight | 0.8 |
+| 花蕊光 | PointLight | 3.0 (distance=8) |
 | 手部光 | DirectionalLight | 0.5 |
 
 ---
@@ -757,11 +768,11 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 
 | 模块 | 技术特点 | 关键文件 |
 |------|---------|---------|
-| **类型系统** | 完整 TypeScript 定义，5000+ 行类型安全代码 | `types.ts` |
+| **类型系统** | 全库 TypeScript 强类型，按域拆分 | 模块化 `src/types/`（经 index.ts 统一再导出） |
 | **模块化** | ES6 按功能域拆分，高内聚低耦合 | `src/` 目录结构 |
 | **程序化生成** | 确定性哈希 + 无限区块管理 | `ChunkManager.ts` |
 | **着色器管线** | 自定义后期处理 + 多效果合成 | `DitherShader.ts` |
-| **音频引擎** | Web Audio API 程序化音效 | `AudioSystem.ts` |
+| **音频引擎** | Web Audio API 程序化音效 | `AudioController.ts` + `AudioEngine.ts` |
 
 ### 游戏机制层面
 
@@ -863,8 +874,8 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 
 | 指标 | 数值 |
 |------|------|
-| TypeScript 代码 | ~18,500 行（另有 ~8,000 行测试） |
-| 单元测试 | 706 个（30 个文件） |
+| TypeScript 代码 | ~18,800 行（另有 ~8,300 行测试） |
+| 单元测试 | 726 个（30 个文件） |
 | 设计文档 | ~80,000 字 |
 | 核心机制 | 4 个 |
 | 房间状态 | 4 种 |
