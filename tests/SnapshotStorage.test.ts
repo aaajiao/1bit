@@ -14,6 +14,7 @@ function makeSnapshot(): StateSnapshot {
         tags: ['LOW_GAZE', 'INBETWEENER'],
         pattern: { uPatternMode: 2, uDensity: 0.6, uFrequency: 10, uPhase: 1.25 },
         text: '大多把视线放在地上。',
+        textEn: 'you kept your eyes mostly on the ground',
         textKey: 'LOW_GAZE',
     };
 }
@@ -98,6 +99,38 @@ describe('snapshot wire format (flow-audit enhancement #8)', () => {
             expect(decoded).not.toBeNull();
             expect(decoded!.durationSeconds).toBeUndefined();
         }
+    });
+
+    it('round-trips the optional English line (bilingual snapshots)', () => {
+        const snapshot = makeSnapshot();
+        const decoded = decodeSnapshot(encodeSnapshot(snapshot));
+        expect(decoded).toEqual(snapshot);
+        expect(decoded!.textEn).toBe(snapshot.textEn);
+    });
+
+    it('tolerates pre-bilingual payloads without textEn (decodes to empty string)', () => {
+        const base = JSON.parse(encodeSnapshot(makeSnapshot())) as Record<string, any>;
+        delete base.textEn;
+        expect(base).not.toHaveProperty('textEn');
+        const decoded = decodeSnapshot(JSON.stringify(base));
+        // A missing English line must not reject the whole snapshot.
+        expect(decoded).not.toBeNull();
+        expect(decoded!.textEn).toBe('');
+    });
+
+    it('drops a non-string textEn to empty string without rejecting the snapshot', () => {
+        const base = JSON.parse(encodeSnapshot(makeSnapshot())) as Record<string, any>;
+        for (const garbage of [7, null, { en: 'x' }]) {
+            const decoded = decodeSnapshot(JSON.stringify({ ...base, textEn: garbage }));
+            expect(decoded).not.toBeNull();
+            expect(decoded!.textEn).toBe('');
+        }
+    });
+
+    it('omits an empty English line from the wire payload', () => {
+        const snapshot: StateSnapshot = { ...makeSnapshot(), textEn: '' };
+        const payload = JSON.parse(encodeSnapshot(snapshot)) as Record<string, unknown>;
+        expect(payload).not.toHaveProperty('textEn');
     });
 
     it('rejects non-string text/textKey and non-string-array tags', () => {

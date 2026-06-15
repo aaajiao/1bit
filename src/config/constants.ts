@@ -201,6 +201,24 @@ export const SNAPSHOT_CARD = {
     TEXT_TOP_OFFSET: 64,
     TEXT_MAX_LINES: 3,
     /**
+     * Secondary English line (word-wrapped, drawn under the Chinese block):
+     * smaller and dimmer than the primary, echoing the overlay's "secondary"
+     * tier. GAP is the space below the last Chinese line; MAX_LINES caps the
+     * block so the worst case (max CN lines + max EN lines) still clears the
+     * tag row. Empty `textEn` (older snapshots) skips the block entirely.
+     */
+    TEXT_EN_FONT_SIZE: 24,
+    TEXT_EN_LINE_HEIGHT: 34,
+    TEXT_EN_TOP_GAP: 28,
+    TEXT_EN_MAX_LINES: 4,
+    TEXT_EN_ALPHA: 0.6,
+    /**
+     * Floor of breathing room kept between the English block's last line and
+     * the tag row, so the secondary text never crowds the labels even when it
+     * is clamped to fill the corridor.
+     */
+    TEXT_EN_BOTTOM_GAP: 16,
+    /**
      * Tag row (small monospace, dimmed): font size / offset from the card
      * bottom (textBaseline: top) / alpha.
      */

@@ -11,9 +11,11 @@ import {
     cardFooterText,
     colorToCss,
     dominantRoomFromTags,
+    englishLineBudget,
     formatRunDuration,
     snapshotCardFileName,
     wrapTextLines,
+    wrapTextLinesWord,
 } from '../src/stats/SnapshotCard';
 import { evaluatePattern, isPatternWhite } from '../src/stats/SnapshotPattern';
 import { ROOM_CONFIGS, RoomType } from '../src/world/RoomConfig';
@@ -61,6 +63,83 @@ describe('wrapTextLines (card observation wrapping)', () => {
         expect(lines.join('')).toBe(text);
         for (const line of lines) {
             expect(charMeasure(line)).toBeLessThanOrEqual(23);
+        }
+    });
+});
+
+describe('wrapTextLinesWord (card English wrapping)', () => {
+    it('returns no lines for empty text', () => {
+        expect(wrapTextLinesWord('', 5, charMeasure)).toEqual([]);
+    });
+
+    it('keeps words that fit on a single line', () => {
+        expect(wrapTextLinesWord('one two', 7, charMeasure)).toEqual(['one two']);
+    });
+
+    it('wraps greedily at word boundaries', () => {
+        // 'one two' = 7 fits; adding ' six' (4) overflows 8 -> break.
+        expect(wrapTextLinesWord('one two six', 8, charMeasure))
+            .toEqual(['one two', 'six']);
+    });
+
+    it('hard-splits a single over-long word so it never overflows', () => {
+        expect(wrapTextLinesWord('abcdefg', 3, charMeasure))
+            .toEqual(['abc', 'def', 'g']);
+    });
+
+    it('wraps after an over-long word, carrying its tail forward', () => {
+        // 'abcdef' splits to 'abc','def'; 'gh' then joins the carried tail.
+        expect(wrapTextLinesWord('abcdef gh', 3, charMeasure))
+            .toEqual(['abc', 'def', 'gh']);
+    });
+
+    it('collapses runs of whitespace', () => {
+        expect(wrapTextLinesWord('one   two', 7, charMeasure)).toEqual(['one two']);
+    });
+
+    it('honors explicit newlines', () => {
+        expect(wrapTextLinesWord('ab cd\nef', 99, charMeasure))
+            .toEqual(['ab cd', 'ef']);
+    });
+
+    it('wraps a real English line without exceeding the width', () => {
+        const text = 'you walked all the way to where things could only be one or the other';
+        const lines = wrapTextLinesWord(text, 30, charMeasure);
+        expect(lines.join(' ')).toBe(text);
+        for (const line of lines) {
+            expect(charMeasure(line)).toBeLessThanOrEqual(30);
+        }
+    });
+});
+
+describe('englishLineBudget (no-overflow corridor math)', () => {
+    it('grants room for English when the Chinese block is short', () => {
+        expect(englishLineBudget(1)).toBeGreaterThan(0);
+    });
+
+    it('shrinks the budget as the Chinese block grows', () => {
+        expect(englishLineBudget(2)).toBeLessThanOrEqual(englishLineBudget(1));
+    });
+
+    it('collapses to zero when the Chinese block fills the corridor', () => {
+        expect(englishLineBudget(SNAPSHOT_CARD.TEXT_MAX_LINES)).toBe(0);
+    });
+
+    it('never lets the English block cross the tag row', () => {
+        for (let cn = 0; cn <= SNAPSHOT_CARD.TEXT_MAX_LINES; cn++) {
+            const enLines = englishLineBudget(cn);
+            const enBottom = SNAPSHOT_CARD.PATTERN_HEIGHT
+                + SNAPSHOT_CARD.TEXT_TOP_OFFSET
+                + cn * SNAPSHOT_CARD.TEXT_LINE_HEIGHT
+                + SNAPSHOT_CARD.TEXT_EN_TOP_GAP
+                + enLines * SNAPSHOT_CARD.TEXT_EN_LINE_HEIGHT;
+            expect(enBottom).toBeLessThanOrEqual(SNAPSHOT_CARD.HEIGHT - SNAPSHOT_CARD.TAG_BOTTOM_OFFSET);
+        }
+    });
+
+    it('caps the budget at the configured maximum', () => {
+        for (let cn = 0; cn <= SNAPSHOT_CARD.TEXT_MAX_LINES; cn++) {
+            expect(englishLineBudget(cn)).toBeLessThanOrEqual(SNAPSHOT_CARD.TEXT_EN_MAX_LINES);
         }
     });
 });

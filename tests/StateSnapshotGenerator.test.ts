@@ -2,6 +2,21 @@ import type { BehaviorTag } from '../src/stats/RunStatsCollector';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { StateSnapshotGenerator } from '../src/stats/StateSnapshotGenerator';
 
+// Every tag that carries observational text (the TEXT_TABLE keys).
+const TEXT_TAGS: BehaviorTag[] = [
+    'QUIET_LIGHT',
+    'MEDIUM_LIGHT',
+    'LOUD_LIGHT',
+    'HIGH_GAZE',
+    'LOW_GAZE',
+    'INFO_MAZE',
+    'CRACK_WALKER',
+    'NEUTRAL_SEEKER',
+    'INBETWEENER',
+    'BINARY_EDGE',
+    'RESISTER',
+];
+
 describe('stateSnapshotGenerator', () => {
     let generator: StateSnapshotGenerator;
 
@@ -18,6 +33,8 @@ describe('stateSnapshotGenerator', () => {
             expect(snapshot.pattern).toBeDefined();
             expect(snapshot.text).toBeDefined();
             expect(snapshot.text.length).toBeGreaterThan(0);
+            expect(snapshot.textEn).toBeDefined();
+            expect(snapshot.textEn.length).toBeGreaterThan(0);
         });
 
         it('should return pattern with valid uniforms', () => {
@@ -67,7 +84,28 @@ describe('stateSnapshotGenerator', () => {
         it('should return text for known tags', () => {
             const result = generator.getTextFromTags(['QUIET_LIGHT']);
             expect(result.text.length).toBeGreaterThan(0);
+            expect(result.textEn.length).toBeGreaterThan(0);
             expect(result.key).toBe('QUIET_LIGHT');
+        });
+
+        it('should return a zh/en pair from the same variant', () => {
+            // Run enough times to hit both variants; every returned pair must
+            // be one of the table entries (zh and en never cross variants).
+            for (let i = 0; i < 50; i++) {
+                const result = generator.getTextFromTags(['LOUD_LIGHT']);
+                const variants = generator.getTextsForTag('LOUD_LIGHT');
+                const match = variants.find(v => v.zh === result.text);
+                expect(match).toBeDefined();
+                expect(result.textEn).toBe(match!.en);
+            }
+        });
+
+        it('should return a bilingual fallback for tags without text', () => {
+            // No priority tag present -> fallback line, both languages non-empty.
+            const result = generator.getTextFromTags([]);
+            expect(result.text.length).toBeGreaterThan(0);
+            expect(result.textEn.length).toBeGreaterThan(0);
+            expect(result.key).toBe('MEDIUM_LIGHT');
         });
 
         it('should prioritize behavioral tags over light tags', () => {
@@ -84,15 +122,28 @@ describe('stateSnapshotGenerator', () => {
     });
 
     describe('getTextsForTag', () => {
-        it('should return array of texts for valid tag', () => {
+        it('should return array of bilingual pairs for valid tag', () => {
             const texts = generator.getTextsForTag('QUIET_LIGHT');
             expect(Array.isArray(texts)).toBe(true);
             expect(texts.length).toBeGreaterThan(0);
+            expect(typeof texts[0].zh).toBe('string');
+            expect(typeof texts[0].en).toBe('string');
         });
 
         it('should return empty array for unknown tag', () => {
             const texts = generator.getTextsForTag('UNKNOWN_TAG' as BehaviorTag);
             expect(texts).toEqual([]);
+        });
+
+        it('every text tag has at least one non-empty zh/en pair per variant', () => {
+            for (const tag of TEXT_TAGS) {
+                const variants = generator.getTextsForTag(tag);
+                expect(variants.length).toBeGreaterThan(0);
+                for (const v of variants) {
+                    expect(v.zh.length).toBeGreaterThan(0);
+                    expect(v.en.length).toBeGreaterThan(0);
+                }
+            }
         });
     });
 
