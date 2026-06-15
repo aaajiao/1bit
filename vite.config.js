@@ -1,3 +1,4 @@
+import { VitePWA } from 'vite-plugin-pwa';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
@@ -28,4 +29,53 @@ export default defineConfig({
         // line just above it so the warning stays meaningful for APP chunks.
         chunkSizeWarningLimit: 550,
     },
+    plugins: [
+        VitePWA({
+            // Silent update: the new service worker takes over on the next
+            // visit so a live session is never interrupted mid-play.
+            registerType: 'autoUpdate',
+            // Non-imported static assets that must be precached explicitly.
+            includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icons/favicon-32.png'],
+            manifest: {
+                name: '1-Bit Chimera Void',
+                short_name: '1bit',
+                description: '基于 Three.js 的 1-bit 抖动渲染交互式 3D 体验',
+                lang: 'zh',
+                // Stable app identity, decoupled from start_url so a future
+                // start_url change can't fork the installed app's identity.
+                id: '/',
+                display: 'fullscreen',
+                background_color: '#000000',
+                theme_color: '#000000',
+                start_url: '/',
+                scope: '/',
+                icons: [
+                    {
+                        src: 'icons/icon-192.png',
+                        sizes: '192x192',
+                        type: 'image/png',
+                        purpose: 'any',
+                    },
+                    {
+                        src: 'icons/icon-512.png',
+                        sizes: '512x512',
+                        type: 'image/png',
+                        purpose: 'any',
+                    },
+                    {
+                        src: 'icons/icon-maskable-512.png',
+                        sizes: '512x512',
+                        type: 'image/png',
+                        purpose: 'maskable',
+                    },
+                ],
+            },
+            workbox: {
+                // Precache every shipped asset class, including the ~505 kB
+                // three chunk (< 2 MiB default cap) so the whole experience
+                // works fully offline.
+                globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+            },
+        }),
+    ],
 });
