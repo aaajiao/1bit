@@ -414,6 +414,14 @@ bun run serve
 # 访问 http://localhost:3000
 ```
 
+### PWA（可安装 / 离线）
+本作是渐进式 Web 应用：装到主屏后全屏运行（去掉浏览器外壳），首次访问后由 service worker 预缓存整个构建（含 three.js），可完全离线游玩。更新策略为 `autoUpdate`（新版本下次进入时接管，不打断当前对局）。
+
+```bash
+bun run build && bun run preview   # 构建并预览构建产物，才能验证 PWA
+# DevTools → Application 看 service worker / manifest；断网刷新验证离线
+```
+
 ---
 
 ## 📦 项目结构
@@ -510,10 +518,11 @@ bun run serve
 | **Three.js** | ^0.173.0 | 3D 渲染引擎（ES6 模块版本） |
 | **@types/three** | ^0.173.0 | Three.js 类型定义 |
 | **Vite** | ^7.3.0 | 现代前端构建工具 |
+| **vite-plugin-pwa** | ^1.3.0 | PWA：service worker + manifest，可安装、离线可玩 |
 | **Vitest** | ^4.0.16 | 单元测试框架 |
 | **ESLint** | ^9.39.2 | 代码检查工具（@antfu/eslint-config） |
 | **@antfu/eslint-config** | ^6.7.3 | ESLint 配置预设 |
-| **模块系统** | ES6 Import Map | 浏览器原生模块支持 |
+| **模块系统** | ES Modules（Vite 打包，three 独立 chunk） | 构建产物自托管，无运行时外链 |
 
 ### 类型检查
 

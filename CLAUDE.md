@@ -87,3 +87,5 @@ Tests live in `tests/` and cover pure logic — 30 test files / 726 cases spanni
 ## Dependencies
 
 Single production dependency: `three` (^0.173.0). All audio is procedurally generated via Web Audio API — no audio files or synthesis libraries.
+
+The app ships as an installable PWA via `vite-plugin-pwa` (dev dependency; configured in `vite.config.js`): `bun run build` emits a service worker + manifest that precache the whole self-hosted build (incl. the three.js chunk) for fully-offline play. `registerType: 'autoUpdate'`; the SW is disabled in dev. Verify the built PWA with `bun run build && bun run preview` (not `bun run serve`, which serves the repo root).
