@@ -130,6 +130,84 @@ export function wrapTextLines(
 }
 
 /**
+ * Greedy word wrap for the card's secondary English line. Splits on spaces
+ * and packs as many words per line as fit `maxWidth`; a single word wider
+ * than the box is hard-split by code point so it can never overflow. `measure`
+ * is injected (canvas measureText in production, char counts in tests) so the
+ * function stays pure, mirroring `wrapTextLines`. Runs of whitespace collapse
+ * (empty tokens are dropped) and '\n' forces a break.
+ */
+export function wrapTextLinesWord(
+    text: string,
+    maxWidth: number,
+    measure: (s: string) => number,
+): string[] {
+    const lines: string[] = [];
+    let line = '';
+    const flush = (): void => {
+        if (line.length > 0) {
+            lines.push(line);
+            line = '';
+        }
+    };
+    // Hard-split an over-wide word by code point so nothing escapes the box.
+    const placeLongWord = (word: string): void => {
+        let chunk = '';
+        for (const ch of word) {
+            if (chunk.length > 0 && measure(chunk + ch) > maxWidth) {
+                lines.push(chunk);
+                chunk = ch;
+            }
+            else {
+                chunk += ch;
+            }
+        }
+        line = chunk; // carry the tail into the running line for the next word
+    };
+    for (const segment of text.split('\n')) {
+        for (const word of segment.split(' ')) {
+            if (word.length === 0)
+                continue; // collapse runs of whitespace
+            const candidate = line.length > 0 ? `${line} ${word}` : word;
+            if (line.length > 0 && measure(candidate) > maxWidth) {
+                flush();
+                if (measure(word) > maxWidth)
+                    placeLongWord(word);
+                else
+                    line = word;
+            }
+            else if (line.length === 0 && measure(word) > maxWidth) {
+                placeLongWord(word);
+            }
+            else {
+                line = candidate;
+            }
+        }
+        flush(); // each explicit segment ends its line
+    }
+    return lines;
+}
+
+/**
+ * How many English lines fit beneath the drawn Chinese block before the tag
+ * row, given how many Chinese lines were actually rendered. Pure layout math
+ * (no DOM) so the no-overflow guarantee is testable. Returns 0 when the
+ * corridor is already full — the English block then collapses cleanly.
+ */
+export function englishLineBudget(chineseLineCount: number): number {
+    const C = SNAPSHOT_CARD;
+    const cnBottom = C.PATTERN_HEIGHT
+        + C.TEXT_TOP_OFFSET
+        + chineseLineCount * C.TEXT_LINE_HEIGHT;
+    const tagTop = C.HEIGHT - C.TAG_BOTTOM_OFFSET;
+    const available = tagTop - cnBottom - C.TEXT_EN_TOP_GAP - C.TEXT_EN_BOTTOM_GAP;
+    if (available <= 0)
+        return 0;
+    const fits = Math.floor(available / C.TEXT_EN_LINE_HEIGHT);
+    return Math.min(C.TEXT_EN_MAX_LINES, Math.max(0, fits));
+}
+
+/**
  * m:ss run length (hours fold in as h:mm:ss) — the film-label signature.
  * Negative or non-finite input clamps to 0:00.
  */
@@ -251,6 +329,26 @@ export function composeSnapshotCard(snapshot: StateSnapshot): HTMLCanvasElement 
     lines.forEach((line, i) => {
         ctx.fillText(line, C.MARGIN, textTop + i * C.TEXT_LINE_HEIGHT);
     });
+
+    // Secondary English line, word-wrapped and drawn under the Chinese block:
+    // smaller, dimmer (the "secondary" tier). Positioned dynamically below the
+    // lines actually drawn and clamped to the corridor before the tag row, so
+    // the worst case never overflows. Empty textEn (older snapshots) skips the
+    // block — layout below it is unaffected.
+    if (snapshot.textEn) {
+        const budget = englishLineBudget(lines.length);
+        if (budget > 0) {
+            ctx.font = `${C.TEXT_EN_FONT_SIZE}px ${mono}`;
+            const enLines = wrapTextLinesWord(snapshot.textEn, maxTextWidth, s => ctx.measureText(s).width)
+                .slice(0, budget);
+            const enTop = textTop + lines.length * C.TEXT_LINE_HEIGHT + C.TEXT_EN_TOP_GAP;
+            ctx.globalAlpha = C.TEXT_EN_ALPHA;
+            enLines.forEach((line, i) => {
+                ctx.fillText(line, C.MARGIN, enTop + i * C.TEXT_EN_LINE_HEIGHT);
+            });
+            ctx.globalAlpha = 1;
+        }
+    }
 
     // Tag row: the run's raw labels, small monospace, dimmed (still
     // achromatic). maxWidth squeezes an unusually long row instead of

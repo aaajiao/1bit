@@ -15,6 +15,11 @@ export interface PersistedSnapshot {
     text: string;
     textKey: string;
     /**
+     * Optional English line paired with `text` (bilingual snapshots); absent
+     * in pre-bilingual payloads — same VERSION, additive field.
+     */
+    textEn?: string;
+    /**
      * Optional run length in seconds (F6 share-card footer); absent in
      * pre-F6 payloads — same VERSION, additive field.
      */
@@ -30,6 +35,9 @@ export function encodeSnapshot(snapshot: StateSnapshot): string {
         text: snapshot.text,
         textKey: snapshot.textKey,
     };
+    if (typeof snapshot.textEn === 'string' && snapshot.textEn.length > 0) {
+        payload.textEn = snapshot.textEn;
+    }
     if (isFiniteNumber(snapshot.durationSeconds) && snapshot.durationSeconds >= 0) {
         payload.durationSeconds = snapshot.durationSeconds;
     }
@@ -89,6 +97,9 @@ export function decodeSnapshot(raw: string | null | undefined): StateSnapshot | 
             uPhase: pattern.uPhase,
         },
         text: p.text,
+        // Optional English line (bilingual): tolerate absence — pre-bilingual
+        // payloads (or garbage) fall back to '' without rejecting the snapshot.
+        textEn: typeof p.textEn === 'string' ? p.textEn : '',
         textKey: p.textKey,
     };
     // Optional run duration (F6): tolerate absence (pre-F6 payloads) and

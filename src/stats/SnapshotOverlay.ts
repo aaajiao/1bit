@@ -37,6 +37,14 @@ export class SnapshotOverlay {
     private canvas: HTMLCanvasElement;
     private ctx: CanvasRenderingContext2D;
     private textEl: HTMLDivElement;
+    // Bilingual children of #snapshot-text: Chinese (textElZh) on top, a
+    // low-key hairline divider, then the English secondary line. All three
+    // live inside textEl's opacity wrapper so they fade in together; the
+    // hairline + English line collapse (display:none) when textEn is empty
+    // (old snapshots).
+    private textElZh: HTMLDivElement;
+    private hairlineEl: HTMLDivElement;
+    private textElEn: HTMLDivElement;
     private config: OverlayConfig;
     private isVisible: boolean = false;
 
@@ -101,24 +109,60 @@ export class SnapshotOverlay {
         `;
         this.container.appendChild(this.canvas);
 
-        // Create text element
+        // Create text element. #snapshot-text is the shared fade wrapper that
+        // keeps the original centering / max-width / padding / background and
+        // owns the single opacity transition; the Chinese line, hairline, and
+        // English line are children so they fade in as one block.
         this.textEl = document.createElement('div');
         this.textEl.id = 'snapshot-text';
         this.textEl.style.cssText = `
             position: relative;
             z-index: 1;
-            font-family: 'Courier New', monospace;
-            font-size: 24px;
-            color: #ffffff;
             text-align: center;
             max-width: 80%;
-            line-height: 1.6;
-            text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.8);
             opacity: 0;
             transition: opacity 1s ease-in-out;
             padding: 20px;
             background: rgba(0, 0, 0, 0.6);
         `;
+
+        // Chinese primary: 24px solid white, the original look on top.
+        this.textElZh = document.createElement('div');
+        this.textElZh.style.cssText = `
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            color: #ffffff;
+            line-height: 1.6;
+            text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.8);
+        `;
+        this.textEl.appendChild(this.textElZh);
+
+        // Duotone hairline divider: 1px, low-contrast translucent white — no
+        // colour, in keeping with the 1-bit black/white aesthetic. Collapses
+        // with the English line when textEn is empty.
+        this.hairlineEl = document.createElement('div');
+        this.hairlineEl.style.cssText = `
+            height: 1px;
+            margin: 12px auto;
+            width: 40%;
+            background: rgba(255, 255, 255, 0.18);
+        `;
+        this.textEl.appendChild(this.hairlineEl);
+
+        // English secondary: smaller (19px) and dimmer (opacity 0.6), below.
+        // Still clearly subordinate to the 24px Chinese, but the earlier 15px
+        // read as too small on screen (the share card's larger en is fine).
+        this.textElEn = document.createElement('div');
+        this.textElEn.style.cssText = `
+            font-family: 'Courier New', monospace;
+            font-size: 19px;
+            color: #ffffff;
+            line-height: 1.5;
+            opacity: 0.6;
+            text-shadow: 1px 1px 6px rgba(0, 0, 0, 0.8);
+        `;
+        this.textEl.appendChild(this.textElEn);
+
         this.container.appendChild(this.textEl);
 
         // F6 share card: "keep this" in the corner. The container stays
@@ -189,8 +233,15 @@ export class SnapshotOverlay {
         this.renderPattern(snapshot.pattern);
 
         // Show container; text appears after textDelay via update(delta).
+        // textContent (not innerHTML) on both lines keeps the fixed copy safe.
+        // Empty textEn (legacy snapshots) collapses the hairline + English
+        // block so the layout degrades to Chinese-only with no gap.
         this.container.style.opacity = '1';
-        this.textEl.textContent = snapshot.text;
+        this.textElZh.textContent = snapshot.text;
+        const hasEn = snapshot.textEn.length > 0;
+        this.textElEn.textContent = hasEn ? snapshot.textEn : '';
+        this.textElEn.style.display = hasEn ? 'block' : 'none';
+        this.hairlineEl.style.display = hasEn ? 'block' : 'none';
         this.textEl.style.opacity = '0';
         this.syncSaveEntry();
 
