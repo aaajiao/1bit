@@ -8,6 +8,7 @@ import { CAMERA, VIEWMODEL } from '../src/config';
 import {
     cameraSpaceToNdc,
     flowerRecompose,
+    handSizeFactor,
     ndcToCameraSpace,
     safeAreaLiftCameraSpace,
 } from '../src/player/viewmodelLayout';
@@ -123,6 +124,38 @@ describe('flowerRecompose', () => {
             prevScale = r.scale;
             prevCenter = r.centerFactor;
         }
+    });
+});
+
+describe('handSizeFactor — narrow-aspect squish fix', () => {
+    const REF = VIEWMODEL.REFERENCE_ASPECT;
+    const MIN = VIEWMODEL.HAND_SCALE.MIN;
+
+    it('is 1 at and above the reference aspect (desktop unchanged)', () => {
+        expect(handSizeFactor(REF, REF, MIN)).toBeCloseTo(1, 6);
+        expect(handSizeFactor(REF + 1, REF, MIN)).toBeCloseTo(1, 6);
+        expect(handSizeFactor(3, REF, MIN)).toBeCloseTo(1, 6);
+    });
+
+    it('shrinks proportionally as the viewport narrows', () => {
+        // Square viewport: aspect 1 -> 1 / (16/9) = 0.5625.
+        expect(handSizeFactor(1, REF, MIN)).toBeCloseTo(1 / REF, 6);
+        // Monotonic decrease as aspect shrinks.
+        const a = handSizeFactor(1.2, REF, MIN);
+        const b = handSizeFactor(0.9, REF, MIN);
+        const c = handSizeFactor(0.7, REF, MIN);
+        expect(a).toBeGreaterThanOrEqual(b);
+        expect(b).toBeGreaterThanOrEqual(c);
+    });
+
+    it('clamps to MIN on extreme portrait so hands never vanish', () => {
+        // Phone portrait (~9:19.5) would compute below MIN -> clamped.
+        expect(handSizeFactor(9 / 19.5, REF, MIN)).toBe(MIN);
+        expect(handSizeFactor(0.01, REF, MIN)).toBe(MIN);
+    });
+
+    it('degrades to 1 for a non-positive reference aspect', () => {
+        expect(handSizeFactor(0.5, 0, MIN)).toBe(1);
     });
 });
 

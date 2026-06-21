@@ -83,6 +83,11 @@ export class Controls {
     private overrideButton: HTMLElement | null = null;
     private pauseButton: HTMLElement | null = null;
 
+    // Touch jump entry (the Space equivalent) — only desktop binds Space, so
+    // without this touch players can never jump. A tap = one jump; tapping
+    // again mid-air triggers the double jump (maxJumps = 2).
+    private jumpButton: HTMLElement | null = null;
+
     // Notifies the pause state machine after exitTouchMode() (touch mode has
     // no pointerlockchange event for PauseController to observe). Wired by
     // main.ts to PauseController.syncPauseState().
@@ -196,6 +201,7 @@ export class Controls {
             this.createFlowerButtons();
             this.createOverrideButton();
             this.createPauseButton();
+            this.createJumpButton();
         }
     }
 
@@ -300,6 +306,35 @@ export class Controls {
     }
 
     /**
+     * Jump entry for touch devices (the Space equivalent): a tap button. Each
+     * tap fires one jump; a second tap mid-air triggers the double jump. Hidden
+     * until the game starts. Tap semantics (not hold) match the keyboard.
+     */
+    private createJumpButton(): void {
+        const btn = document.createElement('button');
+        btn.id = 'touch-jump-button';
+        btn.type = 'button';
+        btn.textContent = '跳';
+        btn.classList.add('hidden');
+
+        const onPress = (e: Event): void => {
+            // Keep the tap out of the joystick/look drag handlers, and suppress
+            // the synthetic click (which would bubble to the document-level
+            // enter-game handler).
+            e.stopPropagation();
+            e.preventDefault();
+            this.tryJump();
+        };
+        // preventDefault in touchstart suppresses the synthetic click, so touch
+        // devices fire once; mouse-driven taps use the click path.
+        btn.addEventListener('touchstart', onPress, { passive: false });
+        btn.addEventListener('click', onPress);
+
+        document.body.appendChild(btn);
+        this.jumpButton = btn;
+    }
+
+    /**
      * Leave touch play (the ESC equivalent, flow-audit C3): deactivate input,
      * restore the start/pause screen, and notify the pause state machine
      * (touch mode has no pointerlockchange event for it to observe).
@@ -326,6 +361,7 @@ export class Controls {
         this.flowerButtons?.classList.toggle('hidden', !visible);
         this.overrideButton?.classList.toggle('hidden', !visible);
         this.pauseButton?.classList.toggle('hidden', !visible);
+        this.jumpButton?.classList.toggle('hidden', !visible);
     }
 
     /**
@@ -365,26 +401,7 @@ export class Controls {
                 this.adjustFlowerIntensity(INPUT.FLOWER_STEP);
                 break;
             case 'Space':
-                if (this.actionsSuppressed)
-                    break;
-                if (this.canJump || this.jumpCount < this.config.maxJumps) {
-                    // Determine if this is a double jump (air jump)
-                    const isDoubleJump = !this.canJump && this.jumpCount > 0;
-
-                    // Reset vertical velocity for consistent air jumps
-                    if (!this.canJump) {
-                        this.velocity.y = 0;
-                    }
-
-                    this.velocity.y += this.config.jumpForce;
-                    this.canJump = false;
-                    this.jumpCount++;
-
-                    // Trigger jump audio callback
-                    if (this.onJump) {
-                        this.onJump(isDoubleJump);
-                    }
-                }
+                this.tryJump();
                 break;
         }
         // Override key (Shift or Space when not jumping)
@@ -410,6 +427,35 @@ export class Controls {
         // Override key release
         if (e.code === this.overrideKeyCode || e.code === 'ShiftRight') {
             this.overrideKeyHeld = false;
+        }
+    }
+
+    /**
+     * Jump (the Space-key / touch jump-button shared path). Mirrors the
+     * Space-key guards: ignored behind the start/pause menu (H3) and during
+     * the snapshot ritual's action dulling (#9). A first press jumps from the
+     * ground; a second press mid-air triggers the double jump (maxJumps = 2).
+     */
+    private tryJump(): void {
+        if (!this.isLocked || this.actionsSuppressed)
+            return;
+        if (this.canJump || this.jumpCount < this.config.maxJumps) {
+            // Determine if this is a double jump (air jump)
+            const isDoubleJump = !this.canJump && this.jumpCount > 0;
+
+            // Reset vertical velocity for consistent air jumps
+            if (!this.canJump) {
+                this.velocity.y = 0;
+            }
+
+            this.velocity.y += this.config.jumpForce;
+            this.canJump = false;
+            this.jumpCount++;
+
+            // Trigger jump audio callback
+            if (this.onJump) {
+                this.onJump(isDoubleJump);
+            }
         }
     }
 
@@ -749,6 +795,8 @@ export class Controls {
             this.overrideButton = null;
             this.pauseButton?.remove();
             this.pauseButton = null;
+            this.jumpButton?.remove();
+            this.jumpButton = null;
         }
         else {
             // Desktop mode cleanup

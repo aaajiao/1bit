@@ -4,7 +4,7 @@ import type { FlowerGroup } from './FlowerProp';
 import * as THREE from 'three';
 import { CAMERA, VIEWMODEL } from '../config';
 import { animateFlower, createFlowerProp } from './FlowerProp';
-import { flowerRecompose, ndcToCameraSpace, safeAreaLiftCameraSpace } from './viewmodelLayout';
+import { flowerRecompose, handSizeFactor, ndcToCameraSpace, safeAreaLiftCameraSpace } from './viewmodelLayout';
 
 /**
  * Creates anatomically detailed hand models
@@ -326,6 +326,20 @@ export class HandsModel {
         );
         this.rightHand.position.x = right.x;
         this.rightHand.position.y = right.y;
+
+        // Narrow-aspect downscale (phone-portrait squish fix): a fixed vertical
+        // FOV magnifies the fixed-size hands horizontally on a portrait viewport
+        // until they overlap in the centre. Scale each hand to neutralise that
+        // (=1 at/above the reference aspect, so desktop is unaffected). Applied
+        // to the hand MESH only — the anchor positions above are untouched, so
+        // the on-screen separation is preserved while the meshes shrink.
+        const handScale = handSizeFactor(
+            aspect,
+            VIEWMODEL.REFERENCE_ASPECT,
+            VIEWMODEL.HAND_SCALE.MIN,
+        );
+        this.leftHand.scale.setScalar(handScale);
+        this.rightHand.scale.setScalar(handScale);
 
         // Get camera pitch (rotation.x) - positive when looking up
         const pitch = this.camera.rotation.x;
