@@ -2,7 +2,9 @@ import type { FingerStructure, ThumbStructure } from '../types';
 import type { FlowerGroup } from './FlowerProp';
 // 1-bit Chimera Void - Hands Model
 import * as THREE from 'three';
+import { CAMERA, VIEWMODEL } from '../config';
 import { animateFlower, createFlowerProp } from './FlowerProp';
+import { flowerRecompose, ndcToCameraSpace, safeAreaLiftCameraSpace } from './viewmodelLayout';
 
 /**
  * Creates anatomically detailed hand models
@@ -13,6 +15,8 @@ export class HandsModel {
     private time: number = 0;
     private leftHand!: THREE.Group;
     private rightHand!: THREE.Group;
+    /** Flower's resting local x (FlowerProp base offset) — the center-nudge baseline. */
+    private flowerBaseX: number = 0;
 
     // Materials
     private handMat: THREE.MeshLambertMaterial;
@@ -49,6 +53,12 @@ export class HandsModel {
         this.rightHand.position.set(0.6, -0.7, -0.9);
         this.rightHand.rotation.set(-0.2, 0.4, 0.3);
         this.handsGroup.add(this.rightHand);
+
+        // Cache the flower's resting local x so the narrow-aspect center-nudge
+        // can offset relative to its baseline (FlowerProp's fixed -0.05).
+        const flower = this.getFlower();
+        if (flower)
+            this.flowerBaseX = flower.position.x;
     }
 
     /**
@@ -291,6 +301,32 @@ export class HandsModel {
         this.leftHand.rotation.z = -0.1 + sway;
         this.rightHand.rotation.z = 0.1 - sway;
 
+        // --- Screen-space (NDC) anchoring (visual-stability fix) ---
+        // Recompute each hand's local x/y from its fixed NDC anchor using the
+        // LIVE camera.aspect, so the on-screen position is identical for any
+        // aspect ratio (no drift/clipping on a narrow PWA window or phone
+        // portrait). z is left as set in init(); only x/y are aspect-driven.
+        const aspect = this.camera.aspect;
+        const left = ndcToCameraSpace(
+            VIEWMODEL.LEFT_HAND.ndcX,
+            VIEWMODEL.LEFT_HAND.ndcY,
+            VIEWMODEL.LEFT_HAND.z,
+            aspect,
+            CAMERA.FOV_DEGREES,
+        );
+        this.leftHand.position.x = left.x;
+        this.leftHand.position.y = left.y;
+
+        const right = ndcToCameraSpace(
+            VIEWMODEL.RIGHT_HAND.ndcX,
+            VIEWMODEL.RIGHT_HAND.ndcY,
+            VIEWMODEL.RIGHT_HAND.z,
+            aspect,
+            CAMERA.FOV_DEGREES,
+        );
+        this.rightHand.position.x = right.x;
+        this.rightHand.position.y = right.y;
+
         // Get camera pitch (rotation.x) - positive when looking up
         const pitch = this.camera.rotation.x;
 
@@ -298,16 +334,55 @@ export class HandsModel {
         // When looking down or straight, keep hands at normal position
         const pitchOffset = pitch > 0 ? pitch * 1.5 : 0;
 
-        // Apply breathing + pitch-based offset (subtract to move down)
-        this.handsGroup.position.y = Math.sin(this.time * 2) * 0.02 - pitchOffset;
+        // Safe-area-bottom lift: keep the hands/flower clear of a phone home
+        // indicator. Degrades to 0 when the inset/viewport is unavailable.
+        const safeLift = safeAreaLiftCameraSpace(
+            this.readSafeAreaBottomPx(),
+            this.readViewportHeightPx(),
+            VIEWMODEL.SAFE_AREA.LIFT_DEPTH,
+            CAMERA.FOV_DEGREES,
+        );
+
+        // Group-level offset ON TOP of the anchored hand positions: breathing
+        // bob, pitch compensation, and the safe-area lift (additive — the
+        // per-hand NDC x/y above are preserved).
+        this.handsGroup.position.y = Math.sin(this.time * 2) * 0.02 - pitchOffset + safeLift;
+
+        // Flower narrow-aspect recompose: scale up and nudge toward center-x as
+        // the window narrows (the flower sits on the off-center right hand).
+        const recompose = flowerRecompose(aspect, VIEWMODEL.FLOWER_RECOMPOSE);
 
         // Animate flower on right hand
         this.rightHand.children.forEach((child) => {
             const flowerChild = child as FlowerGroup;
             if (flowerChild.userData?.bloom) {
                 animateFlower(flowerChild, timeMs * 0.001, delta);
+                // Recompose: grow toward the max multiplier, and pull the local
+                // x toward screen-center by cancelling a fraction of the right
+                // hand's camera-space x (nudging negative = toward center).
+                flowerChild.scale.setScalar(recompose.scale);
+                flowerChild.position.x = this.flowerBaseX - recompose.centerFactor * right.x;
             }
         });
+    }
+
+    /**
+     * Read the bottom safe-area inset (CSS px) from the --sab custom property,
+     * which styles/main.css sets to env(safe-area-inset-bottom). Returns 0 when
+     * unavailable (non-browser test env, no inset, or unparseable value).
+     */
+    private readSafeAreaBottomPx(): number {
+        if (typeof document === 'undefined' || typeof getComputedStyle === 'undefined')
+            return 0;
+        const raw = getComputedStyle(document.documentElement)
+            .getPropertyValue(VIEWMODEL.SAFE_AREA.CSS_VAR);
+        const px = Number.parseFloat(raw);
+        return Number.isFinite(px) ? px : 0;
+    }
+
+    /** Viewport height (CSS px), or 0 outside a browser. */
+    private readViewportHeightPx(): number {
+        return typeof window === 'undefined' ? 0 : window.innerHeight;
     }
 
     /**

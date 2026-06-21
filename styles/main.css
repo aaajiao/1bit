@@ -1,3 +1,10 @@
+/* Bottom safe-area inset (phone home indicator), exposed to JS via getComputedStyle
+   so HandsModel can lift the first-person view-model clear of it (config/VIEWMODEL.SAFE_AREA).
+   Degrades to 0 where env() is unsupported. */
+:root {
+    --sab: env(safe-area-inset-bottom, 0px);
+}
+
 body {
     margin: 0;
     overflow: hidden;

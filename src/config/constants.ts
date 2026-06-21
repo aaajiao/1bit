@@ -747,6 +747,70 @@ export const CAMERA = {
 } as const;
 
 /**
+ * First-person view-model framing (visual-stability fix): the two hands and
+ * the held flower are children of the camera at fixed camera-space offsets,
+ * but the camera FOV is a fixed VERTICAL 80° and only `camera.aspect` changes
+ * on resize. With fixed offsets the on-screen x of a child = x / (|z| *
+ * tan(vFov/2) * aspect), so a narrowing window (resizable PWA, phone portrait)
+ * drifts the hands+flower off the side and clips them. Instead each hand is
+ * anchored in NDC (screen-space) and its camera-space position is recomputed
+ * every frame from the live aspect (player/viewmodelLayout.ndcToCameraSpace),
+ * keeping it at exactly its anchor for ANY aspect — stable by construction.
+ *
+ * The reference anchors below are DERIVED from today's fixed offsets at the
+ * 16:9 framing (vFov=80, aspect=16/9), so desktop reproduces the current look
+ * to within 1e-2 (tests/ViewmodelLayout.test.ts is the regression guard):
+ *   RIGHT: (0.6, -0.7, z=-0.90) -> ndc (0.44691, -0.92692)
+ *   LEFT:  (-0.55, -0.6, z=-0.85) -> ndc (-0.43377, -0.84122)
+ */
+export const VIEWMODEL = {
+    /** Vertical FOV (deg) the anchors were derived at — must equal CAMERA.FOV_DEGREES. */
+    REFERENCE_FOV_DEGREES: 80,
+    /** Aspect the anchors were derived at (16:9), documented for the regression test. */
+    REFERENCE_ASPECT: 16 / 9,
+    /**
+     * Per-hand screen-space anchor: ndcX/ndcY in [-1,1] (the stable on-screen
+     * position), z the camera-space depth (negative = in front). The hand's
+     * local x/y are recomputed each frame from these + the live aspect.
+     */
+    LEFT_HAND: { ndcX: -0.43377, ndcY: -0.84122, z: -0.85 },
+    RIGHT_HAND: { ndcX: 0.44691, ndcY: -0.92692, z: -0.90 },
+    /**
+     * Flower "recompose" on narrow aspect: the flower lives on the RIGHT hand
+     * (off-center at +x), so on a portrait screen it is the first thing to
+     * leave the frame. As aspect drops from RECOMPOSE_START_ASPECT (no change)
+     * toward RECOMPOSE_FULL_ASPECT (full effect) the flower scales up toward
+     * MAX_SCALE_MULT and its local x is nudged toward screen-center by up to
+     * MAX_CENTER_FRACTION of the right hand's camera-space x (see
+     * player/viewmodelLayout.flowerRecompose).
+     */
+    FLOWER_RECOMPOSE: {
+        /** Aspect at/above which the flower is untouched (1.0 = square). */
+        START_ASPECT: 1.0,
+        /** Aspect at/below which the recompose is fully applied (~tall portrait). */
+        FULL_ASPECT: 0.5,
+        /** Max fraction of the right hand's camera-space x to cancel (pull to center). */
+        MAX_CENTER_FRACTION: 0.4,
+        /** Max uniform scale multiplier of the flower at full recompose. */
+        MAX_SCALE_MULT: 1.25,
+    },
+    /**
+     * Safe-area lift: on devices with a bottom inset (phone home indicator)
+     * the whole hands group is lifted by the NDC-equivalent of the inset so
+     * the hands/flower are not hidden under it. The CSS var --sab (set to
+     * env(safe-area-inset-bottom) in styles/main.css) is read each frame and
+     * degrades to 0 where unavailable. The lift is applied at the right hand's
+     * depth so it reads consistently with the lower (closest-to-edge) prop.
+     */
+    SAFE_AREA: {
+        /** Camera-space depth (negative) the inset lift is computed at. */
+        LIFT_DEPTH: -0.90,
+        /** CSS custom property holding the bottom inset (px). */
+        CSS_VAR: '--sab',
+    },
+} as const;
+
+/**
  * Override mechanic constants
  */
 export const OVERRIDE = {
