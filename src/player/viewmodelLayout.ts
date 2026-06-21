@@ -83,6 +83,31 @@ export function cameraSpaceToNdc(
 }
 
 /**
+ * Per-hand uniform scale for narrow aspects (phone-portrait squish fix). With
+ * a FIXED vertical FOV, a narrow viewport shrinks the horizontal FOV and so
+ * magnifies the fixed-size hand meshes horizontally until the two hands overlap
+ * in the centre. Scaling each hand by aspect / referenceAspect (clamped to
+ * [minScale, 1]) neutralises that horizontal magnification: it returns 1 at or
+ * above referenceAspect (desktop unchanged) and shrinks toward minScale as the
+ * viewport narrows. Scale the hand MESH by this, NOT its anchor position, so
+ * the on-screen separation is preserved.
+ *
+ * @param aspect Live viewport aspect (width / height).
+ * @param referenceAspect Aspect the hand sizes were authored at (e.g. 16/9).
+ * @param minScale Lower clamp so hands never vanish on extreme aspects.
+ */
+export function handSizeFactor(
+    aspect: number,
+    referenceAspect: number,
+    minScale: number,
+): number {
+    if (!(referenceAspect > 0))
+        return 1;
+    const factor = aspect / referenceAspect;
+    return Math.max(minScale, Math.min(1, factor));
+}
+
+/**
  * Narrow-aspect flower recompose. Returns a 0..1 progress mapped onto a
  * center-pull fraction and a scale multiplier. Both effects grow monotonically
  * as the aspect shrinks from START_ASPECT down to FULL_ASPECT, then clamp.

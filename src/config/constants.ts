@@ -776,23 +776,38 @@ export const VIEWMODEL = {
     LEFT_HAND: { ndcX: -0.43377, ndcY: -0.84122, z: -0.85 },
     RIGHT_HAND: { ndcX: 0.44691, ndcY: -0.92692, z: -0.90 },
     /**
-     * Flower "recompose" on narrow aspect: the flower lives on the RIGHT hand
-     * (off-center at +x), so on a portrait screen it is the first thing to
-     * leave the frame. As aspect drops from RECOMPOSE_START_ASPECT (no change)
-     * toward RECOMPOSE_FULL_ASPECT (full effect) the flower scales up toward
-     * MAX_SCALE_MULT and its local x is nudged toward screen-center by up to
-     * MAX_CENTER_FRACTION of the right hand's camera-space x (see
-     * player/viewmodelLayout.flowerRecompose).
+     * Flower "recompose" on narrow aspect: as aspect drops from START_ASPECT
+     * (no change) toward FULL_ASPECT (full effect) the flower scales up toward
+     * MAX_SCALE_MULT so it stays readable while the hands shrink (see
+     * HAND_SCALE). The center-nudge is DISABLED (MAX_CENTER_FRACTION 0): pulling
+     * the flower toward screen-center dragged it off the right hand into the
+     * middle and piled it onto the (then-overlapping) hands on phone portrait.
+     * The flower now stays held in the right hand; HAND_SCALE fixes the squish.
      */
     FLOWER_RECOMPOSE: {
         /** Aspect at/above which the flower is untouched (1.0 = square). */
         START_ASPECT: 1.0,
         /** Aspect at/below which the recompose is fully applied (~tall portrait). */
         FULL_ASPECT: 0.5,
-        /** Max fraction of the right hand's camera-space x to cancel (pull to center). */
-        MAX_CENTER_FRACTION: 0.4,
+        /** Max fraction of the right hand's camera-space x to cancel (pull to center). 0 = disabled. */
+        MAX_CENTER_FRACTION: 0,
         /** Max uniform scale multiplier of the flower at full recompose. */
         MAX_SCALE_MULT: 1.25,
+    },
+    /**
+     * Narrow-aspect hand downscale (phone-portrait squish fix). The camera FOV
+     * is a fixed VERTICAL 80°, so a narrow (portrait) viewport shrinks the
+     * HORIZONTAL FOV and magnifies the fixed-size hand meshes horizontally
+     * (~2.4× at phone portrait) until the two hands overlap in the centre.
+     * Scaling each hand by aspect / REFERENCE_ASPECT (clamped to [MIN, 1])
+     * neutralises that horizontal magnification — at/above REFERENCE_ASPECT the
+     * scale is 1 (desktop unchanged); narrower viewports shrink toward MIN.
+     * Applied to the hand MESH only, not the anchor position, so the on-screen
+     * separation is preserved.
+     */
+    HAND_SCALE: {
+        /** Floor for the per-hand scale so hands never vanish on extreme aspects. Tune on device. */
+        MIN: 0.3,
     },
     /**
      * Safe-area lift: on devices with a bottom inset (phone home indicator)
