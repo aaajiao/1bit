@@ -124,7 +124,8 @@ body {
    (flow-audit C3: override + pause were unreachable on pure touch). */
 #touch-flower-controls button,
 #touch-override-button,
-#touch-pause-button {
+#touch-pause-button,
+#touch-jump-button {
     background: black;
     color: white;
     border: 2px solid white;
@@ -139,7 +140,8 @@ body {
 #touch-flower-controls {
     position: fixed;
     right: 16px;
-    bottom: 24px;
+    /* Lift above the phone home indicator (safe-area gaps audit). */
+    bottom: calc(24px + var(--sab));
     display: flex;
     gap: 12px;
     z-index: 10;
@@ -156,7 +158,8 @@ body {
 #touch-override-button {
     position: fixed;
     right: 16px;
-    bottom: 88px;
+    /* Stacked above the flower row, lifted past the home indicator. */
+    bottom: calc(88px + var(--sab));
     height: 48px;
     padding: 0 14px;
     font-size: 14px;
@@ -165,11 +168,28 @@ body {
     mix-blend-mode: difference;
 }
 
-/* Pause entry (ESC equivalent): small, out of both drag zones' hot paths */
+/* Jump entry (Space equivalent): primary action, bottom-right within easy
+   right-thumb reach, stacked above the hold-to-resist button. Tap = jump;
+   tap again mid-air = double jump. Bigger tap target than the others.
+   NOTE: placement is a first guess — tune on a real device. */
+#touch-jump-button {
+    position: fixed;
+    right: 16px;
+    bottom: calc(152px + var(--sab));
+    width: 56px;
+    height: 56px;
+    font-size: 18px;
+    letter-spacing: 1px;
+    z-index: 10;
+    mix-blend-mode: difference;
+}
+
+/* Pause entry (ESC equivalent): small, out of both drag zones' hot paths.
+   Inset by the top/left safe areas (notch / Dynamic Island / landscape ear). */
 #touch-pause-button {
     position: fixed;
-    top: 16px;
-    left: 16px;
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    left: calc(16px + env(safe-area-inset-left, 0px));
     width: 40px;
     height: 40px;
     font-size: 14px;
