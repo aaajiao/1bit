@@ -692,6 +692,52 @@ export const CABLE_UPLINK = {
 } as const;
 
 /**
+ * Snapshot echo (scene-richness batch, "世界替你打草稿"): every few minutes the
+ * world briefly leaks a low-res 1-bit DRAFT of the current run's snapshot
+ * fingerprint onto one nearby building facade — the same procedural pattern the
+ * sunset overlay settles (stats/SnapshotPattern), rendered from the run SO FAR.
+ * It appears and disappears with a hard on/off flicker (never an alpha fade),
+ * holds for a few seconds, then is gone. The end-of-run portrait is not a
+ * bolted-on results screen: the system has been watching and drafting you all
+ * along, and sunset merely delivers the final copy. black = the system doing
+ * the drawing, white = the self being drawn, dither = the draft's own grain.
+ */
+export const SNAPSHOT_ECHO = {
+    /**
+     * Arming interval band (s): hash-drawn per event index (mirrors the F3
+     * REBEL gate), so an echo surfaces AT MOST once every few minutes — and
+     * only once a building actually stands within RADIUS of the player.
+     */
+    MIN_INTERVAL: 140,
+    MAX_INTERVAL: 320,
+    /** Search radius (m) for a host building; inside the 3x3 near-chunk scan. */
+    RADIUS: 42,
+    /** Draft display duration band (s), hash-drawn per event index. */
+    DURATION_MIN: 4.0,
+    DURATION_MAX: 8.0,
+    /**
+     * Hard-flicker windows (s) at the head/tail of the display: inside them the
+     * decal strobes on/off (FLICKER_RATE toggles/s), so it materializes and
+     * dissolves in 1-bit stutter rather than fading; the middle holds steady.
+     */
+    FLICKER_IN_SECONDS: 0.55,
+    FLICKER_OUT_SECONDS: 0.7,
+    FLICKER_RATE: 12,
+    /** Draft texture edge (texels): deliberately low-res — a rough draft. */
+    RESOLUTION: 28,
+    /** Decal plane edge length (m) painted on the facade. */
+    SIZE: 4.0,
+    /** Decal center height (m) off the ground. */
+    HEIGHT: 5.0,
+    /**
+     * Offset (m) from the building center toward the player at which the decal
+     * floats: buildings vary in footprint, so this is a fair approximation of
+     * "on the near face turned toward you" rather than a surface-exact projection.
+     */
+    FACE_OFFSET: 5.0,
+} as const;
+
+/**
  * Chunk and world generation constants
  */
 export const WORLD = {

@@ -9,6 +9,7 @@ import type {
 import type { BehaviorProfile, RoomShaderConfig } from './RoomConfig';
 import type { ScarPoint } from './ScarField';
 import type { SharedAssets } from './SharedAssets';
+import type { EchoTarget } from './SnapshotEcho';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
 import { CABLE_UPLINK, WORLD } from '../config/constants';
@@ -958,6 +959,45 @@ export class ChunkManager {
      */
     setLiveProfile(profile: BehaviorProfile | null): void {
         this.roomLedger.setProfile(profile);
+    }
+
+    /**
+     * SnapshotEcho (scene-richness): append every building group whose world
+     * center lies within `radius` of (worldX, worldZ) to `out` (caller-owned;
+     * the caller clears it), each tagged with its owning chunk coords so the
+     * echo can later check the host chunk's liveness. Only the 3x3 near-chunk
+     * window is scanned (radius stays inside it), so the pass is cheap and
+     * allocation-free apart from the pushed records. Empty chunks / clearings
+     * contribute nothing.
+     */
+    collectBuildingsNear(worldX: number, worldZ: number, radius: number, out: EchoTarget[]): void {
+        const cx = Math.floor(worldX / CHUNK_SIZE);
+        const cz = Math.floor(worldZ / CHUNK_SIZE);
+        const radiusSq = radius * radius;
+
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                const kcx = cx + x;
+                const kcz = cz + z;
+                const chunk = this.activeChunks[`${kcx},${kcz}`];
+                if (!chunk || !chunk.userData.buildings)
+                    continue;
+
+                const offX = kcx * CHUNK_SIZE;
+                const offZ = kcz * CHUNK_SIZE;
+                for (const group of chunk.userData.buildings) {
+                    const dx = offX + group.position.x - worldX;
+                    const dz = offZ + group.position.z - worldZ;
+                    if (dx * dx + dz * dz <= radiusSq)
+                        out.push({ group, cx: kcx, cz: kcz });
+                }
+            }
+        }
+    }
+
+    /** Whether the chunk at (cx, cz) is currently loaded (SnapshotEcho guard). */
+    isChunkActive(cx: number, cz: number): boolean {
+        return !!this.activeChunks[`${cx},${cz}`];
     }
 
     /**

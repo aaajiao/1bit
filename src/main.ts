@@ -25,6 +25,7 @@ import { FigureSystem } from './world/FigureSystem';
 import { GhostSystem } from './world/GhostSystem';
 import { findQuietSpawnPosition, getRoomTypeAtWorldPosition, RoomType } from './world/RoomConfig';
 import { SkyEye } from './world/SkyEye';
+import { SnapshotEcho } from './world/SnapshotEcho';
 import { WeatherSystem } from './world/WeatherSystem';
 
 // Extend Window interface for app reference
@@ -131,6 +132,10 @@ class ChimeraVoid {
             () => this.runStats.getLiveProfile(),
             new FigureSystem(this.scene, this.chunkManager, this.scars.getScars()),
             new GhostSystem(this.scene),
+            // Snapshot echo drafts from the LIVE run stats (RunStatsCollector
+            // satisfies EchoStatsSource) and paints onto the chunk manager's
+            // buildings, both already constructed above.
+            new SnapshotEcho(this.scene, this.runStats),
         );
         this.statsSunset = new StatsSunsetUpdater({
             scene: this.scene,
