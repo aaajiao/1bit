@@ -27,12 +27,15 @@ src/
 ├── core/            # 核心初始化 + main.ts 每帧调用的逐帧 helper 层
 │   ├── BootGuard.ts          # 启动守卫：WebGL 检测 + 无 WebGL 时的 DOM 降级渲染
 │   ├── CableAudioUpdater.ts  # 每帧根据玩家与线缆的距离更新音频
+│   ├── CableUplinkUpdater.ts # 花光超阈值时驱动线缆上报脉冲（流向天眼）
 │   ├── FrameClock.ts         # 渲染时钟：钳制后的帧 delta + 累计秒数（防卡顿大步进）
 │   ├── HudUpdater.ts         # 每帧刷新调试 HUD 与行为标签/抗拒提示文本（含触控降级）
 │   ├── PauseController.ts    # 窗口/文档事件接线 + 暂停状态机（恢复时重置帧计时）
 │   ├── PostProcessing.ts     # 后处理合成器（Dither 着色器 + 蓝噪声纹理）
-│   ├── RoomFlowUpdater.ts    # 每帧房间归属/行为画像/世界系统驱动（房间切换、裂缝、雾、剪影、幽灵）
+│   ├── ProximityUpdaters.ts  # 近玩家逐帧扫描统一入口（线缆音频/上报 + seam 互换）
+│   ├── RoomFlowUpdater.ts    # 每帧房间归属/行为画像/世界系统驱动（房间切换、裂缝、雾、剪影、幽灵、反抗传染窗口）
 │   ├── SceneSetup.ts         # 场景与相机初始化
+│   ├── SeamSwapUpdater.ts    # POLARIZED seam 带内阵营语言互换驱动
 │   ├── ShaderSyncUpdater.ts  # 每帧着色器参数聚合（main 实际调用者；内置 F5 应激→颗粒平滑器）
 │   ├── ShaderUniformUpdater.ts # 底层 uniform 写入工具（纯函数，被 ShaderSyncUpdater 调用）
 │   ├── StatsSunsetUpdater.ts # 日落快照 / 遗忘 / 疤痕的每帧驱动
@@ -65,7 +68,7 @@ src/
 │   ├── ChunkAnimator.ts   # 区块动画逻辑（建筑、植物、雾气）
 │   ├── ChunkManager.ts    # 无限世界区块管理系统
 │   ├── DayNightCycle.ts   # 昼夜循环控制
-│   ├── FigureSystem.ts    # 远景 1-bit 人形剪影（F3，不可交互的叙事布景）
+│   ├── FigureSystem.ts    # 远景 1-bit 人形剪影（F3，不可交互的叙事布景；中段共鸣/反抗传染/疤痕见证者）
 │   ├── FloorTile.ts       # 地面瓦片与网格生成
 │   ├── FloraFactory.ts    # 程序化植物生成
 │   ├── GhostSystem.ts     # 幽灵回放（F4，重走上一局轨迹的半透明身影）
@@ -77,6 +80,7 @@ src/
 │   ├── ScarField.ts       # 世界疤痕场纯数学（F2，抗拒地点周围建筑的永久几何扭曲）
 │   ├── SharedAssets.ts    # 共享材质与几何体资源
 │   ├── SkyEye.ts          # 空中“Sky Eye”对象的行为与视觉
+│   ├── SnapshotEcho.ts    # 运行中把本局快照指纹草稿闪现到附近建筑立面
 │   └── WeatherSystem.ts   # 天气系统（雨、雪、故障效果）
 └── utils/           # 工具函数
     ├── dispose.ts          # Three.js 资源释放工具（几何体、材质、纹理）
@@ -164,7 +168,7 @@ this.newSystem.update(delta, { /* 依赖 */ });
 
 ### 测试覆盖
 
-`tests/` 下共 30 个测试文件，覆盖 hash / 房间 / 快照 / 天气 / 各机制等纯逻辑。
+`tests/` 下共 34 个测试文件，覆盖 hash / 房间 / 快照 / 天气 / 各机制等纯逻辑。
 
 *最后更新: 2026-06-15*
 

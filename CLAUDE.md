@@ -34,11 +34,11 @@ Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 | Directory | Purpose |
 |-----------|---------|
-| `core/` | Scene setup, post-processing, and the per-frame/startup helpers `main.ts` calls (room flow, HUD, pause control, cable-audio proximity, shader sync, stress level, boot guard, stats-sunset, etc. — 12 files) |
+| `core/` | Scene setup, post-processing, and the per-frame/startup helpers `main.ts` calls (room flow, HUD, pause control, near-player proximity passes — cable audio/uplink + POLARIZED seam swap via `ProximityUpdaters` — shader sync, stress level, boot guard, stats-sunset, etc. — 15 files) |
 | `config/` | All gameplay constants and thresholds (single source of truth): `constants.ts` + `audio.ts` + `physics.ts`, re-exported via `index.ts` |
 | `ui/` | HUD / DOM overlay |
 | `player/` | Player controls, hand model, flower prop, gaze/override mechanics |
-| `world/` | Chunk management, building/flora factories, cables, sky eye, weather, day/night |
+| `world/` | Chunk management, building/flora factories, cables (incl. uplink pulses), silhouette figures (resonance/contagion/scar witnesses), ghost replay, scar field, snapshot echo, sky eye, weather, day/night |
 | `audio/` | AudioController (business logic) + AudioEngine (Web Audio API wrapper) |
 | `shaders/` | DitherShader — 1-bit dithering, edge detection, weather overlays |
 | `stats/` | Behavior tracking, snapshot generation, sunset overlay display |
@@ -82,7 +82,7 @@ Persistent state lives in three versioned localStorage keys (`1bit:lastSnapshot`
 
 ## Testing
 
-Tests live in `tests/` and cover pure logic — 30 test files / 726 cases spanning hash utilities, GazeMechanic (47 cases), RunStatsCollector, StateSnapshotGenerator, room/weather/rift logic, and config validation. Test strategy focuses on logic separation — pure functions over mocked Three.js scenes.
+Tests live in `tests/` and cover pure logic — 34 test files / 816 cases spanning hash utilities, GazeMechanic, FigureSystem (resonance/contagion/witnesses), RunStatsCollector, StateSnapshotGenerator, room/weather/rift/seam-swap logic, SnapshotEcho gating, and config validation. Test strategy focuses on logic separation — pure functions over mocked Three.js scenes.
 
 ## Dependencies
 

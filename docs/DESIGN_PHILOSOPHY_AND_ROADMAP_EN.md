@@ -1226,11 +1226,18 @@ The following systems were not in the original five-phase roadmap, but are imple
 - **Silhouette figures** (`FigureSystem`): distant scattered 1-bit human forms across the ruins.
 - **Previous-run ghost trail** (`GhostSystem`): the previous run's walking trail returns as a ghost, consumed on load.
 - **Shareable snapshot card** (`SnapshotCard`): the sunset snapshot exports as a 1080×1350 PNG; observation text is bilingual (Chinese primary / English secondary).
+- **Mid-band flower resonance** (`FigureSystem`): hold the flower at mid intensity for a few seconds and nearby silhouettes gradually breathe in phase with you — too dim is loneliness, blazing makes them bow; only the middle band resonates.
+- **Contagious rebellion** (`FigureSystem`): for a few minutes after a successful override, distant rebel bursts become markedly more frequent — your resistance licenses others'.
+- **Witnesses at the scars** (`ScarField` + `FigureSystem` + `FloorTile`): silhouettes ring scar points facing them; INFO glyph floors are redacted around scars — the system erases the record while the crowd keeps standing there.
+- **Cable uplink** (`CableSystem`): above a flower-intensity threshold, nearby cables show 1-bit dash pulses flowing toward the sky eye — your light travels up the wires to authority.
+- **Snapshot echo** (`SnapshotEcho`): every few minutes a nearby facade hard-flickers a low-res draft of the current run's fingerprint — the world has been drawing your portrait all along; sunset merely delivers it.
+- **Seam swap** (POLARIZED): standing within a few meters of the seam makes near-seam buildings borrow the other faction's render language via hard flicker — us/them is defined by where you stand.
 
 ---
 
-*Document Version: 1.2 (English)*
+*Document Version: 1.3 (English)*
 
 **Changelog:**
+- v1.3: Added the scene-richness batch to the shipped list (resonance, contagion, witnesses, uplink, echo, seam swap).
 - v1.2: Completed Technical Roadmap with Phase 3 (Mental State Rooms), Phase 4 (Override Mechanic), Phase 5 (State Snapshot), and Future Optimization Phase.
 - v1.1: Added Current Status Assessment, Player Discovery Design, Audio System Technical Specification, Accessibility Considerations. Removed time estimates from Technical Roadmap.

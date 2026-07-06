@@ -278,6 +278,8 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
 
 废墟里你并不孤独：远处散落着 1-bit 剪影人物（`FigureSystem`）；上一局的行走轨迹会化作幽灵重现（`GhostSystem`，阅后即焚、本局之后不再出现）；你曾反抗的真实坐标会留下跨局疤痕（`ScarField` + `ScarStorage`，锚定那个地点）。
 
+这些存在也会回应你：把花保持在中等亮度数秒，近处剪影会渐渐与你同频呼吸；成功反抗后的几分钟里，远处的 rebel 爆发更频繁——你的反抗给了他者许可；剪影会围立在疤痕周围见证，而 INFO 房间的字符地板在疤痕处被系统涂抹。你的光也逃不出这张网：花过亮时电缆浮现流向天眼的虚线脉冲（上报），建筑立面偶尔硬闪烁出本局快照的低清草稿（`SnapshotEcho`），而在 POLARIZED 的 seam 线上，两侧阵营的渲染语言会在你站上去时互相渗透——us/them 由你站的位置定义。
+
 ---
 
 ### 阶段四：解决 (Resolution)
@@ -445,6 +447,9 @@ bun run build && bun run preview   # 构建并预览构建产物，才能验证 
     │   ├── ShaderUniformUpdater.ts # 每帧同步着色器 uniform
     │   ├── ShaderSyncUpdater.ts    # 聚合每帧着色器参数对象
     │   ├── CableAudioUpdater.ts    # 线缆接近度音频更新
+    │   ├── CableUplinkUpdater.ts   # 花光过亮时驱动线缆上报脉冲
+    │   ├── SeamSwapUpdater.ts      # POLARIZED seam 带内阵营语言互换驱动
+    │   ├── ProximityUpdaters.ts    # 近玩家扫描统一入口（线缆音频/上报 + seam 互换）
     │   ├── RoomFlowUpdater.ts      # 房间归属/行为画像/世界系统驱动
     │   ├── StatsSunsetUpdater.ts   # 日落快照/遗忘入口/疤痕记录
     │   ├── StressLevel.ts          # 应激等级（抖动语言驱动）
@@ -484,9 +489,10 @@ bun run build && bun run preview   # 构建并预览构建产物，才能验证 
     │   ├── RoomLedger.ts      # 会话内房间归属台账（行为偏置）
     │   ├── RoomTransition.ts  # 房间过渡与着色器配置烘焙
     │   ├── RiftMechanic.ts    # 裂隙坠落机制
-    │   ├── FigureSystem.ts    # 剪影人物
+    │   ├── FigureSystem.ts    # 剪影人物（共鸣/反抗传染/疤痕见证者）
     │   ├── GhostSystem.ts     # 上一局轨迹幽灵
     │   ├── ScarField.ts       # 跨局疤痕场
+    │   ├── SnapshotEcho.ts    # 运行中把本局快照草稿闪现到附近立面
     │   ├── WeatherSystem.ts   # 天气效果系统（逐房间签名天气）
     │   ├── DayNightCycle.ts   # 昼夜循环系统
     │   └── SkyEye.ts          # 天空之眼
@@ -884,7 +890,7 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 | 指标 | 数值 |
 |------|------|
 | TypeScript 代码 | ~18,800 行（另有 ~8,300 行测试） |
-| 单元测试 | 726 个（30 个文件） |
+| 单元测试 | 816 个（34 个文件） |
 | 设计文档 | ~80,000 字 |
 | 核心机制 | 4 个 |
 | 房间状态 | 4 种 |
