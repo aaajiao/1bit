@@ -346,6 +346,46 @@ export const FIGURES = {
     DIM_FLOWER_DISTANCE: 25,
     /** Constant faint light of the FORCED_ALIGNMENT rank-standers. */
     ALIGNED_LIGHT: 0.12,
+    /**
+     * Flower resonance — "the social language of light" (F3): the flower dial
+     * is a full social instrument. Too dim reads as loneliness, blazing above
+     * DIM_FLOWER_THRESHOLD bows the kin in fear (the press-down), and only the
+     * MIDDLE band resonates. Hold the flower inside
+     * [RESONANCE_BAND_MIN, RESONANCE_BAND_MAX] continuously for
+     * RESONANCE_ARM_SECONDS (not gazing) and nearby CONFORMIST kin — within the
+     * same DIM_FLOWER_DISTANCE radius the press uses — slowly converge their
+     * breathing onto a shared cadence and lift their light. Leave the band,
+     * blaze, or gaze and each drifts back to its own hash-desynced phase. The
+     * press-down suppression ALWAYS wins over resonance.
+     *
+     * Band edges use hysteresis (RESONANCE_BAND_HYSTERESIS): once inside, the
+     * band widens by the margin so a flower resting on an edge does not chatter
+     * armed/unarmed. The outer band stays below DIM_FLOWER_THRESHOLD, so a
+     * blazing flower always exits resonance before it presses.
+     */
+    RESONANCE_BAND_MIN: 0.3,
+    RESONANCE_BAND_MAX: 0.6,
+    RESONANCE_BAND_HYSTERESIS: 0.04,
+    /** Continuous in-band seconds before the kin start to resonate. */
+    RESONANCE_ARM_SECONDS: 3.0,
+    /**
+     * Shared reference phase = a slow common drift (rad/s) off the elapsed
+     * clock — identical for every resonating figure, so they breathe in unison
+     * rather than merely near one another.
+     */
+    RESONANCE_REFERENCE_DRIFT: 0.05,
+    /**
+     * Phase-circle approach rates (per s, shortest-arc): CONVERGE pulls a
+     * figure's live phase toward the shared reference while resonating; the
+     * slower RELAX lets it drift back to its personal hash phase afterwards.
+     */
+    RESONANCE_CONVERGE_RATE: 0.5,
+    RESONANCE_RELAX_RATE: 0.35,
+    /** Seconds for a figure's resonance strength (amplitude lift) to ease in / out. */
+    RESONANCE_ATTACK_SECONDS: 2.5,
+    RESONANCE_RELEASE_SECONDS: 3.0,
+    /** Breathing peak the lifted light tops out at while fully resonating. */
+    RESONANCE_LIGHT_MAX: 0.4,
     /** In-place sway amplitude (rad) and speed (rad/s) — barely alive. */
     SWAY_AMPLITUDE: 0.045,
     SWAY_SPEED: 0.8,

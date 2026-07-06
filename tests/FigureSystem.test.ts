@@ -3,12 +3,18 @@ import { FIGURES, WORLD } from '../src/config/constants';
 import {
     breatheLight,
     conformistPressed,
+    convergePhase,
     figureCountForChunk,
     figurePlacementsForChunk,
     isInRebelRange,
     pickRebelIndex,
     rebelDelaySeconds,
     rebelTearProximity,
+    resonanceArmed,
+    resonanceInBand,
+    resonanceReferencePhase,
+    resonantBreathe,
+    updateResonanceArm,
 } from '../src/world/FigureSystem';
 import {
     FA_FIGURE_PLACEMENT,
@@ -298,6 +304,160 @@ describe('figureSystem (F3 silhouettes)', () => {
             expect(rebelTearProximity(REBEL_MAX_DISTANCE ** 2)).toBe(0);
             const midDist = (REBEL_MIN_DISTANCE + REBEL_MAX_DISTANCE) / 2;
             expect(rebelTearProximity(midDist ** 2)).toBeCloseTo(0.5, 10);
+        });
+    });
+
+    describe('flower resonance (the mid-band social instrument)', () => {
+        const TWO_PI = Math.PI * 2;
+
+        describe('config coherence', () => {
+            it('orders the resonance band inside the breathe/press knobs', () => {
+                expect(FIGURES.RESONANCE_BAND_MIN).toBeLessThan(FIGURES.RESONANCE_BAND_MAX);
+                expect(FIGURES.RESONANCE_BAND_HYSTERESIS).toBeGreaterThan(0);
+                // The outer (hysteretic) band must stay below the blaze
+                // threshold, so a blazing flower always exits resonance before
+                // it presses the kin down.
+                expect(FIGURES.RESONANCE_BAND_MAX + FIGURES.RESONANCE_BAND_HYSTERESIS)
+                    .toBeLessThan(FIGURES.DIM_FLOWER_THRESHOLD);
+                // The lifted peak actually rises above the lonely default.
+                expect(FIGURES.RESONANCE_LIGHT_MAX).toBeGreaterThan(FIGURES.LIGHT_BREATHE_MAX);
+                expect(FIGURES.RESONANCE_ARM_SECONDS).toBeGreaterThan(0);
+            });
+        });
+
+        describe('resonanceInBand (hysteresis)', () => {
+            it('enters only strictly inside the band', () => {
+                const { RESONANCE_BAND_MIN, RESONANCE_BAND_MAX } = FIGURES;
+                const mid = (RESONANCE_BAND_MIN + RESONANCE_BAND_MAX) / 2;
+                expect(resonanceInBand(mid, false)).toBe(true);
+                expect(resonanceInBand(RESONANCE_BAND_MIN - 0.001, false)).toBe(false);
+                expect(resonanceInBand(RESONANCE_BAND_MAX + 0.001, false)).toBe(false);
+            });
+
+            it('stays in-band across the hysteresis margin once entered', () => {
+                const { RESONANCE_BAND_MAX, RESONANCE_BAND_HYSTERESIS } = FIGURES;
+                const justOver = RESONANCE_BAND_MAX + RESONANCE_BAND_HYSTERESIS / 2;
+                // Would not ENTER here, but does not chatter out once armed.
+                expect(resonanceInBand(justOver, false)).toBe(false);
+                expect(resonanceInBand(justOver, true)).toBe(true);
+                // Beyond the widened band it finally drops.
+                expect(resonanceInBand(RESONANCE_BAND_MAX + RESONANCE_BAND_HYSTERESIS + 0.001, true))
+                    .toBe(false);
+            });
+        });
+
+        describe('updateResonanceArm', () => {
+            it('arms only after sustained continuous in-band time', () => {
+                const mid = (FIGURES.RESONANCE_BAND_MIN + FIGURES.RESONANCE_BAND_MAX) / 2;
+                let state = { inBand: false, armTimer: 0 };
+                expect(resonanceArmed(state)).toBe(false);
+                // Half the arm time: in-band but not yet armed.
+                for (let t = 0; t < FIGURES.RESONANCE_ARM_SECONDS / 2; t += 0.1)
+                    state = updateResonanceArm(state, mid, false, 0.1);
+                expect(state.inBand).toBe(true);
+                expect(resonanceArmed(state)).toBe(false);
+                // Past the threshold: armed, and the timer caps (never grows past).
+                for (let t = 0; t < FIGURES.RESONANCE_ARM_SECONDS; t += 0.1)
+                    state = updateResonanceArm(state, mid, false, 0.1);
+                expect(resonanceArmed(state)).toBe(true);
+                expect(state.armTimer).toBe(FIGURES.RESONANCE_ARM_SECONDS);
+            });
+
+            it('resets the timer when gazing (discipline breaks resonance)', () => {
+                const mid = (FIGURES.RESONANCE_BAND_MIN + FIGURES.RESONANCE_BAND_MAX) / 2;
+                let state = { inBand: true, armTimer: FIGURES.RESONANCE_ARM_SECONDS };
+                state = updateResonanceArm(state, mid, true, 0.1);
+                expect(state.inBand).toBe(false);
+                expect(state.armTimer).toBe(0);
+                expect(resonanceArmed(state)).toBe(false);
+            });
+
+            it('resets the timer when the flower leaves the band (blazing / dimming)', () => {
+                let state = { inBand: true, armTimer: FIGURES.RESONANCE_ARM_SECONDS };
+                // Blaze above the band.
+                state = updateResonanceArm(state, FIGURES.DIM_FLOWER_THRESHOLD + 0.1, false, 0.1);
+                expect(state.armTimer).toBe(0);
+                // Dim below the band.
+                state = { inBand: true, armTimer: FIGURES.RESONANCE_ARM_SECONDS };
+                state = updateResonanceArm(state, 0.05, false, 0.1);
+                expect(state.armTimer).toBe(0);
+            });
+        });
+
+        describe('resonanceReferencePhase', () => {
+            it('is wrapped to [0, 2π) and deterministic', () => {
+                for (let t = 0; t < 500; t += 3.3) {
+                    const p = resonanceReferencePhase(t);
+                    expect(p).toBe(resonanceReferencePhase(t));
+                    expect(p).toBeGreaterThanOrEqual(0);
+                    expect(p).toBeLessThan(TWO_PI);
+                }
+            });
+
+            it('evolves with elapsed time (a live shared cadence)', () => {
+                expect(resonanceReferencePhase(10)).not.toBe(resonanceReferencePhase(20));
+            });
+        });
+
+        describe('convergePhase', () => {
+            it('never overshoots and stays wrapped for a large delta', () => {
+                const next = convergePhase(0, Math.PI, 100, 10); // rate*delta >> 1
+                expect(next).toBeCloseTo(Math.PI, 10);
+                expect(next).toBeGreaterThanOrEqual(0);
+                expect(next).toBeLessThan(TWO_PI);
+            });
+
+            it('takes the shortest arc across the 0/2π seam', () => {
+                // From 0.1 rad, the target 2π - 0.1 is reached by going NEGATIVE
+                // (a -0.2 rad arc through the seam), not the long way forward.
+                // rate*delta = 0.8 steps 80% of the -0.2 arc, crossing 0 and
+                // wrapping into the high 6.x range.
+                const next = convergePhase(0.1, TWO_PI - 0.1, 1, 0.8);
+                expect(next).toBeGreaterThan(Math.PI); // proves it went negative
+                expect(next).toBeGreaterThan(TWO_PI - 0.1); // past the seam, not yet at target
+                expect(next).toBeLessThan(TWO_PI);
+            });
+
+            it('monotonically closes onto a static target over time', () => {
+                let cur = 0.3;
+                const target = 2.4;
+                let prevGap = Math.abs(target - cur);
+                for (let i = 0; i < 200; i++) {
+                    cur = convergePhase(cur, target, FIGURES.RESONANCE_CONVERGE_RATE, 0.05);
+                    const gap = Math.abs(target - cur);
+                    expect(gap).toBeLessThanOrEqual(prevGap + 1e-9);
+                    prevGap = gap;
+                }
+                expect(prevGap).toBeLessThan(0.05); // exponential ease, near-closed
+            });
+        });
+
+        describe('resonantBreathe', () => {
+            it('equals the plain breathe at resonance 0', () => {
+                for (let t = 0; t < 20; t += 0.37) {
+                    expect(resonantBreathe(t, 1.1, 0)).toBeCloseTo(breatheLight(t, 1.1), 12);
+                }
+            });
+
+            it('keeps the floor and lifts the peak toward RESONANCE_LIGHT_MAX', () => {
+                const { LIGHT_BREATHE_MIN, LIGHT_BREATHE_MAX, RESONANCE_LIGHT_MAX } = FIGURES;
+                let min = Infinity;
+                let max = -Infinity;
+                for (let t = 0; t < 60; t += 0.02) {
+                    const v = resonantBreathe(t, 0.7, 1);
+                    min = Math.min(min, v);
+                    max = Math.max(max, v);
+                }
+                // Floor unchanged, peak reaches the resonant maximum.
+                expect(min).toBeCloseTo(LIGHT_BREATHE_MIN, 3);
+                expect(max).toBeCloseTo(RESONANCE_LIGHT_MAX, 3);
+                expect(max).toBeGreaterThan(LIGHT_BREATHE_MAX);
+            });
+
+            it('clamps the resonance strength to [0, 1]', () => {
+                expect(resonantBreathe(3, 0.4, -5)).toBeCloseTo(resonantBreathe(3, 0.4, 0), 12);
+                expect(resonantBreathe(3, 0.4, 5)).toBeCloseTo(resonantBreathe(3, 0.4, 1), 12);
+            });
         });
     });
 });

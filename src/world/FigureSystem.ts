@@ -9,7 +9,11 @@
 // - CONFORMIST (default): sways in place, chest flower-light breathing
 //   0.15-0.3; when the player gazes at the sky eye (global discipline) or
 //   blazes the flower >0.7 within 25m, the light presses down to 0.05 over
-//   ~1.5s — your kin bow their heads around you.
+//   ~1.5s — your kin bow their heads around you. The flower is a full social
+//   dial: too dim is loneliness, too bright bows them, and only the MIDDLE
+//   band resonates — hold it in [0.3, 0.6] for a few seconds and nearby kin
+//   converge their breathing onto a shared cadence and lift their light
+//   (config FIGURES.RESONANCE_*). Press-down always wins over resonance.
 // - ALIGNED (FORCED_ALIGNMENT): stands rigid outside the rift's clearance,
 //   facing the crack — tidy ranks on the LEFT, scattered on the RIGHT.
 // - MISREAD (IN_BETWEEN): low-frequency flicker between two render parameter
@@ -209,14 +213,108 @@ export function figurePlacementsForChunk(
 }
 
 /**
- * Conformist chest-light breathing: a slow sine between LIGHT_BREATHE_MIN
- * and MAX, desynced per figure by the placement phase. Pure, per-frame safe.
+ * Conformist chest-light breathing with a resonance lift: a slow sine whose
+ * FLOOR stays at LIGHT_BREATHE_MIN while its PEAK rises from LIGHT_BREATHE_MAX
+ * (resonance 0, the lonely default) to RESONANCE_LIGHT_MAX (resonance 1, the
+ * kin lit up together). Desynced per figure by `phase`. Pure, per-frame safe.
+ */
+export function resonantBreathe(clock: number, phase: number, resonance: number): number {
+    const { LIGHT_BREATHE_MIN, LIGHT_BREATHE_MAX, RESONANCE_LIGHT_MAX, LIGHT_BREATHE_SPEED } = FIGURES;
+    const r = Math.max(0, Math.min(1, resonance));
+    const peak = LIGHT_BREATHE_MAX + (RESONANCE_LIGHT_MAX - LIGHT_BREATHE_MAX) * r;
+    const mid = (LIGHT_BREATHE_MIN + peak) / 2;
+    const amp = (peak - LIGHT_BREATHE_MIN) / 2;
+    return mid + Math.sin(clock * LIGHT_BREATHE_SPEED + phase) * amp;
+}
+
+/**
+ * Plain conformist breathing (no resonance) — the baseline band. Pure.
  */
 export function breatheLight(clock: number, phase: number): number {
-    const { LIGHT_BREATHE_MIN, LIGHT_BREATHE_MAX, LIGHT_BREATHE_SPEED } = FIGURES;
-    const mid = (LIGHT_BREATHE_MIN + LIGHT_BREATHE_MAX) / 2;
-    const amp = (LIGHT_BREATHE_MAX - LIGHT_BREATHE_MIN) / 2;
-    return mid + Math.sin(clock * LIGHT_BREATHE_SPEED + phase) * amp;
+    return resonantBreathe(clock, phase, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Flower resonance: the mid-band social instrument (F3). All pure, all tested.
+// ---------------------------------------------------------------------------
+
+/**
+ * Player-level resonance arming state: whether the flower currently READS as
+ * inside the mid band (hysteretic — depends on the previous read) and how long
+ * it has stayed there continuously. Owned by the system, threaded frame to
+ * frame; a small plain object so the update stays allocation-conscious.
+ */
+export interface ResonanceArm {
+    inBand: boolean;
+    /** Continuous seconds in-band, capped at RESONANCE_ARM_SECONDS. */
+    armTimer: number;
+}
+
+/**
+ * Hysteretic band test: to ENTER resonance the flower must sit strictly inside
+ * [RESONANCE_BAND_MIN, RESONANCE_BAND_MAX]; once inside, the band widens by
+ * RESONANCE_BAND_HYSTERESIS on both edges, so a flower resting on an edge does
+ * not chatter armed/unarmed. Pure.
+ */
+export function resonanceInBand(flowerIntensity: number, wasInBand: boolean): boolean {
+    const { RESONANCE_BAND_MIN, RESONANCE_BAND_MAX, RESONANCE_BAND_HYSTERESIS } = FIGURES;
+    const margin = wasInBand ? RESONANCE_BAND_HYSTERESIS : 0;
+    return flowerIntensity >= RESONANCE_BAND_MIN - margin
+        && flowerIntensity <= RESONANCE_BAND_MAX + margin;
+}
+
+/**
+ * Advance the arming state one frame. Gazing (ambient discipline) or a flower
+ * outside the hysteretic band resets the timer to 0 — resonance must be earned
+ * fresh. In-band time accumulates and caps at RESONANCE_ARM_SECONDS. Pure.
+ */
+export function updateResonanceArm(
+    prev: ResonanceArm,
+    flowerIntensity: number,
+    isGazing: boolean,
+    delta: number,
+): ResonanceArm {
+    const inBand = !isGazing && resonanceInBand(flowerIntensity, prev.inBand);
+    const armTimer = inBand
+        ? Math.min(FIGURES.RESONANCE_ARM_SECONDS, prev.armTimer + Math.max(0, delta))
+        : 0;
+    return { inBand, armTimer };
+}
+
+/** Whether the arming timer has reached the sustained threshold. Pure. */
+export function resonanceArmed(state: ResonanceArm): boolean {
+    return state.armTimer >= FIGURES.RESONANCE_ARM_SECONDS;
+}
+
+/**
+ * The shared reference phase all resonating kin converge toward: a slow common
+ * drift off the elapsed clock, wrapped to [0, 2π). Identical for every figure,
+ * so once converged they breathe in unison. Pure.
+ */
+export function resonanceReferencePhase(clock: number): number {
+    const twoPi = Math.PI * 2;
+    const p = (clock * FIGURES.RESONANCE_REFERENCE_DRIFT) % twoPi;
+    return p < 0 ? p + twoPi : p;
+}
+
+/**
+ * Ease `current` toward `target` along the phase circle by the shortest arc,
+ * approaching at `rate` per second (clamped so a large frame delta can never
+ * overshoot). Result wrapped to [0, 2π). Pure — used both to converge onto the
+ * shared reference and to relax back to a figure's personal hash phase.
+ */
+export function convergePhase(current: number, target: number, rate: number, delta: number): number {
+    const twoPi = Math.PI * 2;
+    let diff = (target - current) % twoPi;
+    if (diff > Math.PI)
+        diff -= twoPi;
+    else if (diff < -Math.PI)
+        diff += twoPi;
+    const step = Math.max(0, Math.min(1, rate * delta));
+    let next = (current + diff * step) % twoPi;
+    if (next < 0)
+        next += twoPi;
+    return next;
 }
 
 /**
@@ -313,6 +411,14 @@ interface FigureRecord {
     placement: FigurePlacement;
     /** Conformist bow level 0-1 (1 = pressed to the dim floor). */
     press: number;
+    /**
+     * Live breathing phase — starts at the personal hash phase and, while the
+     * player resonates nearby, converges toward the shared reference; relaxes
+     * back to the personal phase (placement.phase) once resonance ends.
+     */
+    livePhase: number;
+    /** Resonance strength 0-1: eases in/out and lifts the breathing peak. */
+    resonance: number;
     light: number;
     misreadWire: boolean;
     state: FigureState;
@@ -364,6 +470,9 @@ export class FigureSystem {
     private rebelEventIndex = 0;
     private rebelArmTimer: number;
     private activeRebel: FigureRecord | null = null;
+
+    /** Player-level flower-resonance arming, threaded frame to frame. */
+    private resonanceArm: ResonanceArm = { inBand: false, armTimer: 0 };
 
     /**
      * @param scene - Scene the figure root group is added to.
@@ -518,6 +627,8 @@ export class FigureSystem {
             ),
             placement,
             press: 0,
+            livePhase: placement.phase,
+            resonance: 0,
             light,
             misreadWire: false,
             state: 'IDLE',
@@ -550,6 +661,19 @@ export class FigureSystem {
         playerState: FigurePlayerRead,
         audio?: FigureAudio,
     ): void {
+        // Player-level resonance arming: advance once per frame (a global read,
+        // independent of any figure) before the per-figure pass. Gazing or a
+        // flower outside the mid band keeps it disarmed.
+        this.resonanceArm = updateResonanceArm(
+            this.resonanceArm,
+            playerState.flowerIntensity,
+            playerState.isGazing,
+            delta,
+        );
+        const armed = resonanceArmed(this.resonanceArm);
+        // Shared cadence all resonating kin converge onto — computed once.
+        const refPhase = resonanceReferencePhase(this.clock);
+
         for (const key in this.chunks) {
             const figures = this.chunks[key].figures;
             for (const fig of figures) {
@@ -563,7 +687,7 @@ export class FigureSystem {
                 const distSq = playerPos.distanceToSquared(fig.worldPos);
                 if (distSq > LOD_DISTANCE_SQ)
                     continue; // beyond the animation LOD: perfectly still
-                this.animateIdle(fig, delta, playerState, distSq);
+                this.animateIdle(fig, delta, playerState, distSq, armed, refPhase);
             }
         }
     }
@@ -573,6 +697,8 @@ export class FigureSystem {
         delta: number,
         playerState: FigurePlayerRead,
         distSq: number,
+        armed: boolean,
+        refPhase: number,
     ): void {
         const p = fig.placement;
         if (p.archetype === 'ALIGNED')
@@ -595,8 +721,23 @@ export class FigureSystem {
                 ? delta / FIGURES.LIGHT_DIM_SECONDS
                 : -delta / FIGURES.LIGHT_RECOVER_SECONDS;
             fig.press = Math.max(0, Math.min(1, fig.press + step));
+
+            // Resonance: while the player holds the flower in the mid band long
+            // enough (armed) and this kin stands within the press radius, its
+            // breathing phase converges onto the shared reference and its light
+            // lifts; otherwise both relax back to the personal cadence. The
+            // press blend below still lets suppression win outright.
+            const resonating = armed
+                && distSq < FIGURES.DIM_FLOWER_DISTANCE * FIGURES.DIM_FLOWER_DISTANCE;
+            const rTarget = resonating ? refPhase : p.phase;
+            const rRate = resonating ? FIGURES.RESONANCE_CONVERGE_RATE : FIGURES.RESONANCE_RELAX_RATE;
+            fig.livePhase = convergePhase(fig.livePhase, rTarget, rRate, delta);
+            const rStep = resonating
+                ? delta / FIGURES.RESONANCE_ATTACK_SECONDS
+                : -delta / FIGURES.RESONANCE_RELEASE_SECONDS;
+            fig.resonance = Math.max(0, Math.min(1, fig.resonance + rStep));
         }
-        const breathing = breatheLight(this.clock, p.phase);
+        const breathing = resonantBreathe(this.clock, fig.livePhase, fig.resonance);
         fig.light = breathing + (FIGURES.LIGHT_DIM - breathing) * fig.press;
         fig.chestMat.color.setScalar(fig.light);
 
