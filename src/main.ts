@@ -126,7 +126,7 @@ class ChimeraVoid {
         this.roomFlow = new RoomFlowUpdater(
             this.scene.fog as THREE.Fog | null,
             () => this.runStats.getLiveProfile(),
-            new FigureSystem(this.scene, this.chunkManager),
+            new FigureSystem(this.scene, this.chunkManager, this.scars.getScars()),
             new GhostSystem(this.scene),
         );
         this.statsSunset = new StatsSunsetUpdater({

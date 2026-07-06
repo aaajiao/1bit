@@ -317,6 +317,27 @@ export const SCAR_FIELD = {
 } as const;
 
 /**
+ * Witnesses at the scars (F3 x F2 "others remember too"): where the world
+ * carries a scar (a place the player resisted), a fraction of the nearby
+ * silhouette figures gather AROUND that scar and face it — the crowd remembers
+ * what the leaning buildings remember. Meanwhile the system tries to erase the
+ * written record: inside REDACT_RADIUS of a scar the INFO_OVERFLOW glyph floor
+ * is blacked out (a hard 1-bit redaction disc), so the data is gone but the
+ * silent crowd keeps standing there. Placement math + redaction live in
+ * world/FigureSystem and world/FloorTile; deterministic per chunk given the
+ * boot scar snapshot.
+ */
+export const SCAR_WITNESS = {
+    /** Fraction of a chunk's figures pulled to the nearest reachable scar. */
+    FRACTION: 0.4,
+    /** Ring radius band (m) the witnesses stand in around the scar anchor. */
+    RING_MIN: 4,
+    RING_MAX: 10,
+    /** Radius (m) of the blacked-out glyph redaction disc around a scar. */
+    REDACT_RADIUS: 8,
+} as const;
+
+/**
  * Distant silhouette figures (F3 "you are not alone"): minimal 1-bit human
  * silhouettes in the mid/far distance, each with a tiny chest flower-light —
  * everyone here is suppressing the same light. Pure scenery, NOT NPCs: no

@@ -1,5 +1,6 @@
+import type { ScarPoint } from '../src/world/ScarField';
 import { describe, expect, it } from 'vitest';
-import { FIGURES, WORLD } from '../src/config/constants';
+import { FIGURES, SCAR_WITNESS, WORLD } from '../src/config/constants';
 import {
     breatheLight,
     conformistPressed,
@@ -8,6 +9,7 @@ import {
     figureCountForChunk,
     figurePlacementsForChunk,
     isInRebelRange,
+    isScarWitness,
     pickRebelIndex,
     rebelDelaySeconds,
     rebelTearProximity,
@@ -17,6 +19,7 @@ import {
     resonantBreathe,
     stepRebelArmTimer,
     updateResonanceArm,
+    witnessPose,
 } from '../src/world/FigureSystem';
 import {
     FA_FIGURE_PLACEMENT,
@@ -224,6 +227,148 @@ describe('figureSystem (F3 silhouettes)', () => {
                 }
             }
             expect(depths.size).toBeGreaterThan(5); // genuinely scattered, not a rank
+        });
+    });
+
+    describe('witnesses at the scars (F3 x F2)', () => {
+        it('keeps the witness knobs coherent (ring inside a positive redact radius)', () => {
+            expect(SCAR_WITNESS.FRACTION).toBeGreaterThan(0);
+            expect(SCAR_WITNESS.FRACTION).toBeLessThan(1);
+            expect(SCAR_WITNESS.RING_MIN).toBeGreaterThan(0);
+            expect(SCAR_WITNESS.RING_MAX).toBeGreaterThan(SCAR_WITNESS.RING_MIN);
+            expect(SCAR_WITNESS.REDACT_RADIUS).toBeGreaterThan(0);
+        });
+
+        it('gates roughly SCAR_WITNESS.FRACTION of figures as witnesses, deterministically', () => {
+            let witnesses = 0;
+            let total = 0;
+            for (let cx = -40; cx <= 40; cx++) {
+                for (let cz = -40; cz <= 40; cz++) {
+                    for (let k = 0; k < 2; k++) {
+                        const w = isScarWitness(cx, cz, k);
+                        expect(w).toBe(isScarWitness(cx, cz, k)); // deterministic
+                        if (w)
+                            witnesses++;
+                        total++;
+                    }
+                }
+            }
+            const frac = witnesses / total;
+            expect(frac).toBeGreaterThan(SCAR_WITNESS.FRACTION - 0.08);
+            expect(frac).toBeLessThan(SCAR_WITNESS.FRACTION + 0.08);
+        });
+
+        it('stands a witness on the ring around the scar and faces it (witnessPose)', () => {
+            const { RING_MIN, RING_MAX } = SCAR_WITNESS;
+            const scar: ScarPoint = { x: 123.4, z: -56.7, count: 3 };
+            let angleSpread = new Set<number>();
+            for (let cx = -6; cx <= 6; cx++) {
+                for (let cz = -6; cz <= 6; cz++) {
+                    for (let k = 0; k < 2; k++) {
+                        const pose = witnessPose(scar, cx, cz, k, CHUNK);
+                        const worldX = cx * CHUNK + pose.x;
+                        const worldZ = cz * CHUNK + pose.z;
+                        const r = Math.hypot(scar.x - worldX, scar.z - worldZ);
+                        expect(r).toBeGreaterThanOrEqual(RING_MIN - 1e-9);
+                        expect(r).toBeLessThanOrEqual(RING_MAX + 1e-9);
+                        // local +z (sin rotY, cos rotY) aims straight at the scar.
+                        expect(Math.sin(pose.rotationY)).toBeCloseTo((scar.x - worldX) / r, 9);
+                        expect(Math.cos(pose.rotationY)).toBeCloseTo((scar.z - worldZ) / r, 9);
+                        angleSpread = angleSpread.add(Math.round(pose.rotationY * 100));
+                    }
+                }
+            }
+            expect(angleSpread.size).toBeGreaterThan(5); // genuinely ringed, not one spot
+        });
+
+        it('leaves the scattered placement bit-for-bit when no scar reaches the chunk', () => {
+            for (const room of ALL_ROOMS) {
+                for (let cx = -8; cx <= 8; cx++) {
+                    for (let cz = -8; cz <= 8; cz++) {
+                        expect(figurePlacementsForChunk(cx, cz, room, CHUNK, []))
+                            .toEqual(figurePlacementsForChunk(cx, cz, room));
+                    }
+                }
+            }
+        });
+
+        it('pulls only the witness share to the scar, leaving the rest untouched', () => {
+            const { RING_MAX } = SCAR_WITNESS;
+            let witnessesSeen = 0;
+            let bystandersSeen = 0;
+            for (let cx = -8; cx <= 8; cx++) {
+                for (let cz = -8; cz <= 8; cz++) {
+                    // A scar sitting near this chunk's own centre.
+                    const scar: ScarPoint = { x: cx * CHUNK + 3, z: cz * CHUNK - 2, count: 4 };
+                    const base = figurePlacementsForChunk(cx, cz, RoomType.INFO_OVERFLOW);
+                    const withScar = figurePlacementsForChunk(
+                        cx,
+                        cz,
+                        RoomType.INFO_OVERFLOW,
+                        CHUNK,
+                        [scar],
+                    );
+                    expect(withScar.length).toBe(base.length);
+                    for (let k = 0; k < base.length; k++) {
+                        if (isScarWitness(cx, cz, k)) {
+                            witnessesSeen++;
+                            const worldX = cx * CHUNK + withScar[k].x;
+                            const worldZ = cz * CHUNK + withScar[k].z;
+                            const r = Math.hypot(scar.x - worldX, scar.z - worldZ);
+                            expect(r).toBeLessThanOrEqual(RING_MAX + 1e-9);
+                            // Archetype / height / phase are never rewritten.
+                            expect(withScar[k].archetype).toBe(base[k].archetype);
+                            expect(withScar[k].height).toBe(base[k].height);
+                            expect(withScar[k].phase).toBe(base[k].phase);
+                        }
+                        else {
+                            bystandersSeen++;
+                            expect(withScar[k]).toEqual(base[k]);
+                        }
+                    }
+                }
+            }
+            expect(witnessesSeen).toBeGreaterThan(5);
+            expect(bystandersSeen).toBeGreaterThan(5);
+        });
+
+        it('is deterministic given the frozen boot scar snapshot', () => {
+            const scars: ScarPoint[] = [
+                { x: 12, z: 20, count: 2 },
+                { x: -140, z: 65, count: 5 },
+            ];
+            for (const room of ALL_ROOMS) {
+                for (let cx = -6; cx <= 6; cx++) {
+                    for (let cz = -6; cz <= 6; cz++) {
+                        const a = figurePlacementsForChunk(cx, cz, room, CHUNK, scars);
+                        const b = figurePlacementsForChunk(cx, cz, room, CHUNK, scars);
+                        expect(a).toEqual(b);
+                    }
+                }
+            }
+        });
+
+        it('gathers different figures at the nearest of several scars', () => {
+            // Two scars far apart; every witness must land on the ring of ITS
+            // nearest scar, never averaged between them.
+            const { RING_MAX } = SCAR_WITNESS;
+            const scarA: ScarPoint = { x: 0, z: 0, count: 3 };
+            const scarB: ScarPoint = { x: 300, z: 0, count: 3 };
+            const scars = [scarA, scarB];
+            for (let cx = -3; cx <= 6; cx++) {
+                for (let cz = -3; cz <= 3; cz++) {
+                    const withScar = figurePlacementsForChunk(cx, cz, RoomType.INFO_OVERFLOW, CHUNK, scars);
+                    for (let k = 0; k < withScar.length; k++) {
+                        if (!isScarWitness(cx, cz, k))
+                            continue;
+                        const worldX = cx * CHUNK + withScar[k].x;
+                        const worldZ = cz * CHUNK + withScar[k].z;
+                        const rA = Math.hypot(scarA.x - worldX, scarA.z - worldZ);
+                        const rB = Math.hypot(scarB.x - worldX, scarB.z - worldZ);
+                        expect(Math.min(rA, rB)).toBeLessThanOrEqual(RING_MAX + 1e-9);
+                    }
+                }
+            }
         });
     });
 

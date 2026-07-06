@@ -28,6 +28,15 @@
 //   REBEL_CONTAGION_*) during which the arming gate drains markedly faster,
 //   so distant kin rebel more often in the minutes after you resisted.
 //
+// Witnesses at the scars (F3 x F2): the scar field says "the system remembers
+// you resisted" by leaning the buildings; this adds "others remember too". When
+// a chunk lies within reach of a boot-snapshot scar, a config fraction
+// (SCAR_WITNESS.FRACTION) of its figures are pulled OUT of their scattered pose
+// onto a tight ring around the nearest scar anchor, each turned to FACE it — a
+// silent crowd gathered at the place you resisted. Archetypes are unchanged;
+// only the position/facing is redrawn (deterministic per chunk given the frozen
+// boot scar list).
+//
 // Lifecycle follows the SAME active chunk window as ChunkManager (figure
 // placement is per-chunk deterministic via the project hash, so re-entering
 // a chunk regenerates the same figures, minus the session's vanished
@@ -37,10 +46,12 @@
 // delta-driven, hash-phase desynced, and LOD-gated by
 // WORLD.ANIMATION_LOD_DISTANCE (distant figures stand perfectly still).
 
+import type { ScarPoint } from './ScarField';
 import * as THREE from 'three';
-import { FIGURES, WORLD } from '../config/constants';
+import { FIGURES, SCAR_WITNESS, WORLD } from '../config/constants';
 import { hash } from '../utils/hash';
 import { FA_FIGURE_PLACEMENT, faSideAxisX, riftLineXForWorldX, ROOM_FIGURE_DENSITY, RoomType } from './RoomConfig';
+import { scarsNearChunk } from './ScarField';
 import { getSharedAssets } from './SharedAssets';
 
 // ===========================================================================
@@ -75,6 +86,11 @@ const FIGURE_PHASE_SALT = 1237;
 const REBEL_DELAY_SALT = 1249;
 const REBEL_PICK_SALT = 1259;
 const REBEL_JITTER_SALT = 1277;
+// Scar-witness redraw salts, decorrelated from every prior per-chunk draw
+// (ChunkManager <= 1019, ScarField <= 1153, the figure draws above <= 1277).
+const WITNESS_GATE_SALT = 1283;
+const WITNESS_RING_SALT = 1289;
+const WITNESS_ANGLE_SALT = 1291;
 
 // Silhouette proportions as fractions of the figure height — module-local
 // aesthetic constants (precedent: ChunkManager's anomaly scales). The shapes
@@ -183,16 +199,77 @@ function placeFree(
 }
 
 /**
+ * Whether figure `k` of chunk (cx, cz) is drawn as a scar witness — pulled to
+ * the nearest reachable scar. A single decorrelated hash gate against
+ * SCAR_WITNESS.FRACTION, independent of the count/pose/height draws so the
+ * choice never correlates with them. Pure.
+ */
+export function isScarWitness(cx: number, cz: number, k: number): boolean {
+    return hash(cx + k + WITNESS_GATE_SALT, cz - k - WITNESS_GATE_SALT) < SCAR_WITNESS.FRACTION;
+}
+
+/** Nearest scar to a world position among `scars`; null when the list is empty. */
+function nearestScar(scars: readonly ScarPoint[], worldX: number, worldZ: number): ScarPoint | null {
+    let best: ScarPoint | null = null;
+    let bestSq = Infinity;
+    for (const scar of scars) {
+        const dx = scar.x - worldX;
+        const dz = scar.z - worldZ;
+        const d = dx * dx + dz * dz;
+        if (d < bestSq) {
+            bestSq = d;
+            best = scar;
+        }
+    }
+    return best;
+}
+
+/**
+ * Chunk-local pose for a witness figure: stand on a hash-drawn ring
+ * (SCAR_WITNESS.RING_MIN..RING_MAX) around the scar's world anchor and face it
+ * (local +z aimed at the scar — the convention placeAligned relies on, where
+ * local +z maps to world (sin rotY, cos rotY)). Deterministic per (chunk, k).
+ * Pure; exported for testing.
+ */
+export function witnessPose(
+    scar: ScarPoint,
+    cx: number,
+    cz: number,
+    k: number,
+    chunkSize: number,
+): { x: number; z: number; rotationY: number } {
+    const { RING_MIN, RING_MAX } = SCAR_WITNESS;
+    const radius = RING_MIN
+        + hash(cx + k + WITNESS_RING_SALT, cz - k + WITNESS_RING_SALT) * (RING_MAX - RING_MIN);
+    const angle = hash(cx - k + WITNESS_ANGLE_SALT, cz + k + WITNESS_ANGLE_SALT) * Math.PI * 2;
+    const worldX = scar.x + Math.cos(angle) * radius;
+    const worldZ = scar.z + Math.sin(angle) * radius;
+    return {
+        x: worldX - cx * chunkSize,
+        z: worldZ - cz * chunkSize,
+        // Face the scar anchor: local +z -> world (sin rotY, cos rotY).
+        rotationY: Math.atan2(scar.x - worldX, scar.z - worldZ),
+    };
+}
+
+/**
  * Deterministic figure placements for a chunk: count via the room density
  * gates, pose per archetype (FORCED_ALIGNMENT gets the rift-rank treatment),
  * plus hash-drawn height and desync phase. Pure; the system regenerates the
  * exact same list every time the chunk re-enters the active window.
+ *
+ * When `scars` is non-empty (the boot-snapshot scars reaching this chunk), a
+ * SCAR_WITNESS.FRACTION share of the figures are pulled onto a ring around the
+ * nearest scar and turned to face it — the crowd gathered where you resisted.
+ * Archetypes stay as originally assigned. An empty `scars` (the default)
+ * reproduces the pre-witness placement bit-for-bit.
  */
 export function figurePlacementsForChunk(
     cx: number,
     cz: number,
     roomType: RoomType,
     chunkSize: number = WORLD.CHUNK_SIZE,
+    scars: readonly ScarPoint[] = [],
 ): FigurePlacement[] {
     const count = figureCountForChunk(cx, cz, roomType);
     const placements: FigurePlacement[] = [];
@@ -200,9 +277,19 @@ export function figurePlacementsForChunk(
         const archetype: FigureArchetype = roomType === RoomType.FORCED_ALIGNMENT
             ? 'ALIGNED'
             : roomType === RoomType.IN_BETWEEN ? 'MISREAD' : 'CONFORMIST';
-        const pose = archetype === 'ALIGNED'
+        let pose = archetype === 'ALIGNED'
             ? placeAligned(cx, cz, k, chunkSize)
             : placeFree(cx, cz, k, chunkSize);
+
+        // Witness: pull the chosen share to the nearest reachable scar, facing
+        // it. Uses the figure's original scattered world position to pick the
+        // nearest scar, so different figures can gather at different scars.
+        if (scars.length > 0 && isScarWitness(cx, cz, k)) {
+            const scar = nearestScar(scars, cx * chunkSize + pose.x, cz * chunkSize + pose.z);
+            if (scar)
+                pose = witnessPose(scar, cx, cz, k, chunkSize);
+        }
+
         placements.push({
             ...pose,
             archetype,
@@ -509,10 +596,15 @@ export class FigureSystem {
      * @param rooms - Per-chunk room attribution (pass the ChunkManager so the
      *   session ledger is consulted). Null falls back to the player's current
      *   room passed into update() (tests only).
+     * @param bootScars - Frozen boot-snapshot cross-run scars (stats/ScarStorage
+     *   via ScarFieldSource). A config fraction of the figures in chunks near a
+     *   scar gather around it (witnessPose). Empty (default) keeps the scattered
+     *   placement unchanged.
      */
     constructor(
         scene: THREE.Scene,
         private readonly rooms: FigureRoomSource | null = null,
+        private readonly bootScars: readonly ScarPoint[] = [],
     ) {
         this.chestBaseMat = new THREE.MeshBasicMaterial({
             color: 0xFFFFFF,
@@ -589,7 +681,12 @@ export class FigureSystem {
         const roomType = this.rooms
             ? this.rooms.getRoomTypeForChunk(cx, cz)
             : fallbackRoom;
-        const placements = figurePlacementsForChunk(cx, cz, roomType);
+        // Cross-run scars reaching this chunk (usually none): the same footprint
+        // filter ChunkManager uses for the leaning buildings.
+        const nearScars = this.bootScars.length > 0
+            ? scarsNearChunk(this.bootScars, cx, cz)
+            : this.bootScars;
+        const placements = figurePlacementsForChunk(cx, cz, roomType, WORLD.CHUNK_SIZE, nearScars);
         const entry: ChunkFigures = { group: null, figures: [] };
         this.chunks[`${cx},${cz}`] = entry;
 

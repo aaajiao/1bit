@@ -189,6 +189,15 @@ export class ChunkManager {
         const biome = biomeAt(cx, cz);
         const layoutMode = layoutAt(cx, cz, roomType);
 
+        // Cross-run scars (F2): the subset of persisted scars whose influence
+        // reaches this chunk, filtered ONCE per chunk build (in-memory boot
+        // snapshot — never localStorage on this path). Usually empty. Consumed
+        // both by the INFO_OVERFLOW glyph redaction (floor) and the leaning
+        // buildings below.
+        const nearScars = this.bootScars.length > 0
+            ? scarsNearChunk(this.bootScars, cx, cz)
+            : this.bootScars;
+
         // Floor - select type based on room
         let floor: THREE.Object3D;
         if (roomType === RoomType.FORCED_ALIGNMENT) {
@@ -220,8 +229,10 @@ export class ChunkManager {
         }
         else if (roomType === RoomType.INFO_OVERFLOW) {
             // Pooled glyph/dot-matrix material picked by hash(cx,cz). The material
-            // is module-shared, so nothing is added to chunkData.disposables.
-            floor = createInfoFloorMesh(CHUNK_SIZE, cx, cz);
+            // is module-shared, so nothing is added to chunkData.disposables. Scars
+            // reaching the chunk black out the glyphs under the witness crowd
+            // (createInfoFloorMesh) — redaction discs are module-shared too.
+            floor = createInfoFloorMesh(CHUNK_SIZE, cx, cz, nearScars);
         }
         else if (roomType === RoomType.POLARIZED) {
             // Phase-opposite checkerboard halves + module-shared seam line at
@@ -257,13 +268,6 @@ export class ChunkManager {
             ? baseCount
             : Math.max(1, Math.round(baseCount * biomeDensityFactor(biome)));
         const nodes: CableNode[] = [];
-
-        // Cross-run scars (F2): the subset of persisted scars whose influence
-        // reaches this chunk, filtered ONCE per chunk build (in-memory boot
-        // snapshot — never localStorage on this path). Usually empty.
-        const nearScars = this.bootScars.length > 0
-            ? scarsNearChunk(this.bootScars, cx, cz)
-            : this.bootScars;
 
         // Per-chunk composition: half-extent the raw positions are bounded to.
         const layoutHalf = (CHUNK_SIZE - 20) / 2;
