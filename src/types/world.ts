@@ -139,6 +139,22 @@ export interface FlickerGroup {
     current: number;
 }
 
+/**
+ * A seam shell is the counterpart-faction overlay of one near-seam POLARIZED
+ * building: clone meshes carrying the OTHER faction's material (wireframe on a
+ * solid 'us' building, solid on a wireframe 'them' building), sharing pooled
+ * geometry so they add no GPU data. Hidden by default; the seam-swap pass hard-
+ * toggles their .visible so us/them flickers into each other on the seam line.
+ */
+export interface SeamShell {
+    /** Counterpart-language meshes (shared geometry + shared counterpart material). */
+    meshes: THREE.Object3D[];
+    /** Deterministic per-building phase (cycle fraction) so shells desync. */
+    phase: number;
+    /** Last visibility written, to skip redundant .visible writes. */
+    current: boolean;
+}
+
 export interface ChunkUserData {
     cables: DynamicCable[];
     buildings: THREE.Group[];
@@ -150,6 +166,12 @@ export interface ChunkUserData {
      * subset of fragments in INFO_OVERFLOW chunks; absent elsewhere.
      */
     flickerGroups?: FlickerGroup[];
+    /**
+     * POLARIZED near-seam counterpart shells (scene-richness). Present only on
+     * buildings within POLARIZED_SEAM_SWAP.BUILDING_REACH of a POLARIZED chunk's
+     * seam; absent in every other room.
+     */
+    seamShells?: SeamShell[];
 }
 
 export interface Chunk extends THREE.Group {

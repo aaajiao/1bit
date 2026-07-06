@@ -317,6 +317,27 @@ export const SCAR_FIELD = {
 } as const;
 
 /**
+ * Witnesses at the scars (F3 x F2 "others remember too"): where the world
+ * carries a scar (a place the player resisted), a fraction of the nearby
+ * silhouette figures gather AROUND that scar and face it — the crowd remembers
+ * what the leaning buildings remember. Meanwhile the system tries to erase the
+ * written record: inside REDACT_RADIUS of a scar the INFO_OVERFLOW glyph floor
+ * is blacked out (a hard 1-bit redaction disc), so the data is gone but the
+ * silent crowd keeps standing there. Placement math + redaction live in
+ * world/FigureSystem and world/FloorTile; deterministic per chunk given the
+ * boot scar snapshot.
+ */
+export const SCAR_WITNESS = {
+    /** Fraction of a chunk's figures pulled to the nearest reachable scar. */
+    FRACTION: 0.4,
+    /** Ring radius band (m) the witnesses stand in around the scar anchor. */
+    RING_MIN: 4,
+    RING_MAX: 10,
+    /** Radius (m) of the blacked-out glyph redaction disc around a scar. */
+    REDACT_RADIUS: 8,
+} as const;
+
+/**
  * Distant silhouette figures (F3 "you are not alone"): minimal 1-bit human
  * silhouettes in the mid/far distance, each with a tiny chest flower-light —
  * everyone here is suppressing the same light. Pure scenery, NOT NPCs: no
@@ -346,6 +367,46 @@ export const FIGURES = {
     DIM_FLOWER_DISTANCE: 25,
     /** Constant faint light of the FORCED_ALIGNMENT rank-standers. */
     ALIGNED_LIGHT: 0.12,
+    /**
+     * Flower resonance — "the social language of light" (F3): the flower dial
+     * is a full social instrument. Too dim reads as loneliness, blazing above
+     * DIM_FLOWER_THRESHOLD bows the kin in fear (the press-down), and only the
+     * MIDDLE band resonates. Hold the flower inside
+     * [RESONANCE_BAND_MIN, RESONANCE_BAND_MAX] continuously for
+     * RESONANCE_ARM_SECONDS (not gazing) and nearby CONFORMIST kin — within the
+     * same DIM_FLOWER_DISTANCE radius the press uses — slowly converge their
+     * breathing onto a shared cadence and lift their light. Leave the band,
+     * blaze, or gaze and each drifts back to its own hash-desynced phase. The
+     * press-down suppression ALWAYS wins over resonance.
+     *
+     * Band edges use hysteresis (RESONANCE_BAND_HYSTERESIS): once inside, the
+     * band widens by the margin so a flower resting on an edge does not chatter
+     * armed/unarmed. The outer band stays below DIM_FLOWER_THRESHOLD, so a
+     * blazing flower always exits resonance before it presses.
+     */
+    RESONANCE_BAND_MIN: 0.3,
+    RESONANCE_BAND_MAX: 0.6,
+    RESONANCE_BAND_HYSTERESIS: 0.04,
+    /** Continuous in-band seconds before the kin start to resonate. */
+    RESONANCE_ARM_SECONDS: 3.0,
+    /**
+     * Shared reference phase = a slow common drift (rad/s) off the elapsed
+     * clock — identical for every resonating figure, so they breathe in unison
+     * rather than merely near one another.
+     */
+    RESONANCE_REFERENCE_DRIFT: 0.05,
+    /**
+     * Phase-circle approach rates (per s, shortest-arc): CONVERGE pulls a
+     * figure's live phase toward the shared reference while resonating; the
+     * slower RELAX lets it drift back to its personal hash phase afterwards.
+     */
+    RESONANCE_CONVERGE_RATE: 0.5,
+    RESONANCE_RELAX_RATE: 0.35,
+    /** Seconds for a figure's resonance strength (amplitude lift) to ease in / out. */
+    RESONANCE_ATTACK_SECONDS: 2.5,
+    RESONANCE_RELEASE_SECONDS: 3.0,
+    /** Breathing peak the lifted light tops out at while fully resonating. */
+    RESONANCE_LIGHT_MAX: 0.4,
     /** In-place sway amplitude (rad) and speed (rad/s) — barely alive. */
     SWAY_AMPLITUDE: 0.045,
     SWAY_SPEED: 0.8,
@@ -369,6 +430,21 @@ export const FIGURES = {
     /** Strobe rate (steps/s) and horizontal dislocation amplitude (m). */
     REBEL_FLICKER_RATE: 13,
     REBEL_JITTER_AMPLITUDE: 0.35,
+    /**
+     * Rebellion is contagious: a SUCCESSFUL player override (the same resist
+     * event that scars the world) opens a session-level contagion window of
+     * this many seconds during which the rebel arming gate counts down markedly
+     * faster — distant kin rebel more often in the minutes after you did.
+     * Each fresh success refreshes the window to full.
+     */
+    REBEL_CONTAGION_WINDOW: 180,
+    /**
+     * Gate acceleration while the contagion window is open: the arming
+     * countdown drains this many times faster, so the effective REBEL_*_INTERVAL
+     * band is divided by this factor. Rebel picks stay hash-deterministic; only
+     * the WAIT shortens (deterministic given the same window-state trajectory).
+     */
+    REBEL_CONTAGION_GATE_DIVISOR: 3,
 } as const;
 
 /**
@@ -585,6 +661,80 @@ export const CABLE_PROXIMITY = {
     SKIP_DISTANCE_SQ: 2500,
     /** Frames between cable proximity checks (for performance) */
     CHECK_INTERVAL: 3,
+} as const;
+
+/**
+ * Cable uplink pulse (scene-richness batch): when the player's flower burns
+ * bright, cables near the player report that light to the sky eye — hard 1-bit
+ * dashes race UP each cable toward the authority overhead. This draws the
+ * otherwise invisible rule "brighter = seen" as a literal line of light
+ * travelling down the wires. black = the system, white = the self, the dashes
+ * are the self's light being read by the system.
+ */
+export const CABLE_UPLINK = {
+    /** Flower intensity above which cables begin to uplink (0-1). */
+    FLOWER_THRESHOLD: 0.6,
+    /**
+     * Radius (m) around the player within which cables uplink. Kept well
+     * inside the 3x3 near-chunk scan window (chunk = 80m) so a cable that
+     * lights up is always re-scanned — and reset — before it can drift out of
+     * range between frames.
+     */
+    RADIUS: 34.0,
+    /** Dash density (dashes per meter) at threshold / at full brightness. */
+    DENSITY_BASE: 0.16,
+    DENSITY_GAIN: 0.24,
+    /** Pulse travel speed (dash cycles/second) at threshold / at full brightness. */
+    SPEED_BASE: 0.7,
+    SPEED_GAIN: 1.6,
+    /** Fraction of each dash cycle that is lit (hard on/off — no soft fade). */
+    DASH_DUTY: 0.42,
+} as const;
+
+/**
+ * Snapshot echo (scene-richness batch, "世界替你打草稿"): every few minutes the
+ * world briefly leaks a low-res 1-bit DRAFT of the current run's snapshot
+ * fingerprint onto one nearby building facade — the same procedural pattern the
+ * sunset overlay settles (stats/SnapshotPattern), rendered from the run SO FAR.
+ * It appears and disappears with a hard on/off flicker (never an alpha fade),
+ * holds for a few seconds, then is gone. The end-of-run portrait is not a
+ * bolted-on results screen: the system has been watching and drafting you all
+ * along, and sunset merely delivers the final copy. black = the system doing
+ * the drawing, white = the self being drawn, dither = the draft's own grain.
+ */
+export const SNAPSHOT_ECHO = {
+    /**
+     * Arming interval band (s): hash-drawn per event index (mirrors the F3
+     * REBEL gate), so an echo surfaces AT MOST once every few minutes — and
+     * only once a building actually stands within RADIUS of the player.
+     */
+    MIN_INTERVAL: 140,
+    MAX_INTERVAL: 320,
+    /** Search radius (m) for a host building; inside the 3x3 near-chunk scan. */
+    RADIUS: 42,
+    /** Draft display duration band (s), hash-drawn per event index. */
+    DURATION_MIN: 4.0,
+    DURATION_MAX: 8.0,
+    /**
+     * Hard-flicker windows (s) at the head/tail of the display: inside them the
+     * decal strobes on/off (FLICKER_RATE toggles/s), so it materializes and
+     * dissolves in 1-bit stutter rather than fading; the middle holds steady.
+     */
+    FLICKER_IN_SECONDS: 0.55,
+    FLICKER_OUT_SECONDS: 0.7,
+    FLICKER_RATE: 12,
+    /** Draft texture edge (texels): deliberately low-res — a rough draft. */
+    RESOLUTION: 28,
+    /** Decal plane edge length (m) painted on the facade. */
+    SIZE: 4.0,
+    /** Decal center height (m) off the ground. */
+    HEIGHT: 5.0,
+    /**
+     * Offset (m) from the building center toward the player at which the decal
+     * floats: buildings vary in footprint, so this is a fair approximation of
+     * "on the near face turned toward you" rather than a surface-exact projection.
+     */
+    FACE_OFFSET: 5.0,
 } as const;
 
 /**

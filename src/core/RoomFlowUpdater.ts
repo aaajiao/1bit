@@ -5,7 +5,9 @@ import type { ChunkManager } from '../world/ChunkManager';
 import type { FigureSystem } from '../world/FigureSystem';
 import type { GhostSystem } from '../world/GhostSystem';
 import type { BehaviorProfile, RoomFogConfig } from '../world/RoomConfig';
+import type { SnapshotEcho } from '../world/SnapshotEcho';
 import { GAMEPLAY, LIVE_PROFILE } from '../config';
+import { contagionWindowTick } from '../world/FigureSystem';
 import { RiftMechanic } from '../world/RiftMechanic';
 import { RAIN_FOG_FAR_FACTOR, ROOM_FOG, RoomType, stepFogToward } from '../world/RoomConfig';
 import { WEATHER_TYPES } from '../world/WeatherSystem';
@@ -38,6 +40,15 @@ export class RoomFlowUpdater {
     // entries are shared constants and must never be mutated).
     private readonly rainFogTarget: RoomFogConfig = { near: 0, far: 0 };
 
+    // Rebellion-is-contagious window (FigureSystem): a successful player
+    // override (the rising edge of playerState.overrideTriggered — the same
+    // resist event that scars the world) opens a session-level window during
+    // which the figures' rebel gate drains faster. Owned here and threaded
+    // into figures.update as a small flag, so the figures never reach into the
+    // override system. Play-time seconds; the update below is pause-gated.
+    private contagionRemaining = 0;
+    private prevOverrideTriggered = false;
+
     /**
      * @param fog - The live scene fog (THREE.Fog satisfies the shape), eased
      *   toward the current room's ROOM_FOG target every frame (flow-audit
@@ -52,12 +63,17 @@ export class RoomFlowUpdater {
      * @param ghost - F4 ghost replay (last run's trail walked once), driven
      *   once per frame alongside the figures. OWNED here: disposed in
      *   dispose(). Null disables the ghost (tests).
+     * @param snapshotEcho - The world's mid-run drafts of the player's snapshot
+     *   portrait, leaked onto nearby building facades. Driven once per frame
+     *   after the room flow settles (the chunk grid it queries is up to date by
+     *   then). OWNED here: disposed in dispose(). Null disables it (tests).
      */
     constructor(
         private readonly fog: RoomFogConfig | null = null,
         private readonly liveProfileSource: (() => BehaviorProfile | null) | null = null,
         private readonly figures: FigureSystem | null = null,
         private readonly ghost: GhostSystem | null = null,
+        private readonly snapshotEcho: SnapshotEcho | null = null,
     ) {}
 
     /**
@@ -161,19 +177,41 @@ export class RoomFlowUpdater {
             audio.playInfoChirp(playerState.flowerIntensity);
         }
 
+        // Rebellion is contagious: refresh the contagion window on the rising
+        // edge of a successful override (reusing the override-success signal
+        // already surfaced in playerState), then drain it by delta. While it
+        // stays open the figures' rebel gate runs faster.
+        const overrideSucceeded = playerState.overrideTriggered && !this.prevOverrideTriggered;
+        this.prevOverrideTriggered = playerState.overrideTriggered;
+        this.contagionRemaining = contagionWindowTick(this.contagionRemaining, delta, overrideSucceeded);
+
         // F3 silhouette figures: distant kin living the same rooms. Runs
         // AFTER the room flow above so the chunk grid and the room ledger's
         // cluster pins are already settled for this frame; the system follows
         // the same active chunk window as ChunkManager, reports its rare
-        // rebel tears through the audio controller, and shimmers harder
-        // under the (one frame stale) weather intensity.
-        this.figures?.update(delta, playerPos, playerState, currentRoomType, audio, this.weatherIntensity);
+        // rebel tears through the audio controller, shimmers harder under the
+        // (one frame stale) weather intensity, and rebels more often while the
+        // contagion window is open (a recent successful override).
+        this.figures?.update(
+            delta,
+            playerPos,
+            playerState,
+            currentRoomType,
+            audio,
+            this.weatherIntensity,
+            this.contagionRemaining > 0,
+        );
 
         // F4 ghost replay: last run's you, retracing its recorded trail. It
         // ignores rooms entirely (memory predates this world's layout); it
         // only needs the frame delta and the player position (for the single
         // silent recognition flare).
         this.ghost?.update(delta, playerPos);
+
+        // Snapshot echo: the world's occasional mid-run draft of the player's
+        // portrait, leaked onto a nearby facade. Runs last, after the chunk
+        // grid it enumerates (via the chunk manager) has settled this frame.
+        this.snapshotEcho?.update(delta, playerPos, chunkManager);
 
         return currentRoomType;
     }
@@ -182,5 +220,6 @@ export class RoomFlowUpdater {
         this.riftMechanic.dispose();
         this.figures?.dispose();
         this.ghost?.dispose();
+        this.snapshotEcho?.dispose();
     }
 }

@@ -9,7 +9,11 @@
 // - CONFORMIST (default): sways in place, chest flower-light breathing
 //   0.15-0.3; when the player gazes at the sky eye (global discipline) or
 //   blazes the flower >0.7 within 25m, the light presses down to 0.05 over
-//   ~1.5s — your kin bow their heads around you.
+//   ~1.5s — your kin bow their heads around you. The flower is a full social
+//   dial: too dim is loneliness, too bright bows them, and only the MIDDLE
+//   band resonates — hold it in [0.3, 0.6] for a few seconds and nearby kin
+//   converge their breathing onto a shared cadence and lift their light
+//   (config FIGURES.RESONANCE_*). Press-down always wins over resonance.
 // - ALIGNED (FORCED_ALIGNMENT): stands rigid outside the rift's clearance,
 //   facing the crack — tidy ranks on the LEFT, scattered on the RIGHT.
 // - MISREAD (IN_BETWEEN): low-frequency flicker between two render parameter
@@ -19,7 +23,19 @@
 //   only 30-60m out). A figure's light surges to full over ~2s, the body
 //   glitch-strobes (the GLITCH weather language localized), then it vanishes
 //   for the session — accompanied by a distant tear (playDistantTear),
-//   volume falling off with distance.
+//   volume falling off with distance. Rebellion is contagious: a SUCCESSFUL
+//   player override opens a session-level contagion window (config FIGURES.
+//   REBEL_CONTAGION_*) during which the arming gate drains markedly faster,
+//   so distant kin rebel more often in the minutes after you resisted.
+//
+// Witnesses at the scars (F3 x F2): the scar field says "the system remembers
+// you resisted" by leaning the buildings; this adds "others remember too". When
+// a chunk lies within reach of a boot-snapshot scar, a config fraction
+// (SCAR_WITNESS.FRACTION) of its figures are pulled OUT of their scattered pose
+// onto a tight ring around the nearest scar anchor, each turned to FACE it — a
+// silent crowd gathered at the place you resisted. Archetypes are unchanged;
+// only the position/facing is redrawn (deterministic per chunk given the frozen
+// boot scar list).
 //
 // Lifecycle follows the SAME active chunk window as ChunkManager (figure
 // placement is per-chunk deterministic via the project hash, so re-entering
@@ -30,10 +46,12 @@
 // delta-driven, hash-phase desynced, and LOD-gated by
 // WORLD.ANIMATION_LOD_DISTANCE (distant figures stand perfectly still).
 
+import type { ScarPoint } from './ScarField';
 import * as THREE from 'three';
-import { FIGURES, WORLD } from '../config/constants';
+import { FIGURES, SCAR_WITNESS, WORLD } from '../config/constants';
 import { hash } from '../utils/hash';
 import { FA_FIGURE_PLACEMENT, faSideAxisX, riftLineXForWorldX, ROOM_FIGURE_DENSITY, RoomType } from './RoomConfig';
+import { scarsNearChunk } from './ScarField';
 import { getSharedAssets } from './SharedAssets';
 
 // ===========================================================================
@@ -68,6 +86,11 @@ const FIGURE_PHASE_SALT = 1237;
 const REBEL_DELAY_SALT = 1249;
 const REBEL_PICK_SALT = 1259;
 const REBEL_JITTER_SALT = 1277;
+// Scar-witness redraw salts, decorrelated from every prior per-chunk draw
+// (ChunkManager <= 1019, ScarField <= 1153, the figure draws above <= 1277).
+const WITNESS_GATE_SALT = 1283;
+const WITNESS_RING_SALT = 1289;
+const WITNESS_ANGLE_SALT = 1291;
 
 // Silhouette proportions as fractions of the figure height — module-local
 // aesthetic constants (precedent: ChunkManager's anomaly scales). The shapes
@@ -176,16 +199,77 @@ function placeFree(
 }
 
 /**
+ * Whether figure `k` of chunk (cx, cz) is drawn as a scar witness — pulled to
+ * the nearest reachable scar. A single decorrelated hash gate against
+ * SCAR_WITNESS.FRACTION, independent of the count/pose/height draws so the
+ * choice never correlates with them. Pure.
+ */
+export function isScarWitness(cx: number, cz: number, k: number): boolean {
+    return hash(cx + k + WITNESS_GATE_SALT, cz - k - WITNESS_GATE_SALT) < SCAR_WITNESS.FRACTION;
+}
+
+/** Nearest scar to a world position among `scars`; null when the list is empty. */
+function nearestScar(scars: readonly ScarPoint[], worldX: number, worldZ: number): ScarPoint | null {
+    let best: ScarPoint | null = null;
+    let bestSq = Infinity;
+    for (const scar of scars) {
+        const dx = scar.x - worldX;
+        const dz = scar.z - worldZ;
+        const d = dx * dx + dz * dz;
+        if (d < bestSq) {
+            bestSq = d;
+            best = scar;
+        }
+    }
+    return best;
+}
+
+/**
+ * Chunk-local pose for a witness figure: stand on a hash-drawn ring
+ * (SCAR_WITNESS.RING_MIN..RING_MAX) around the scar's world anchor and face it
+ * (local +z aimed at the scar — the convention placeAligned relies on, where
+ * local +z maps to world (sin rotY, cos rotY)). Deterministic per (chunk, k).
+ * Pure; exported for testing.
+ */
+export function witnessPose(
+    scar: ScarPoint,
+    cx: number,
+    cz: number,
+    k: number,
+    chunkSize: number,
+): { x: number; z: number; rotationY: number } {
+    const { RING_MIN, RING_MAX } = SCAR_WITNESS;
+    const radius = RING_MIN
+        + hash(cx + k + WITNESS_RING_SALT, cz - k + WITNESS_RING_SALT) * (RING_MAX - RING_MIN);
+    const angle = hash(cx - k + WITNESS_ANGLE_SALT, cz + k + WITNESS_ANGLE_SALT) * Math.PI * 2;
+    const worldX = scar.x + Math.cos(angle) * radius;
+    const worldZ = scar.z + Math.sin(angle) * radius;
+    return {
+        x: worldX - cx * chunkSize,
+        z: worldZ - cz * chunkSize,
+        // Face the scar anchor: local +z -> world (sin rotY, cos rotY).
+        rotationY: Math.atan2(scar.x - worldX, scar.z - worldZ),
+    };
+}
+
+/**
  * Deterministic figure placements for a chunk: count via the room density
  * gates, pose per archetype (FORCED_ALIGNMENT gets the rift-rank treatment),
  * plus hash-drawn height and desync phase. Pure; the system regenerates the
  * exact same list every time the chunk re-enters the active window.
+ *
+ * When `scars` is non-empty (the boot-snapshot scars reaching this chunk), a
+ * SCAR_WITNESS.FRACTION share of the figures are pulled onto a ring around the
+ * nearest scar and turned to face it — the crowd gathered where you resisted.
+ * Archetypes stay as originally assigned. An empty `scars` (the default)
+ * reproduces the pre-witness placement bit-for-bit.
  */
 export function figurePlacementsForChunk(
     cx: number,
     cz: number,
     roomType: RoomType,
     chunkSize: number = WORLD.CHUNK_SIZE,
+    scars: readonly ScarPoint[] = [],
 ): FigurePlacement[] {
     const count = figureCountForChunk(cx, cz, roomType);
     const placements: FigurePlacement[] = [];
@@ -193,9 +277,19 @@ export function figurePlacementsForChunk(
         const archetype: FigureArchetype = roomType === RoomType.FORCED_ALIGNMENT
             ? 'ALIGNED'
             : roomType === RoomType.IN_BETWEEN ? 'MISREAD' : 'CONFORMIST';
-        const pose = archetype === 'ALIGNED'
+        let pose = archetype === 'ALIGNED'
             ? placeAligned(cx, cz, k, chunkSize)
             : placeFree(cx, cz, k, chunkSize);
+
+        // Witness: pull the chosen share to the nearest reachable scar, facing
+        // it. Uses the figure's original scattered world position to pick the
+        // nearest scar, so different figures can gather at different scars.
+        if (scars.length > 0 && isScarWitness(cx, cz, k)) {
+            const scar = nearestScar(scars, cx * chunkSize + pose.x, cz * chunkSize + pose.z);
+            if (scar)
+                pose = witnessPose(scar, cx, cz, k, chunkSize);
+        }
+
         placements.push({
             ...pose,
             archetype,
@@ -209,14 +303,112 @@ export function figurePlacementsForChunk(
 }
 
 /**
- * Conformist chest-light breathing: a slow sine between LIGHT_BREATHE_MIN
- * and MAX, desynced per figure by the placement phase. Pure, per-frame safe.
+ * Conformist chest-light breathing with a resonance lift: a slow sine whose
+ * FLOOR stays at LIGHT_BREATHE_MIN while its PEAK rises from LIGHT_BREATHE_MAX
+ * (resonance 0, the lonely default) to RESONANCE_LIGHT_MAX (resonance 1, the
+ * kin lit up together). Desynced per figure by `phase`. Pure, per-frame safe.
+ */
+export function resonantBreathe(clock: number, phase: number, resonance: number): number {
+    const { LIGHT_BREATHE_MIN, LIGHT_BREATHE_MAX, RESONANCE_LIGHT_MAX, LIGHT_BREATHE_SPEED } = FIGURES;
+    const r = Math.max(0, Math.min(1, resonance));
+    const peak = LIGHT_BREATHE_MAX + (RESONANCE_LIGHT_MAX - LIGHT_BREATHE_MAX) * r;
+    const mid = (LIGHT_BREATHE_MIN + peak) / 2;
+    const amp = (peak - LIGHT_BREATHE_MIN) / 2;
+    return mid + Math.sin(clock * LIGHT_BREATHE_SPEED + phase) * amp;
+}
+
+/**
+ * Plain conformist breathing (no resonance) — the baseline band. Pure.
  */
 export function breatheLight(clock: number, phase: number): number {
-    const { LIGHT_BREATHE_MIN, LIGHT_BREATHE_MAX, LIGHT_BREATHE_SPEED } = FIGURES;
-    const mid = (LIGHT_BREATHE_MIN + LIGHT_BREATHE_MAX) / 2;
-    const amp = (LIGHT_BREATHE_MAX - LIGHT_BREATHE_MIN) / 2;
-    return mid + Math.sin(clock * LIGHT_BREATHE_SPEED + phase) * amp;
+    return resonantBreathe(clock, phase, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Flower resonance: the mid-band social instrument (F3). All pure, all tested.
+// ---------------------------------------------------------------------------
+
+/**
+ * Player-level resonance arming state: whether the flower currently READS as
+ * inside the mid band (hysteretic — depends on the previous read) and how long
+ * it has stayed there continuously. Owned by the system, threaded frame to
+ * frame; a small plain object so the update stays allocation-conscious.
+ */
+export interface ResonanceArm {
+    inBand: boolean;
+    /** Continuous seconds in-band, capped at RESONANCE_ARM_SECONDS. */
+    armTimer: number;
+}
+
+/**
+ * Hysteretic band test: to ENTER resonance the flower must sit strictly inside
+ * [RESONANCE_BAND_MIN, RESONANCE_BAND_MAX]; once inside, the band widens by
+ * RESONANCE_BAND_HYSTERESIS on both edges, so a flower resting on an edge does
+ * not chatter armed/unarmed. Pure.
+ */
+export function resonanceInBand(flowerIntensity: number, wasInBand: boolean): boolean {
+    const { RESONANCE_BAND_MIN, RESONANCE_BAND_MAX, RESONANCE_BAND_HYSTERESIS } = FIGURES;
+    const margin = wasInBand ? RESONANCE_BAND_HYSTERESIS : 0;
+    return flowerIntensity >= RESONANCE_BAND_MIN - margin
+        && flowerIntensity <= RESONANCE_BAND_MAX + margin;
+}
+
+/**
+ * Advance the arming state one frame. Gazing (ambient discipline) or a flower
+ * outside the hysteretic band resets the timer to 0 — resonance must be earned
+ * fresh. In-band time accumulates and caps at RESONANCE_ARM_SECONDS. Mutates
+ * `prev` in place and returns it (allocation-free on the per-frame path, called
+ * once per frame from animateFigures); the two fields it writes are the whole
+ * state, so callers can keep reassigning `state = updateResonanceArm(state, …)`.
+ */
+export function updateResonanceArm(
+    prev: ResonanceArm,
+    flowerIntensity: number,
+    isGazing: boolean,
+    delta: number,
+): ResonanceArm {
+    const inBand = !isGazing && resonanceInBand(flowerIntensity, prev.inBand);
+    prev.armTimer = inBand
+        ? Math.min(FIGURES.RESONANCE_ARM_SECONDS, prev.armTimer + Math.max(0, delta))
+        : 0;
+    prev.inBand = inBand;
+    return prev;
+}
+
+/** Whether the arming timer has reached the sustained threshold. Pure. */
+export function resonanceArmed(state: ResonanceArm): boolean {
+    return state.armTimer >= FIGURES.RESONANCE_ARM_SECONDS;
+}
+
+/**
+ * The shared reference phase all resonating kin converge toward: a slow common
+ * drift off the elapsed clock, wrapped to [0, 2π). Identical for every figure,
+ * so once converged they breathe in unison. Pure.
+ */
+export function resonanceReferencePhase(clock: number): number {
+    const twoPi = Math.PI * 2;
+    const p = (clock * FIGURES.RESONANCE_REFERENCE_DRIFT) % twoPi;
+    return p < 0 ? p + twoPi : p;
+}
+
+/**
+ * Ease `current` toward `target` along the phase circle by the shortest arc,
+ * approaching at `rate` per second (clamped so a large frame delta can never
+ * overshoot). Result wrapped to [0, 2π). Pure — used both to converge onto the
+ * shared reference and to relax back to a figure's personal hash phase.
+ */
+export function convergePhase(current: number, target: number, rate: number, delta: number): number {
+    const twoPi = Math.PI * 2;
+    let diff = (target - current) % twoPi;
+    if (diff > Math.PI)
+        diff -= twoPi;
+    else if (diff < -Math.PI)
+        diff += twoPi;
+    const step = Math.max(0, Math.min(1, rate * delta));
+    let next = (current + diff * step) % twoPi;
+    if (next < 0)
+        next += twoPi;
+    return next;
 }
 
 /**
@@ -243,6 +435,33 @@ export function rebelDelaySeconds(eventIndex: number): number {
     return REBEL_MIN_INTERVAL
         + hash(eventIndex + REBEL_DELAY_SALT, eventIndex * 13 - REBEL_DELAY_SALT)
         * (REBEL_MAX_INTERVAL - REBEL_MIN_INTERVAL);
+}
+
+/**
+ * Rebellion is contagious: advance the session-level contagion window one
+ * frame. A SUCCESSFUL player override (`refresh` true this frame — the same
+ * resist event that scars the world) reopens the window to the full
+ * REBEL_CONTAGION_WINDOW; otherwise it drains by delta toward 0. Clamped to
+ * [0, WINDOW]. Pure — the window state is threaded frame to frame by the
+ * caller. Your resistance is not an isolated keypress: it licenses others.
+ */
+export function contagionWindowTick(remaining: number, delta: number, refresh: boolean): number {
+    if (refresh)
+        return FIGURES.REBEL_CONTAGION_WINDOW;
+    return Math.max(0, remaining - Math.max(0, delta));
+}
+
+/**
+ * Drain the rebel arming gate one frame. While the contagion window is open
+ * the countdown runs REBEL_CONTAGION_GATE_DIVISOR times faster, so the
+ * effective arming interval is divided by that factor and distant figures
+ * rebel more often in the minutes after a successful override. The picks and
+ * distances stay hash-deterministic; only the WAIT shortens (deterministic
+ * given the same window-state trajectory). Clamped at 0. Pure.
+ */
+export function stepRebelArmTimer(armTimer: number, delta: number, contagionActive: boolean): number {
+    const rate = contagionActive ? FIGURES.REBEL_CONTAGION_GATE_DIVISOR : 1;
+    return Math.max(0, armTimer - Math.max(0, delta) * rate);
 }
 
 /**
@@ -313,6 +532,14 @@ interface FigureRecord {
     placement: FigurePlacement;
     /** Conformist bow level 0-1 (1 = pressed to the dim floor). */
     press: number;
+    /**
+     * Live breathing phase — starts at the personal hash phase and, while the
+     * player resonates nearby, converges toward the shared reference; relaxes
+     * back to the personal phase (placement.phase) once resonance ends.
+     */
+    livePhase: number;
+    /** Resonance strength 0-1: eases in/out and lifts the breathing peak. */
+    resonance: number;
     light: number;
     misreadWire: boolean;
     state: FigureState;
@@ -365,15 +592,23 @@ export class FigureSystem {
     private rebelArmTimer: number;
     private activeRebel: FigureRecord | null = null;
 
+    /** Player-level flower-resonance arming, threaded frame to frame. */
+    private resonanceArm: ResonanceArm = { inBand: false, armTimer: 0 };
+
     /**
      * @param scene - Scene the figure root group is added to.
      * @param rooms - Per-chunk room attribution (pass the ChunkManager so the
      *   session ledger is consulted). Null falls back to the player's current
      *   room passed into update() (tests only).
+     * @param bootScars - Frozen boot-snapshot cross-run scars (stats/ScarStorage
+     *   via ScarFieldSource). A config fraction of the figures in chunks near a
+     *   scar gather around it (witnessPose). Empty (default) keeps the scattered
+     *   placement unchanged.
      */
     constructor(
         scene: THREE.Scene,
         private readonly rooms: FigureRoomSource | null = null,
+        private readonly bootScars: readonly ScarPoint[] = [],
     ) {
         this.chestBaseMat = new THREE.MeshBasicMaterial({
             color: 0xFFFFFF,
@@ -395,6 +630,12 @@ export class FigureSystem {
      * @param weatherIntensity - 0-1 current weather intensity; gently speeds
      *   the figures' flicker clock (WEATHER_FLICKER_GAIN). 0 (default)
      *   reproduces the calm behavior exactly.
+     * @param contagionActive - Whether the session-level contagion window is
+     *   open (a recent successful player override). While true the rebel
+     *   arming gate drains faster (stepRebelArmTimer). The window countdown is
+     *   owned upstream (RoomFlowUpdater) and threaded in as this small flag,
+     *   so the figures never reach into the override system. False (default)
+     *   reproduces the calm gate exactly.
      */
     update(
         delta: number,
@@ -403,12 +644,13 @@ export class FigureSystem {
         currentRoomType: RoomType,
         audio?: FigureAudio,
         weatherIntensity: number = 0,
+        contagionActive: boolean = false,
     ): void {
         this.clock += delta;
         this.flickerClock += delta * (1 + Math.max(0, weatherIntensity) * WEATHER_FLICKER_GAIN);
         this.syncChunks(playerPos, currentRoomType);
         this.animateFigures(delta, playerPos, playerState, audio);
-        this.updateRebelScheduler(delta, playerPos);
+        this.updateRebelScheduler(delta, playerPos, contagionActive);
     }
 
     /**
@@ -443,7 +685,12 @@ export class FigureSystem {
         const roomType = this.rooms
             ? this.rooms.getRoomTypeForChunk(cx, cz)
             : fallbackRoom;
-        const placements = figurePlacementsForChunk(cx, cz, roomType);
+        // Cross-run scars reaching this chunk (usually none): the same footprint
+        // filter ChunkManager uses for the leaning buildings.
+        const nearScars = this.bootScars.length > 0
+            ? scarsNearChunk(this.bootScars, cx, cz)
+            : this.bootScars;
+        const placements = figurePlacementsForChunk(cx, cz, roomType, WORLD.CHUNK_SIZE, nearScars);
         const entry: ChunkFigures = { group: null, figures: [] };
         this.chunks[`${cx},${cz}`] = entry;
 
@@ -518,6 +765,8 @@ export class FigureSystem {
             ),
             placement,
             press: 0,
+            livePhase: placement.phase,
+            resonance: 0,
             light,
             misreadWire: false,
             state: 'IDLE',
@@ -550,6 +799,19 @@ export class FigureSystem {
         playerState: FigurePlayerRead,
         audio?: FigureAudio,
     ): void {
+        // Player-level resonance arming: advance once per frame (a global read,
+        // independent of any figure) before the per-figure pass. Gazing or a
+        // flower outside the mid band keeps it disarmed.
+        this.resonanceArm = updateResonanceArm(
+            this.resonanceArm,
+            playerState.flowerIntensity,
+            playerState.isGazing,
+            delta,
+        );
+        const armed = resonanceArmed(this.resonanceArm);
+        // Shared cadence all resonating kin converge onto — computed once.
+        const refPhase = resonanceReferencePhase(this.clock);
+
         for (const key in this.chunks) {
             const figures = this.chunks[key].figures;
             for (const fig of figures) {
@@ -563,7 +825,7 @@ export class FigureSystem {
                 const distSq = playerPos.distanceToSquared(fig.worldPos);
                 if (distSq > LOD_DISTANCE_SQ)
                     continue; // beyond the animation LOD: perfectly still
-                this.animateIdle(fig, delta, playerState, distSq);
+                this.animateIdle(fig, delta, playerState, distSq, armed, refPhase);
             }
         }
     }
@@ -573,6 +835,8 @@ export class FigureSystem {
         delta: number,
         playerState: FigurePlayerRead,
         distSq: number,
+        armed: boolean,
+        refPhase: number,
     ): void {
         const p = fig.placement;
         if (p.archetype === 'ALIGNED')
@@ -595,8 +859,23 @@ export class FigureSystem {
                 ? delta / FIGURES.LIGHT_DIM_SECONDS
                 : -delta / FIGURES.LIGHT_RECOVER_SECONDS;
             fig.press = Math.max(0, Math.min(1, fig.press + step));
+
+            // Resonance: while the player holds the flower in the mid band long
+            // enough (armed) and this kin stands within the press radius, its
+            // breathing phase converges onto the shared reference and its light
+            // lifts; otherwise both relax back to the personal cadence. The
+            // press blend below still lets suppression win outright.
+            const resonating = armed
+                && distSq < FIGURES.DIM_FLOWER_DISTANCE * FIGURES.DIM_FLOWER_DISTANCE;
+            const rTarget = resonating ? refPhase : p.phase;
+            const rRate = resonating ? FIGURES.RESONANCE_CONVERGE_RATE : FIGURES.RESONANCE_RELAX_RATE;
+            fig.livePhase = convergePhase(fig.livePhase, rTarget, rRate, delta);
+            const rStep = resonating
+                ? delta / FIGURES.RESONANCE_ATTACK_SECONDS
+                : -delta / FIGURES.RESONANCE_RELEASE_SECONDS;
+            fig.resonance = Math.max(0, Math.min(1, fig.resonance + rStep));
         }
-        const breathing = breatheLight(this.clock, p.phase);
+        const breathing = resonantBreathe(this.clock, fig.livePhase, fig.resonance);
         fig.light = breathing + (FIGURES.LIGHT_DIM - breathing) * fig.press;
         fig.chestMat.color.setScalar(fig.light);
 
@@ -623,10 +902,13 @@ export class FigureSystem {
      * candidates) and commits to the surge -> glitch-strobe -> vanish arc.
      * No per-frame randomness anywhere in the gate.
      */
-    private updateRebelScheduler(delta: number, playerPos: THREE.Vector3): void {
+    private updateRebelScheduler(delta: number, playerPos: THREE.Vector3, contagionActive: boolean): void {
         if (this.activeRebel)
             return;
-        this.rebelArmTimer = Math.max(0, this.rebelArmTimer - delta);
+        // Contagion accelerates the countdown (stepRebelArmTimer): the gate is
+        // still a deterministic hash-drawn interval, only drained faster while
+        // a recent override keeps the window open.
+        this.rebelArmTimer = stepRebelArmTimer(this.rebelArmTimer, delta, contagionActive);
         if (this.rebelArmTimer > 0)
             return;
 

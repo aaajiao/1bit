@@ -1,5 +1,7 @@
 // 1-bit Chimera Void - Floor Tile Generator
+import type { ScarPoint } from './ScarField';
 import * as THREE from 'three';
+import { SCAR_WITNESS } from '../config/constants';
 import { hash } from '../utils/hash';
 import { FA_RIFT } from './RoomConfig';
 
@@ -428,6 +430,67 @@ const INFO_FLOOR_TEX_SIZE = 64;
 const INFO_FLOOR_SALT = 419; // decorrelate the variant pick from other hashes
 let infoFloorPool: THREE.MeshLambertMaterial[] | null = null;
 
+// --- INFO_OVERFLOW scar redaction ------------------------------------------
+// Where the witness crowd gathers at a scar (world/FigureSystem), the system
+// paints over the written record: a hard pure-black disc blacks out the glyph
+// field within SCAR_WITNESS.REDACT_RADIUS of the scar anchor. The data is
+// erased while the silent crowd keeps standing there. Object-level (no shader
+// uniform), and both the unit-disc geometry and the black material are
+// module-shared — no per-chunk allocation — so chunks add nothing to their
+// disposables. The black material is only ever released via disposeFloorPool()
+// (removeChunk skips materials); the shared geometry's GPU buffers, by contrast,
+// are disposed by removeChunk's chunk-tree traversal on every scarred-chunk
+// unload and re-uploaded lazily on next use — the same benign dispose/reupload
+// churn the flicker-variant shared geometries already ride.
+const REDACTION_LIFT = 0.02; // sit just above the floor plane; wins the depth test
+let redactionGeo: THREE.CircleGeometry | null = null;
+let redactionMat: THREE.MeshBasicMaterial | null = null;
+
+/** Lazily initializes (once) the module-shared redaction disc geometry+material. */
+function getRedactionAssets(): { geo: THREE.CircleGeometry; mat: THREE.MeshBasicMaterial } {
+    if (!redactionGeo)
+        redactionGeo = new THREE.CircleGeometry(1, 24); // unit disc, scaled per scar
+    if (!redactionMat)
+        redactionMat = new THREE.MeshBasicMaterial({ color: 0x000000 }); // pure ink
+    return { geo: redactionGeo, mat: redactionMat };
+}
+
+/**
+ * One flat black redaction disc per scar whose ANCHOR lies inside chunk
+ * (cx, cz)'s footprint, positioned at the scar's chunk-local x/z and scaled to
+ * the redaction radius. Gating on the anchor (not mere disc overlap) gives each
+ * scar exactly one disc, owned by the chunk that contains it, so the black ink
+ * never lands on a neighbouring — possibly different-room — chunk's floor that
+ * has no glyph record to redact. A disc near the chunk edge still overhangs its
+ * (same-room) neighbours by up to REDACT_RADIUS, which is accepted. Lies in the
+ * XZ plane a hair above the floor. Shared geometry/material, so nothing here
+ * needs per-chunk disposal.
+ */
+function buildRedactionDiscs(
+    chunkSize: number,
+    cx: number,
+    cz: number,
+    scars: readonly ScarPoint[],
+): THREE.Mesh[] {
+    const { REDACT_RADIUS } = SCAR_WITNESS;
+    const half = chunkSize / 2;
+    const { geo, mat } = getRedactionAssets();
+    const discs: THREE.Mesh[] = [];
+    for (const scar of scars) {
+        const localX = scar.x - cx * chunkSize;
+        const localZ = scar.z - cz * chunkSize;
+        // Only the chunk that CONTAINS the scar anchor draws its disc.
+        if (Math.abs(localX) > half || Math.abs(localZ) > half)
+            continue;
+        const disc = new THREE.Mesh(geo, mat);
+        disc.rotation.x = -Math.PI / 2; // XY disc -> flat on the XZ floor
+        disc.scale.setScalar(REDACT_RADIUS);
+        disc.position.set(localX, REDACTION_LIFT, localZ);
+        discs.push(disc);
+    }
+    return discs;
+}
+
 /**
  * Builds one binary-glyph / dot-matrix DataTexture material for the
  * INFO_OVERFLOW floor pool. The pattern is a dense field of "lit" cells (bright
@@ -500,11 +563,24 @@ function getInfoFloorPool(): THREE.MeshLambertMaterial[] {
  * The returned material is module-shared: callers MUST NOT push it to a chunk's
  * disposables. The pool is freed once via {@link disposeFloorPool}.
  *
+ * When `scars` reach the chunk, hard black redaction discs are laid over the
+ * glyph field within SCAR_WITNESS.REDACT_RADIUS of each scar — the system
+ * erasing the written record under the gathered witness crowd. The discs use
+ * module-shared geometry/material (no per-chunk disposal), so the return type
+ * widens to a Group only when at least one disc is drawn; otherwise the bare
+ * floor Mesh is returned unchanged.
+ *
  * @param chunkSize - Size of the chunk.
  * @param cx - Chunk X coordinate (deterministic variant seed).
  * @param cz - Chunk Z coordinate (deterministic variant seed).
+ * @param scars - Boot-snapshot scars reaching this chunk (default none).
  */
-export function createInfoFloorMesh(chunkSize: number, cx: number, cz: number): THREE.Mesh {
+export function createInfoFloorMesh(
+    chunkSize: number,
+    cx: number,
+    cz: number,
+    scars: readonly ScarPoint[] = [],
+): THREE.Object3D {
     const pool = getInfoFloorPool();
     const variant = Math.floor(hash(cx + INFO_FLOOR_SALT, cz - INFO_FLOOR_SALT) * pool.length) % pool.length;
 
@@ -514,7 +590,16 @@ export function createInfoFloorMesh(chunkSize: number, cx: number, cz: number): 
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
-    return floor;
+
+    const discs = scars.length > 0 ? buildRedactionDiscs(chunkSize, cx, cz, scars) : [];
+    if (discs.length === 0)
+        return floor;
+
+    const group = new THREE.Group();
+    group.add(floor);
+    for (const disc of discs)
+        group.add(disc);
+    return group;
 }
 
 // --- POLARIZED seam-floor shared materials ---------------------------------
@@ -668,6 +753,14 @@ export function disposeFloorPool(): void {
             mat.dispose();
         }
         infoFloorPool = null;
+    }
+    if (redactionGeo) {
+        redactionGeo.dispose();
+        redactionGeo = null;
+    }
+    if (redactionMat) {
+        redactionMat.dispose();
+        redactionMat = null;
     }
     if (seamLineMaterial) {
         seamLineMaterial.dispose();

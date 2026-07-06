@@ -1,14 +1,25 @@
+import type { ScarPoint } from '../src/world/ScarField';
 import { describe, expect, it } from 'vitest';
-import { FIGURES, WORLD } from '../src/config/constants';
+import { FIGURES, SCAR_WITNESS, WORLD } from '../src/config/constants';
 import {
     breatheLight,
     conformistPressed,
+    contagionWindowTick,
+    convergePhase,
     figureCountForChunk,
     figurePlacementsForChunk,
     isInRebelRange,
+    isScarWitness,
     pickRebelIndex,
     rebelDelaySeconds,
     rebelTearProximity,
+    resonanceArmed,
+    resonanceInBand,
+    resonanceReferencePhase,
+    resonantBreathe,
+    stepRebelArmTimer,
+    updateResonanceArm,
+    witnessPose,
 } from '../src/world/FigureSystem';
 import {
     FA_FIGURE_PLACEMENT,
@@ -219,6 +230,148 @@ describe('figureSystem (F3 silhouettes)', () => {
         });
     });
 
+    describe('witnesses at the scars (F3 x F2)', () => {
+        it('keeps the witness knobs coherent (ring inside a positive redact radius)', () => {
+            expect(SCAR_WITNESS.FRACTION).toBeGreaterThan(0);
+            expect(SCAR_WITNESS.FRACTION).toBeLessThan(1);
+            expect(SCAR_WITNESS.RING_MIN).toBeGreaterThan(0);
+            expect(SCAR_WITNESS.RING_MAX).toBeGreaterThan(SCAR_WITNESS.RING_MIN);
+            expect(SCAR_WITNESS.REDACT_RADIUS).toBeGreaterThan(0);
+        });
+
+        it('gates roughly SCAR_WITNESS.FRACTION of figures as witnesses, deterministically', () => {
+            let witnesses = 0;
+            let total = 0;
+            for (let cx = -40; cx <= 40; cx++) {
+                for (let cz = -40; cz <= 40; cz++) {
+                    for (let k = 0; k < 2; k++) {
+                        const w = isScarWitness(cx, cz, k);
+                        expect(w).toBe(isScarWitness(cx, cz, k)); // deterministic
+                        if (w)
+                            witnesses++;
+                        total++;
+                    }
+                }
+            }
+            const frac = witnesses / total;
+            expect(frac).toBeGreaterThan(SCAR_WITNESS.FRACTION - 0.08);
+            expect(frac).toBeLessThan(SCAR_WITNESS.FRACTION + 0.08);
+        });
+
+        it('stands a witness on the ring around the scar and faces it (witnessPose)', () => {
+            const { RING_MIN, RING_MAX } = SCAR_WITNESS;
+            const scar: ScarPoint = { x: 123.4, z: -56.7, count: 3 };
+            let angleSpread = new Set<number>();
+            for (let cx = -6; cx <= 6; cx++) {
+                for (let cz = -6; cz <= 6; cz++) {
+                    for (let k = 0; k < 2; k++) {
+                        const pose = witnessPose(scar, cx, cz, k, CHUNK);
+                        const worldX = cx * CHUNK + pose.x;
+                        const worldZ = cz * CHUNK + pose.z;
+                        const r = Math.hypot(scar.x - worldX, scar.z - worldZ);
+                        expect(r).toBeGreaterThanOrEqual(RING_MIN - 1e-9);
+                        expect(r).toBeLessThanOrEqual(RING_MAX + 1e-9);
+                        // local +z (sin rotY, cos rotY) aims straight at the scar.
+                        expect(Math.sin(pose.rotationY)).toBeCloseTo((scar.x - worldX) / r, 9);
+                        expect(Math.cos(pose.rotationY)).toBeCloseTo((scar.z - worldZ) / r, 9);
+                        angleSpread = angleSpread.add(Math.round(pose.rotationY * 100));
+                    }
+                }
+            }
+            expect(angleSpread.size).toBeGreaterThan(5); // genuinely ringed, not one spot
+        });
+
+        it('leaves the scattered placement bit-for-bit when no scar reaches the chunk', () => {
+            for (const room of ALL_ROOMS) {
+                for (let cx = -8; cx <= 8; cx++) {
+                    for (let cz = -8; cz <= 8; cz++) {
+                        expect(figurePlacementsForChunk(cx, cz, room, CHUNK, []))
+                            .toEqual(figurePlacementsForChunk(cx, cz, room));
+                    }
+                }
+            }
+        });
+
+        it('pulls only the witness share to the scar, leaving the rest untouched', () => {
+            const { RING_MAX } = SCAR_WITNESS;
+            let witnessesSeen = 0;
+            let bystandersSeen = 0;
+            for (let cx = -8; cx <= 8; cx++) {
+                for (let cz = -8; cz <= 8; cz++) {
+                    // A scar sitting near this chunk's own centre.
+                    const scar: ScarPoint = { x: cx * CHUNK + 3, z: cz * CHUNK - 2, count: 4 };
+                    const base = figurePlacementsForChunk(cx, cz, RoomType.INFO_OVERFLOW);
+                    const withScar = figurePlacementsForChunk(
+                        cx,
+                        cz,
+                        RoomType.INFO_OVERFLOW,
+                        CHUNK,
+                        [scar],
+                    );
+                    expect(withScar.length).toBe(base.length);
+                    for (let k = 0; k < base.length; k++) {
+                        if (isScarWitness(cx, cz, k)) {
+                            witnessesSeen++;
+                            const worldX = cx * CHUNK + withScar[k].x;
+                            const worldZ = cz * CHUNK + withScar[k].z;
+                            const r = Math.hypot(scar.x - worldX, scar.z - worldZ);
+                            expect(r).toBeLessThanOrEqual(RING_MAX + 1e-9);
+                            // Archetype / height / phase are never rewritten.
+                            expect(withScar[k].archetype).toBe(base[k].archetype);
+                            expect(withScar[k].height).toBe(base[k].height);
+                            expect(withScar[k].phase).toBe(base[k].phase);
+                        }
+                        else {
+                            bystandersSeen++;
+                            expect(withScar[k]).toEqual(base[k]);
+                        }
+                    }
+                }
+            }
+            expect(witnessesSeen).toBeGreaterThan(5);
+            expect(bystandersSeen).toBeGreaterThan(5);
+        });
+
+        it('is deterministic given the frozen boot scar snapshot', () => {
+            const scars: ScarPoint[] = [
+                { x: 12, z: 20, count: 2 },
+                { x: -140, z: 65, count: 5 },
+            ];
+            for (const room of ALL_ROOMS) {
+                for (let cx = -6; cx <= 6; cx++) {
+                    for (let cz = -6; cz <= 6; cz++) {
+                        const a = figurePlacementsForChunk(cx, cz, room, CHUNK, scars);
+                        const b = figurePlacementsForChunk(cx, cz, room, CHUNK, scars);
+                        expect(a).toEqual(b);
+                    }
+                }
+            }
+        });
+
+        it('gathers different figures at the nearest of several scars', () => {
+            // Two scars far apart; every witness must land on the ring of ITS
+            // nearest scar, never averaged between them.
+            const { RING_MAX } = SCAR_WITNESS;
+            const scarA: ScarPoint = { x: 0, z: 0, count: 3 };
+            const scarB: ScarPoint = { x: 300, z: 0, count: 3 };
+            const scars = [scarA, scarB];
+            for (let cx = -3; cx <= 6; cx++) {
+                for (let cz = -3; cz <= 3; cz++) {
+                    const withScar = figurePlacementsForChunk(cx, cz, RoomType.INFO_OVERFLOW, CHUNK, scars);
+                    for (let k = 0; k < withScar.length; k++) {
+                        if (!isScarWitness(cx, cz, k))
+                            continue;
+                        const worldX = cx * CHUNK + withScar[k].x;
+                        const worldZ = cz * CHUNK + withScar[k].z;
+                        const rA = Math.hypot(scarA.x - worldX, scarA.z - worldZ);
+                        const rB = Math.hypot(scarB.x - worldX, scarB.z - worldZ);
+                        expect(Math.min(rA, rB)).toBeLessThanOrEqual(RING_MAX + 1e-9);
+                    }
+                }
+            }
+        });
+    });
+
     describe('conformist light behavior', () => {
         it('breathes inside the configured band and actually oscillates', () => {
             const { LIGHT_BREATHE_MIN, LIGHT_BREATHE_MAX } = FIGURES;
@@ -298,6 +451,238 @@ describe('figureSystem (F3 silhouettes)', () => {
             expect(rebelTearProximity(REBEL_MAX_DISTANCE ** 2)).toBe(0);
             const midDist = (REBEL_MIN_DISTANCE + REBEL_MAX_DISTANCE) / 2;
             expect(rebelTearProximity(midDist ** 2)).toBeCloseTo(0.5, 10);
+        });
+    });
+
+    describe('rebellion is contagious (override loosens the gate)', () => {
+        describe('config coherence', () => {
+            it('opens a positive window and accelerates the gate by >1', () => {
+                expect(FIGURES.REBEL_CONTAGION_WINDOW).toBeGreaterThan(0);
+                expect(FIGURES.REBEL_CONTAGION_GATE_DIVISOR).toBeGreaterThan(1);
+            });
+        });
+
+        describe('contagionWindowTick', () => {
+            it('refreshes to the full window on a successful override', () => {
+                expect(contagionWindowTick(0, 0.016, true))
+                    .toBe(FIGURES.REBEL_CONTAGION_WINDOW);
+                // A repeated success refreshes even a partly-drained window.
+                expect(contagionWindowTick(12, 0.016, true))
+                    .toBe(FIGURES.REBEL_CONTAGION_WINDOW);
+            });
+
+            it('drains by delta toward 0 and never goes negative', () => {
+                expect(contagionWindowTick(10, 4, false)).toBeCloseTo(6, 10);
+                expect(contagionWindowTick(3, 4, false)).toBe(0);
+                expect(contagionWindowTick(0, 4, false)).toBe(0);
+            });
+
+            it('ignores a negative delta (frozen, never grows)', () => {
+                expect(contagionWindowTick(10, -5, false)).toBe(10);
+            });
+
+            it('drains to exactly 0 over the full window duration', () => {
+                let remaining = contagionWindowTick(0, 0.016, true);
+                for (let i = 0; i < 100000 && remaining > 0; i++)
+                    remaining = contagionWindowTick(remaining, 0.05, false);
+                expect(remaining).toBe(0);
+            });
+        });
+
+        describe('stepRebelArmTimer', () => {
+            it('drains at 1x when the window is closed (calm gate)', () => {
+                expect(stepRebelArmTimer(100, 5, false)).toBeCloseTo(95, 10);
+            });
+
+            it('drains DIVISOR times faster while the window is open', () => {
+                const { REBEL_CONTAGION_GATE_DIVISOR: div } = FIGURES;
+                expect(stepRebelArmTimer(100, 5, true)).toBeCloseTo(100 - 5 * div, 10);
+            });
+
+            it('reaches 0 in 1/DIVISOR the time while contagious', () => {
+                const { REBEL_CONTAGION_GATE_DIVISOR: div } = FIGURES;
+                const start = rebelDelaySeconds(0);
+                // Calm frames to drain the whole interval.
+                let calm = start;
+                let calmFrames = 0;
+                while (calm > 0) {
+                    calm = stepRebelArmTimer(calm, 0.05, false);
+                    calmFrames++;
+                }
+                // Contagious frames to drain the same interval.
+                let hot = start;
+                let hotFrames = 0;
+                while (hot > 0) {
+                    hot = stepRebelArmTimer(hot, 0.05, true);
+                    hotFrames++;
+                }
+                // Roughly div times fewer frames (allow ±1 frame of rounding).
+                expect(hotFrames).toBeLessThanOrEqual(Math.ceil(calmFrames / div) + 1);
+                expect(hotFrames).toBeGreaterThanOrEqual(Math.floor(calmFrames / div) - 1);
+            });
+
+            it('clamps at 0 and never goes negative', () => {
+                expect(stepRebelArmTimer(1, 5, true)).toBe(0);
+                expect(stepRebelArmTimer(0, 5, false)).toBe(0);
+            });
+
+            it('ignores a negative delta (frozen gate)', () => {
+                expect(stepRebelArmTimer(50, -3, true)).toBe(50);
+            });
+        });
+    });
+
+    describe('flower resonance (the mid-band social instrument)', () => {
+        const TWO_PI = Math.PI * 2;
+
+        describe('config coherence', () => {
+            it('orders the resonance band inside the breathe/press knobs', () => {
+                expect(FIGURES.RESONANCE_BAND_MIN).toBeLessThan(FIGURES.RESONANCE_BAND_MAX);
+                expect(FIGURES.RESONANCE_BAND_HYSTERESIS).toBeGreaterThan(0);
+                // The outer (hysteretic) band must stay below the blaze
+                // threshold, so a blazing flower always exits resonance before
+                // it presses the kin down.
+                expect(FIGURES.RESONANCE_BAND_MAX + FIGURES.RESONANCE_BAND_HYSTERESIS)
+                    .toBeLessThan(FIGURES.DIM_FLOWER_THRESHOLD);
+                // The lifted peak actually rises above the lonely default.
+                expect(FIGURES.RESONANCE_LIGHT_MAX).toBeGreaterThan(FIGURES.LIGHT_BREATHE_MAX);
+                expect(FIGURES.RESONANCE_ARM_SECONDS).toBeGreaterThan(0);
+            });
+        });
+
+        describe('resonanceInBand (hysteresis)', () => {
+            it('enters only strictly inside the band', () => {
+                const { RESONANCE_BAND_MIN, RESONANCE_BAND_MAX } = FIGURES;
+                const mid = (RESONANCE_BAND_MIN + RESONANCE_BAND_MAX) / 2;
+                expect(resonanceInBand(mid, false)).toBe(true);
+                expect(resonanceInBand(RESONANCE_BAND_MIN - 0.001, false)).toBe(false);
+                expect(resonanceInBand(RESONANCE_BAND_MAX + 0.001, false)).toBe(false);
+            });
+
+            it('stays in-band across the hysteresis margin once entered', () => {
+                const { RESONANCE_BAND_MAX, RESONANCE_BAND_HYSTERESIS } = FIGURES;
+                const justOver = RESONANCE_BAND_MAX + RESONANCE_BAND_HYSTERESIS / 2;
+                // Would not ENTER here, but does not chatter out once armed.
+                expect(resonanceInBand(justOver, false)).toBe(false);
+                expect(resonanceInBand(justOver, true)).toBe(true);
+                // Beyond the widened band it finally drops.
+                expect(resonanceInBand(RESONANCE_BAND_MAX + RESONANCE_BAND_HYSTERESIS + 0.001, true))
+                    .toBe(false);
+            });
+        });
+
+        describe('updateResonanceArm', () => {
+            it('arms only after sustained continuous in-band time', () => {
+                const mid = (FIGURES.RESONANCE_BAND_MIN + FIGURES.RESONANCE_BAND_MAX) / 2;
+                let state = { inBand: false, armTimer: 0 };
+                expect(resonanceArmed(state)).toBe(false);
+                // Half the arm time: in-band but not yet armed.
+                for (let t = 0; t < FIGURES.RESONANCE_ARM_SECONDS / 2; t += 0.1)
+                    state = updateResonanceArm(state, mid, false, 0.1);
+                expect(state.inBand).toBe(true);
+                expect(resonanceArmed(state)).toBe(false);
+                // Past the threshold: armed, and the timer caps (never grows past).
+                for (let t = 0; t < FIGURES.RESONANCE_ARM_SECONDS; t += 0.1)
+                    state = updateResonanceArm(state, mid, false, 0.1);
+                expect(resonanceArmed(state)).toBe(true);
+                expect(state.armTimer).toBe(FIGURES.RESONANCE_ARM_SECONDS);
+            });
+
+            it('resets the timer when gazing (discipline breaks resonance)', () => {
+                const mid = (FIGURES.RESONANCE_BAND_MIN + FIGURES.RESONANCE_BAND_MAX) / 2;
+                let state = { inBand: true, armTimer: FIGURES.RESONANCE_ARM_SECONDS };
+                state = updateResonanceArm(state, mid, true, 0.1);
+                expect(state.inBand).toBe(false);
+                expect(state.armTimer).toBe(0);
+                expect(resonanceArmed(state)).toBe(false);
+            });
+
+            it('resets the timer when the flower leaves the band (blazing / dimming)', () => {
+                let state = { inBand: true, armTimer: FIGURES.RESONANCE_ARM_SECONDS };
+                // Blaze above the band.
+                state = updateResonanceArm(state, FIGURES.DIM_FLOWER_THRESHOLD + 0.1, false, 0.1);
+                expect(state.armTimer).toBe(0);
+                // Dim below the band.
+                state = { inBand: true, armTimer: FIGURES.RESONANCE_ARM_SECONDS };
+                state = updateResonanceArm(state, 0.05, false, 0.1);
+                expect(state.armTimer).toBe(0);
+            });
+        });
+
+        describe('resonanceReferencePhase', () => {
+            it('is wrapped to [0, 2π) and deterministic', () => {
+                for (let t = 0; t < 500; t += 3.3) {
+                    const p = resonanceReferencePhase(t);
+                    expect(p).toBe(resonanceReferencePhase(t));
+                    expect(p).toBeGreaterThanOrEqual(0);
+                    expect(p).toBeLessThan(TWO_PI);
+                }
+            });
+
+            it('evolves with elapsed time (a live shared cadence)', () => {
+                expect(resonanceReferencePhase(10)).not.toBe(resonanceReferencePhase(20));
+            });
+        });
+
+        describe('convergePhase', () => {
+            it('never overshoots and stays wrapped for a large delta', () => {
+                const next = convergePhase(0, Math.PI, 100, 10); // rate*delta >> 1
+                expect(next).toBeCloseTo(Math.PI, 10);
+                expect(next).toBeGreaterThanOrEqual(0);
+                expect(next).toBeLessThan(TWO_PI);
+            });
+
+            it('takes the shortest arc across the 0/2π seam', () => {
+                // From 0.1 rad, the target 2π - 0.1 is reached by going NEGATIVE
+                // (a -0.2 rad arc through the seam), not the long way forward.
+                // rate*delta = 0.8 steps 80% of the -0.2 arc, crossing 0 and
+                // wrapping into the high 6.x range.
+                const next = convergePhase(0.1, TWO_PI - 0.1, 1, 0.8);
+                expect(next).toBeGreaterThan(Math.PI); // proves it went negative
+                expect(next).toBeGreaterThan(TWO_PI - 0.1); // past the seam, not yet at target
+                expect(next).toBeLessThan(TWO_PI);
+            });
+
+            it('monotonically closes onto a static target over time', () => {
+                let cur = 0.3;
+                const target = 2.4;
+                let prevGap = Math.abs(target - cur);
+                for (let i = 0; i < 200; i++) {
+                    cur = convergePhase(cur, target, FIGURES.RESONANCE_CONVERGE_RATE, 0.05);
+                    const gap = Math.abs(target - cur);
+                    expect(gap).toBeLessThanOrEqual(prevGap + 1e-9);
+                    prevGap = gap;
+                }
+                expect(prevGap).toBeLessThan(0.05); // exponential ease, near-closed
+            });
+        });
+
+        describe('resonantBreathe', () => {
+            it('equals the plain breathe at resonance 0', () => {
+                for (let t = 0; t < 20; t += 0.37) {
+                    expect(resonantBreathe(t, 1.1, 0)).toBeCloseTo(breatheLight(t, 1.1), 12);
+                }
+            });
+
+            it('keeps the floor and lifts the peak toward RESONANCE_LIGHT_MAX', () => {
+                const { LIGHT_BREATHE_MIN, LIGHT_BREATHE_MAX, RESONANCE_LIGHT_MAX } = FIGURES;
+                let min = Infinity;
+                let max = -Infinity;
+                for (let t = 0; t < 60; t += 0.02) {
+                    const v = resonantBreathe(t, 0.7, 1);
+                    min = Math.min(min, v);
+                    max = Math.max(max, v);
+                }
+                // Floor unchanged, peak reaches the resonant maximum.
+                expect(min).toBeCloseTo(LIGHT_BREATHE_MIN, 3);
+                expect(max).toBeCloseTo(RESONANCE_LIGHT_MAX, 3);
+                expect(max).toBeGreaterThan(LIGHT_BREATHE_MAX);
+            });
+
+            it('clamps the resonance strength to [0, 1]', () => {
+                expect(resonantBreathe(3, 0.4, -5)).toBeCloseTo(resonantBreathe(3, 0.4, 0), 12);
+                expect(resonantBreathe(3, 0.4, 5)).toBeCloseTo(resonantBreathe(3, 0.4, 1), 12);
+            });
         });
     });
 });

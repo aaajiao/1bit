@@ -5,21 +5,23 @@ import type {
     ChunkUserData,
     DynamicCable,
     FlickerGroup,
+    SeamShell,
 } from '../types';
 import type { BehaviorProfile, RoomShaderConfig } from './RoomConfig';
 import type { ScarPoint } from './ScarField';
 import type { SharedAssets } from './SharedAssets';
+import type { EchoTarget } from './SnapshotEcho';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
-import { WORLD } from '../config/constants';
+import { CABLE_UPLINK, WORLD } from '../config/constants';
 import { disposeObject3D } from '../utils/dispose';
 import { hash } from '../utils/hash';
 import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
-import { createDynamicCable, disposeCableMaterial } from './CableSystem';
+import { createDynamicCable, disposeCableMaterial, disposeCableUplinkMaterial, setCableUplinkActive } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createInfoFloorMesh, createMoireFloorMesh, createSeamFloorMesh, disposeFloorPool } from './FloorTile';
 import { createTree } from './FloraFactory';
-import { FA_RIFT, IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, isWithinRiftClearance, riftLineXForWorldX, ROOM_CONFIGS, RoomType, worldToChunkCoord } from './RoomConfig';
+import { FA_RIFT, IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, isWithinRiftClearance, POLARIZED_SEAM_SWAP, riftLineXForWorldX, ROOM_CONFIGS, RoomType, seamBandFactor, seamFlickerDuty, seamSwapActive, worldToChunkCoord } from './RoomConfig';
 import {
     anomalyAt,
     applyLayout,
@@ -58,6 +60,16 @@ const FLICKER_VARIANT_SALT = 1019; // per-variant geometry/scale pick
 // FA rift banner salt (decorrelated from every prior per-chunk draw).
 const RIFT_BANNER_SALT = 1117; // banner count / z stagger / height / phase
 
+// POLARIZED seam-swap salt (decorrelated from every prior per-chunk draw here
+// <= 1117 and FigureSystem's <= 1291) — per-building shell flicker phase.
+const SEAM_SHELL_PHASE_SALT = 1327;
+
+// Cable uplink squared radius + reusable scratch for the allocation-free
+// per-frame proximity scan (scene-richness batch).
+const CABLE_UPLINK_RADIUS_SQ = CABLE_UPLINK.RADIUS * CABLE_UPLINK.RADIUS;
+const _uplinkMid = new THREE.Vector3();
+const _uplinkEnd = new THREE.Vector3();
+
 // INFO_OVERFLOW building-flicker tuning.
 const FLICKER_MAX_GROUPS_PER_CHUNK = 4; // cap subset so the toggle stays cheap
 const FLICKER_VARIANTS_PER_GROUP = 3; // 2-3 pre-built variants per group
@@ -86,6 +98,11 @@ interface ExtendedChunkUserData extends ChunkUserData {
  */
 export class ChunkManager {
     private activeChunks: Record<string, Chunk> = {};
+    // Chunk keys that currently have at least one lit seam shell (current=true).
+    // Tracked so updateSeamSwap can force-hide shells in chunks that scroll out
+    // of the 3x3 scan window while still loaded (RENDER_DISTANCE keeps a 5x5),
+    // instead of freezing them in the counterpart faction's language forever.
+    private seamLitChunks = new Set<string>();
     private chunkGroup: THREE.Group = new THREE.Group();
     private floorMaterial: THREE.MeshLambertMaterial;
     private assets: SharedAssets;
@@ -189,6 +206,15 @@ export class ChunkManager {
         const biome = biomeAt(cx, cz);
         const layoutMode = layoutAt(cx, cz, roomType);
 
+        // Cross-run scars (F2): the subset of persisted scars whose influence
+        // reaches this chunk, filtered ONCE per chunk build (in-memory boot
+        // snapshot — never localStorage on this path). Usually empty. Consumed
+        // both by the INFO_OVERFLOW glyph redaction (floor) and the leaning
+        // buildings below.
+        const nearScars = this.bootScars.length > 0
+            ? scarsNearChunk(this.bootScars, cx, cz)
+            : this.bootScars;
+
         // Floor - select type based on room
         let floor: THREE.Object3D;
         if (roomType === RoomType.FORCED_ALIGNMENT) {
@@ -220,8 +246,10 @@ export class ChunkManager {
         }
         else if (roomType === RoomType.INFO_OVERFLOW) {
             // Pooled glyph/dot-matrix material picked by hash(cx,cz). The material
-            // is module-shared, so nothing is added to chunkData.disposables.
-            floor = createInfoFloorMesh(CHUNK_SIZE, cx, cz);
+            // is module-shared, so nothing is added to chunkData.disposables. Scars
+            // reaching the chunk black out the glyphs under the witness crowd
+            // (createInfoFloorMesh) — redaction discs are module-shared too.
+            floor = createInfoFloorMesh(CHUNK_SIZE, cx, cz, nearScars);
         }
         else if (roomType === RoomType.POLARIZED) {
             // Phase-opposite checkerboard halves + module-shared seam line at
@@ -258,18 +286,17 @@ export class ChunkManager {
             : Math.max(1, Math.round(baseCount * biomeDensityFactor(biome)));
         const nodes: CableNode[] = [];
 
-        // Cross-run scars (F2): the subset of persisted scars whose influence
-        // reaches this chunk, filtered ONCE per chunk build (in-memory boot
-        // snapshot — never localStorage on this path). Usually empty.
-        const nearScars = this.bootScars.length > 0
-            ? scarsNearChunk(this.bootScars, cx, cz)
-            : this.bootScars;
-
         // Per-chunk composition: half-extent the raw positions are bounded to.
         const layoutHalf = (CHUNK_SIZE - 20) / 2;
         // INFO_OVERFLOW flicker groups accumulate here (capped subset).
         const flickerGroups = roomType === RoomType.INFO_OVERFLOW
             ? (chunkData.flickerGroups = [])
+            : null;
+
+        // POLARIZED near-seam counterpart shells accumulate here (only buildings
+        // hugging the seam get one — see addSeamShell / POLARIZED_SEAM_SWAP).
+        const seamShells = roomType === RoomType.POLARIZED
+            ? (chunkData.seamShells = [])
             : null;
 
         // FORCED_ALIGNMENT grid occupancy: at most one building per snapped cell.
@@ -379,6 +406,14 @@ export class ChunkManager {
                         (obj as THREE.Mesh).material = factionMaterial;
                     }
                 });
+
+                // Seam dissolves us/them: buildings hugging the seam get a hidden
+                // counterpart-language shell the seam-swap pass flickers on when
+                // the player stands on the line. |bx| is the chunk-local distance
+                // to the seam (seam at local x=0).
+                if (seamShells && Math.abs(bx) < POLARIZED_SEAM_SWAP.BUILDING_REACH) {
+                    this.addSeamShell(buildGroup, seamShells, faction.solid, cx, cz, i);
+                }
             }
 
             // IN_BETWEEN: spawn sub-millimetre coplanar "ghost" clones of the
@@ -687,6 +722,70 @@ export class ChunkManager {
     }
 
     /**
+     * POLARIZED near-seam counterpart shell. Clones the building's mesh children
+     * with the OTHER faction's material (wireframe on a solid 'us' building,
+     * solid on a wireframe 'them' building) parented at the same local transform,
+     * hidden by default. Clones reuse the SAME shared geometry (Mesh.clone is a
+     * shallow copy) and are reassigned a SHARED material, so no new GPU data and
+     * NO new disposables — disposeObject3D frees the shells via traversal. The
+     * seam-swap pass hard-toggles their .visible; nothing here runs per frame.
+     * Shells cast/receive no shadows (a pure flicker overlay, not an occluder).
+     *
+     * Only ever called for buildings within POLARIZED_SEAM_SWAP.BUILDING_REACH of
+     * the seam, so the shell count per chunk stays small.
+     *
+     * @param buildGroup - The freshly built (faction-materialed) building group.
+     * @param seamShells - The chunk's seam-shell accumulator.
+     * @param solid - The building's faction (true = solid 'us', false = wire 'them').
+     * @param cx - Chunk X coordinate (deterministic seed).
+     * @param cz - Chunk Z coordinate (deterministic seed).
+     * @param i - Building index within the chunk (deterministic seed).
+     */
+    private addSeamShell(
+        buildGroup: THREE.Group,
+        seamShells: SeamShell[],
+        solid: boolean,
+        cx: number,
+        cz: number,
+        i: number,
+    ): void {
+        // The counterpart language: the OTHER faction's shared material.
+        const counterpart = solid ? this.assets.matWire : this.assets.matSolid;
+
+        // Snapshot the current mesh children (we add clones to the group).
+        const sources: THREE.Mesh[] = [];
+        buildGroup.traverse((obj) => {
+            if ((obj as THREE.Mesh).isMesh)
+                sources.push(obj as THREE.Mesh);
+        });
+        if (sources.length === 0)
+            return;
+
+        const meshes: THREE.Object3D[] = [];
+        for (const src of sources) {
+            const shell = src.clone(); // shares geometry (+ material, replaced below)
+            shell.material = counterpart;
+            shell.castShadow = false;
+            shell.receiveShadow = false;
+            shell.visible = false;
+            // POLARIZED buildings add fragments directly to buildGroup, so the
+            // clone's local transform stays coincident with its source there.
+            buildGroup.add(shell);
+            meshes.push(shell);
+        }
+
+        seamShells.push({
+            meshes,
+            // Decorrelated per-building phase so the rank never toggles in
+            // lockstep — cz folded in so the same building index i in vertically
+            // adjacent chunks of one column (simultaneously active along the
+            // seam) gets a distinct phase rather than an identical one.
+            phase: hash(i + SEAM_SHELL_PHASE_SALT, cx * 31 + cz),
+            current: false,
+        });
+    }
+
+    /**
      * RARE ANOMALY landmark. Builds one of three deterministic landmarks into the
      * chunk using existing factories / shared assets with capped counts and
      * tweaked scales. Returns the cable nodes so the caller can wire cables. All
@@ -901,6 +1000,9 @@ export class ChunkManager {
 
         this.chunkGroup.remove(chunk);
         delete this.activeChunks[key];
+        // Drop any lit-seam-shell tracking for this key (shells are disposed
+        // with the chunk tree above; nothing left to hide).
+        this.seamLitChunks.delete(key);
     }
 
     /**
@@ -948,6 +1050,47 @@ export class ChunkManager {
      */
     setLiveProfile(profile: BehaviorProfile | null): void {
         this.roomLedger.setProfile(profile);
+    }
+
+    /**
+     * SnapshotEcho (scene-richness): append every building group whose world
+     * center lies within `radius` of (worldX, worldZ) to `out` (caller-owned;
+     * the caller clears it), each tagged with its owning chunk coords so the
+     * echo can later check the host chunk's liveness. Only the 3x3 near-chunk
+     * window is scanned, so the pass is cheap and allocation-free apart from the
+     * pushed records; this is a NEAR-complete heuristic within `radius`, not
+     * exhaustive — a rim building whose wander/scar dislocation carries it toward
+     * a two-steps-away chunk can fall inside `radius` yet be missed (benign: it
+     * just can't host the event). Empty chunks / clearings contribute nothing.
+     */
+    collectBuildingsNear(worldX: number, worldZ: number, radius: number, out: EchoTarget[]): void {
+        const cx = Math.floor(worldX / CHUNK_SIZE);
+        const cz = Math.floor(worldZ / CHUNK_SIZE);
+        const radiusSq = radius * radius;
+
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                const kcx = cx + x;
+                const kcz = cz + z;
+                const chunk = this.activeChunks[`${kcx},${kcz}`];
+                if (!chunk || !chunk.userData.buildings)
+                    continue;
+
+                const offX = kcx * CHUNK_SIZE;
+                const offZ = kcz * CHUNK_SIZE;
+                for (const group of chunk.userData.buildings) {
+                    const dx = offX + group.position.x - worldX;
+                    const dz = offZ + group.position.z - worldZ;
+                    if (dx * dx + dz * dz <= radiusSq)
+                        out.push({ group, cx: kcx, cz: kcz });
+                }
+            }
+        }
+    }
+
+    /** Whether the chunk at (cx, cz) is currently loaded (SnapshotEcho guard). */
+    isChunkActive(cx: number, cz: number): boolean {
+        return !!this.activeChunks[`${cx},${cz}`];
     }
 
     /**
@@ -1088,6 +1231,152 @@ export class ChunkManager {
     }
 
     /**
+     * Cable uplink pass (scene-richness batch): while the player's flower burns
+     * bright, cables within CABLE_UPLINK.RADIUS swap to the animated uplink
+     * material so hard 1-bit dashes race toward the eye; everything outside the
+     * radius — and every cable once the flower dims (active=false) — is reset to
+     * the static base material. Allocation-free: only the 3x3 near-chunk window
+     * is scanned, using shared scratch vectors, and each material swap is
+     * identity-guarded (setCableUplinkActive). Mirrors getDistanceToNearestCable's
+     * proximity shape: the straight midpoint AND the sagged low point are both
+     * tested, so a drooping wire lights when its dip passes near the player even
+     * if its endpoints (building-top height) sit beyond the radius.
+     * @param playerPos - Player world position.
+     * @param active - Whether uplink is on (flower above threshold this frame).
+     */
+    updateCableUplink(playerPos: THREE.Vector3, active: boolean): void {
+        const cx = Math.floor(playerPos.x / CHUNK_SIZE);
+        const cz = Math.floor(playerPos.z / CHUNK_SIZE);
+
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                const chunk = this.activeChunks[`${cx + x},${cz + z}`];
+                if (!chunk || !chunk.userData.cables)
+                    continue;
+
+                const chunkOffset = chunk.position;
+                for (const cable of chunk.userData.cables) {
+                    if (!cable.line)
+                        continue;
+
+                    let on = false;
+                    if (active) {
+                        // World-space cable midpoint (local mid + chunk offset).
+                        _uplinkMid.copy(cable.startNode.obj.position).add(cable.startNode.topOffset);
+                        _uplinkEnd.copy(cable.endNode.obj.position).add(cable.endNode.topOffset);
+                        _uplinkMid.add(_uplinkEnd).multiplyScalar(0.5).add(chunkOffset);
+                        on = playerPos.distanceToSquared(_uplinkMid) <= CABLE_UPLINK_RADIUS_SQ;
+                        if (!on) {
+                            // The straight midpoint sits at building-top height; a
+                            // cable strung between tall buildings never lights even
+                            // directly overhead. Also test the sagged low point
+                            // (mirrors getDistanceToNearestCable) so a wire dipping
+                            // low over the player's head lights as expected.
+                            const droop = cable.options.droop + (cable.options.heavySag ? 20 : 0);
+                            _uplinkMid.y -= droop;
+                            on = playerPos.distanceToSquared(_uplinkMid) <= CABLE_UPLINK_RADIUS_SQ;
+                        }
+                    }
+                    setCableUplinkActive(cable, on);
+                }
+            }
+        }
+    }
+
+    /**
+     * POLARIZED seam-swap pass (scene-richness): while the player stands within
+     * POLARIZED_SEAM_SWAP.PLAYER_BAND of a seam, near-seam buildings on that seam
+     * flicker into the OTHER faction's render language (their hidden counterpart
+     * shell hard-toggles on for a duty fraction of each cycle, rising to MAX_DUTY
+     * at the seam center). us/them dissolves ONLY on the line: outside the band —
+     * and whenever `active` is false (the player left POLARIZED entirely) — every
+     * shell is forced hidden and faction identity is whole again.
+     *
+     * A POLARIZED chunk's seam is its center x (chunk.position.x — the razor
+     * seam-line floor at local x=0), so the band factor is computed per chunk
+     * against that x. Allocation-free: only the 3x3 near-chunk window is scanned
+     * (the ±6m band never reaches a neighbouring column's seam), each .visible
+     * write is identity-guarded, and chunks without shells are skipped.
+     *
+     * @param playerPos - Player world position.
+     * @param time - Elapsed seconds (marches the flicker square wave).
+     * @param active - Whether the player is in POLARIZED this frame; false forces
+     *   every near shell hidden (the trailing re-polarize on room exit).
+     */
+    updateSeamSwap(playerPos: THREE.Vector3, time: number, active: boolean): void {
+        const cx = Math.floor(playerPos.x / CHUNK_SIZE);
+        const cz = Math.floor(playerPos.z / CHUNK_SIZE);
+
+        // First force-hide any previously-lit chunk that has scrolled out of the
+        // 3x3 scan window: it stays loaded (5x5 render window) but the scan below
+        // never revisits it, so without this its shells would stay frozen in the
+        // counterpart faction's language. Deleting the current key during a Set
+        // for-of is safe (the entry is simply not revisited).
+        for (const key of this.seamLitChunks) {
+            const comma = key.indexOf(',');
+            const kx = +key.slice(0, comma);
+            const kz = +key.slice(comma + 1);
+            if (Math.abs(kx - cx) <= 1 && Math.abs(kz - cz) <= 1)
+                continue; // still in window; the scan below handles it
+            this.hideSeamShells(key);
+        }
+
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                const key = `${cx + x},${cz + z}`;
+                const chunk = this.activeChunks[key];
+                if (!chunk)
+                    continue;
+                const shells = (chunk.userData as ExtendedChunkUserData).seamShells;
+                if (!shells || shells.length === 0)
+                    continue;
+
+                // Seam sits on the chunk center x (local seam-line floor at x=0).
+                const duty = active
+                    ? seamFlickerDuty(seamBandFactor(playerPos.x, chunk.position.x))
+                    : 0;
+
+                let anyLit = false;
+                for (const shell of shells) {
+                    const on = seamSwapActive(time, shell.phase, duty);
+                    if (on !== shell.current) {
+                        shell.current = on;
+                        for (const mesh of shell.meshes)
+                            mesh.visible = on;
+                    }
+                    if (shell.current)
+                        anyLit = true;
+                }
+                if (anyLit)
+                    this.seamLitChunks.add(key);
+                else
+                    this.seamLitChunks.delete(key);
+            }
+        }
+    }
+
+    /**
+     * Force every seam shell in chunk `key` hidden and drop the key from the
+     * lit-chunk set. No-op (but still clears the key) if the chunk unloaded.
+     */
+    private hideSeamShells(key: string): void {
+        const chunk = this.activeChunks[key];
+        if (chunk) {
+            const shells = (chunk.userData as ExtendedChunkUserData).seamShells;
+            if (shells) {
+                for (const shell of shells) {
+                    if (shell.current) {
+                        shell.current = false;
+                        for (const mesh of shell.meshes)
+                            mesh.visible = false;
+                    }
+                }
+            }
+        }
+        this.seamLitChunks.delete(key);
+    }
+
+    /**
      * Dispose all resources and cleanup
      */
     dispose(): void {
@@ -1107,6 +1396,7 @@ export class ChunkManager {
         // Dispose the shared cable shader material exactly once (it is a module
         // singleton in CableSystem, never disposed per-chunk).
         disposeCableMaterial();
+        disposeCableUplinkMaterial();
 
         // Dispose shared assets
         this.assets.dispose();
