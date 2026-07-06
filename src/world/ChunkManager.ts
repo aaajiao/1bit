@@ -11,11 +11,11 @@ import type { ScarPoint } from './ScarField';
 import type { SharedAssets } from './SharedAssets';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
-import { WORLD } from '../config/constants';
+import { CABLE_UPLINK, WORLD } from '../config/constants';
 import { disposeObject3D } from '../utils/dispose';
 import { hash } from '../utils/hash';
 import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
-import { createDynamicCable, disposeCableMaterial } from './CableSystem';
+import { createDynamicCable, disposeCableMaterial, disposeCableUplinkMaterial, setCableUplinkActive } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createInfoFloorMesh, createMoireFloorMesh, createSeamFloorMesh, disposeFloorPool } from './FloorTile';
 import { createTree } from './FloraFactory';
@@ -57,6 +57,12 @@ const FLICKER_VARIANT_SALT = 1019; // per-variant geometry/scale pick
 
 // FA rift banner salt (decorrelated from every prior per-chunk draw).
 const RIFT_BANNER_SALT = 1117; // banner count / z stagger / height / phase
+
+// Cable uplink squared radius + reusable scratch for the allocation-free
+// per-frame proximity scan (scene-richness batch).
+const CABLE_UPLINK_RADIUS_SQ = CABLE_UPLINK.RADIUS * CABLE_UPLINK.RADIUS;
+const _uplinkMid = new THREE.Vector3();
+const _uplinkEnd = new THREE.Vector3();
 
 // INFO_OVERFLOW building-flicker tuning.
 const FLICKER_MAX_GROUPS_PER_CHUNK = 4; // cap subset so the toggle stays cheap
@@ -1092,6 +1098,47 @@ export class ChunkManager {
     }
 
     /**
+     * Cable uplink pass (scene-richness batch): while the player's flower burns
+     * bright, cables within CABLE_UPLINK.RADIUS swap to the animated uplink
+     * material so hard 1-bit dashes race toward the eye; everything outside the
+     * radius — and every cable once the flower dims (active=false) — is reset to
+     * the static base material. Allocation-free: only the 3x3 near-chunk window
+     * is scanned, using shared scratch vectors, and each material swap is
+     * identity-guarded (setCableUplinkActive). Mirrors getDistanceToNearestCable's
+     * proximity shape; the cable midpoint is a fair proxy for these short spans.
+     * @param playerPos - Player world position.
+     * @param active - Whether uplink is on (flower above threshold this frame).
+     */
+    updateCableUplink(playerPos: THREE.Vector3, active: boolean): void {
+        const cx = Math.floor(playerPos.x / CHUNK_SIZE);
+        const cz = Math.floor(playerPos.z / CHUNK_SIZE);
+
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                const chunk = this.activeChunks[`${cx + x},${cz + z}`];
+                if (!chunk || !chunk.userData.cables)
+                    continue;
+
+                const chunkOffset = chunk.position;
+                for (const cable of chunk.userData.cables) {
+                    if (!cable.line)
+                        continue;
+
+                    let on = false;
+                    if (active) {
+                        // World-space cable midpoint (local mid + chunk offset).
+                        _uplinkMid.copy(cable.startNode.obj.position).add(cable.startNode.topOffset);
+                        _uplinkEnd.copy(cable.endNode.obj.position).add(cable.endNode.topOffset);
+                        _uplinkMid.add(_uplinkEnd).multiplyScalar(0.5).add(chunkOffset);
+                        on = playerPos.distanceToSquared(_uplinkMid) <= CABLE_UPLINK_RADIUS_SQ;
+                    }
+                    setCableUplinkActive(cable, on);
+                }
+            }
+        }
+    }
+
+    /**
      * Dispose all resources and cleanup
      */
     dispose(): void {
@@ -1111,6 +1158,7 @@ export class ChunkManager {
         // Dispose the shared cable shader material exactly once (it is a module
         // singleton in CableSystem, never disposed per-chunk).
         disposeCableMaterial();
+        disposeCableUplinkMaterial();
 
         // Dispose shared assets
         this.assets.dispose();

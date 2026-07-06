@@ -664,6 +664,34 @@ export const CABLE_PROXIMITY = {
 } as const;
 
 /**
+ * Cable uplink pulse (scene-richness batch): when the player's flower burns
+ * bright, cables near the player report that light to the sky eye — hard 1-bit
+ * dashes race UP each cable toward the authority overhead. This draws the
+ * otherwise invisible rule "brighter = seen" as a literal line of light
+ * travelling down the wires. black = the system, white = the self, the dashes
+ * are the self's light being read by the system.
+ */
+export const CABLE_UPLINK = {
+    /** Flower intensity above which cables begin to uplink (0-1). */
+    FLOWER_THRESHOLD: 0.6,
+    /**
+     * Radius (m) around the player within which cables uplink. Kept well
+     * inside the 3x3 near-chunk scan window (chunk = 80m) so a cable that
+     * lights up is always re-scanned — and reset — before it can drift out of
+     * range between frames.
+     */
+    RADIUS: 34.0,
+    /** Dash density (dashes per meter) at threshold / at full brightness. */
+    DENSITY_BASE: 0.16,
+    DENSITY_GAIN: 0.24,
+    /** Pulse travel speed (dash cycles/second) at threshold / at full brightness. */
+    SPEED_BASE: 0.7,
+    SPEED_GAIN: 1.6,
+    /** Fraction of each dash cycle that is lit (hard on/off — no soft fade). */
+    DASH_DUTY: 0.42,
+} as const;
+
+/**
  * Chunk and world generation constants
  */
 export const WORLD = {

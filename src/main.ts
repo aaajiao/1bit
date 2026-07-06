@@ -6,6 +6,7 @@ import { AudioController } from './audio/AudioController';
 import { PERFORMANCE, SPAWN } from './config';
 import { bootWithGuards } from './core/BootGuard';
 import { CableAudioUpdater } from './core/CableAudioUpdater';
+import { CableUplinkUpdater } from './core/CableUplinkUpdater';
 import { FrameClock } from './core/FrameClock';
 import { HudUpdater } from './core/HudUpdater';
 import { PauseController } from './core/PauseController';
@@ -59,6 +60,7 @@ class ChimeraVoid {
 
     // Per-frame wiring helpers (core/)
     private cableAudio: CableAudioUpdater;
+    private cableUplink: CableUplinkUpdater;
     private roomFlow: RoomFlowUpdater;
     private statsSunset: StatsSunsetUpdater;
     private hudUpdater: HudUpdater;
@@ -120,6 +122,7 @@ class ChimeraVoid {
         // Per-frame wiring helpers (core/) — each helper's own doc comment
         // explains the systems it drives.
         this.cableAudio = new CableAudioUpdater();
+        this.cableUplink = new CableUplinkUpdater();
         // Room flow eases scene.fog toward the room horizon, feeds the live
         // profile into the room ledger (F1), and drives + disposes the F3
         // figures and the F4 ghost (loaded at boot, before any save).
@@ -206,8 +209,9 @@ class ChimeraVoid {
             this.audio,
         );
 
-        // 4. Cable Audio
+        // 4. Cable Audio + light uplink (bright flower -> dashes race to the eye)
         this.cableAudio.update(playerPos, this.chunkManager, this.audio);
+        this.cableUplink.update(t, playerPos, this.chunkManager, playerState.flowerIntensity);
 
         // 5. Stats & environment (run stats + day/night sunset snapshot),
         // then room-weighted weather selection (flow-audit medium #3).
@@ -279,6 +283,7 @@ class ChimeraVoid {
         this.player.dispose();
         this.chunkManager.dispose();
         this.cableAudio.dispose(this.audio);
+        this.cableUplink.dispose();
         this.roomFlow.dispose();
         this.audio.dispose();
         this.skyEye.dispose();
