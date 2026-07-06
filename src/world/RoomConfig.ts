@@ -721,9 +721,12 @@ export function inBetweenEdgeFactor(
 /**
  * POLARIZED seam language-swap (scene-richness): us/them is defined by WHERE
  * YOU STAND. A POLARIZED chunk's razor seam line runs down its center x
- * (createSeamFloorMesh, local x=0 = the chunk's world center); buildings are
- * pushed onto the +X 'us' (solid) or -X 'them' (wireframe) bank of it. This
- * block governs the ONE place that binary is allowed to dissolve: while the
+ * (createSeamFloorMesh, local x=0 = the chunk's world center). Pole (which side
+ * a building skews toward) and language (solid 'us' vs wireframe 'them') are
+ * INDEPENDENT per-building hash draws (polarizedFaction), so both banks hold a
+ * mix of solid and wire buildings. The seam swap flips each near-seam building's
+ * OWN language to its counterpart, regardless of side. This block governs the
+ * ONE place that binary is allowed to dissolve: while the
  * player stands within PLAYER_BAND of the seam, buildings hugging the seam
  * flicker into the OTHER faction's render language (a counterpart shell,
  * hard-toggled — never alpha-faded). The dissolve is deliberately local: it

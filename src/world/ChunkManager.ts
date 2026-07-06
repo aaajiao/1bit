@@ -98,6 +98,11 @@ interface ExtendedChunkUserData extends ChunkUserData {
  */
 export class ChunkManager {
     private activeChunks: Record<string, Chunk> = {};
+    // Chunk keys that currently have at least one lit seam shell (current=true).
+    // Tracked so updateSeamSwap can force-hide shells in chunks that scroll out
+    // of the 3x3 scan window while still loaded (RENDER_DISTANCE keeps a 5x5),
+    // instead of freezing them in the counterpart faction's language forever.
+    private seamLitChunks = new Set<string>();
     private chunkGroup: THREE.Group = new THREE.Group();
     private floorMaterial: THREE.MeshLambertMaterial;
     private assets: SharedAssets;
@@ -407,7 +412,7 @@ export class ChunkManager {
                 // the player stands on the line. |bx| is the chunk-local distance
                 // to the seam (seam at local x=0).
                 if (seamShells && Math.abs(bx) < POLARIZED_SEAM_SWAP.BUILDING_REACH) {
-                    this.addSeamShell(buildGroup, seamShells, faction.solid, cx, i);
+                    this.addSeamShell(buildGroup, seamShells, faction.solid, cx, cz, i);
                 }
             }
 
@@ -733,6 +738,7 @@ export class ChunkManager {
      * @param seamShells - The chunk's seam-shell accumulator.
      * @param solid - The building's faction (true = solid 'us', false = wire 'them').
      * @param cx - Chunk X coordinate (deterministic seed).
+     * @param cz - Chunk Z coordinate (deterministic seed).
      * @param i - Building index within the chunk (deterministic seed).
      */
     private addSeamShell(
@@ -740,6 +746,7 @@ export class ChunkManager {
         seamShells: SeamShell[],
         solid: boolean,
         cx: number,
+        cz: number,
         i: number,
     ): void {
         // The counterpart language: the OTHER faction's shared material.
@@ -769,8 +776,11 @@ export class ChunkManager {
 
         seamShells.push({
             meshes,
-            // Decorrelated per-building phase so the rank never toggles in lockstep.
-            phase: hash(i + SEAM_SHELL_PHASE_SALT, cx),
+            // Decorrelated per-building phase so the rank never toggles in
+            // lockstep — cz folded in so the same building index i in vertically
+            // adjacent chunks of one column (simultaneously active along the
+            // seam) gets a distinct phase rather than an identical one.
+            phase: hash(i + SEAM_SHELL_PHASE_SALT, cx * 31 + cz),
             current: false,
         });
     }
@@ -990,6 +1000,9 @@ export class ChunkManager {
 
         this.chunkGroup.remove(chunk);
         delete this.activeChunks[key];
+        // Drop any lit-seam-shell tracking for this key (shells are disposed
+        // with the chunk tree above; nothing left to hide).
+        this.seamLitChunks.delete(key);
     }
 
     /**
@@ -1044,9 +1057,11 @@ export class ChunkManager {
      * center lies within `radius` of (worldX, worldZ) to `out` (caller-owned;
      * the caller clears it), each tagged with its owning chunk coords so the
      * echo can later check the host chunk's liveness. Only the 3x3 near-chunk
-     * window is scanned (radius stays inside it), so the pass is cheap and
-     * allocation-free apart from the pushed records. Empty chunks / clearings
-     * contribute nothing.
+     * window is scanned, so the pass is cheap and allocation-free apart from the
+     * pushed records; this is a NEAR-complete heuristic within `radius`, not
+     * exhaustive — a rim building whose wander/scar dislocation carries it toward
+     * a two-steps-away chunk can fall inside `radius` yet be missed (benign: it
+     * just can't host the event). Empty chunks / clearings contribute nothing.
      */
     collectBuildingsNear(worldX: number, worldZ: number, radius: number, out: EchoTarget[]): void {
         const cx = Math.floor(worldX / CHUNK_SIZE);
@@ -1223,7 +1238,9 @@ export class ChunkManager {
      * the static base material. Allocation-free: only the 3x3 near-chunk window
      * is scanned, using shared scratch vectors, and each material swap is
      * identity-guarded (setCableUplinkActive). Mirrors getDistanceToNearestCable's
-     * proximity shape; the cable midpoint is a fair proxy for these short spans.
+     * proximity shape: the straight midpoint AND the sagged low point are both
+     * tested, so a drooping wire lights when its dip passes near the player even
+     * if its endpoints (building-top height) sit beyond the radius.
      * @param playerPos - Player world position.
      * @param active - Whether uplink is on (flower above threshold this frame).
      */
@@ -1249,6 +1266,16 @@ export class ChunkManager {
                         _uplinkEnd.copy(cable.endNode.obj.position).add(cable.endNode.topOffset);
                         _uplinkMid.add(_uplinkEnd).multiplyScalar(0.5).add(chunkOffset);
                         on = playerPos.distanceToSquared(_uplinkMid) <= CABLE_UPLINK_RADIUS_SQ;
+                        if (!on) {
+                            // The straight midpoint sits at building-top height; a
+                            // cable strung between tall buildings never lights even
+                            // directly overhead. Also test the sagged low point
+                            // (mirrors getDistanceToNearestCable) so a wire dipping
+                            // low over the player's head lights as expected.
+                            const droop = cable.options.droop + (cable.options.heavySag ? 20 : 0);
+                            _uplinkMid.y -= droop;
+                            on = playerPos.distanceToSquared(_uplinkMid) <= CABLE_UPLINK_RADIUS_SQ;
+                        }
                     }
                     setCableUplinkActive(cable, on);
                 }
@@ -1280,9 +1307,24 @@ export class ChunkManager {
         const cx = Math.floor(playerPos.x / CHUNK_SIZE);
         const cz = Math.floor(playerPos.z / CHUNK_SIZE);
 
+        // First force-hide any previously-lit chunk that has scrolled out of the
+        // 3x3 scan window: it stays loaded (5x5 render window) but the scan below
+        // never revisits it, so without this its shells would stay frozen in the
+        // counterpart faction's language. Deleting the current key during a Set
+        // for-of is safe (the entry is simply not revisited).
+        for (const key of this.seamLitChunks) {
+            const comma = key.indexOf(',');
+            const kx = +key.slice(0, comma);
+            const kz = +key.slice(comma + 1);
+            if (Math.abs(kx - cx) <= 1 && Math.abs(kz - cz) <= 1)
+                continue; // still in window; the scan below handles it
+            this.hideSeamShells(key);
+        }
+
         for (let x = -1; x <= 1; x++) {
             for (let z = -1; z <= 1; z++) {
-                const chunk = this.activeChunks[`${cx + x},${cz + z}`];
+                const key = `${cx + x},${cz + z}`;
+                const chunk = this.activeChunks[key];
                 if (!chunk)
                     continue;
                 const shells = (chunk.userData as ExtendedChunkUserData).seamShells;
@@ -1294,6 +1336,7 @@ export class ChunkManager {
                     ? seamFlickerDuty(seamBandFactor(playerPos.x, chunk.position.x))
                     : 0;
 
+                let anyLit = false;
                 for (const shell of shells) {
                     const on = seamSwapActive(time, shell.phase, duty);
                     if (on !== shell.current) {
@@ -1301,9 +1344,36 @@ export class ChunkManager {
                         for (const mesh of shell.meshes)
                             mesh.visible = on;
                     }
+                    if (shell.current)
+                        anyLit = true;
+                }
+                if (anyLit)
+                    this.seamLitChunks.add(key);
+                else
+                    this.seamLitChunks.delete(key);
+            }
+        }
+    }
+
+    /**
+     * Force every seam shell in chunk `key` hidden and drop the key from the
+     * lit-chunk set. No-op (but still clears the key) if the chunk unloaded.
+     */
+    private hideSeamShells(key: string): void {
+        const chunk = this.activeChunks[key];
+        if (chunk) {
+            const shells = (chunk.userData as ExtendedChunkUserData).seamShells;
+            if (shells) {
+                for (const shell of shells) {
+                    if (shell.current) {
+                        shell.current = false;
+                        for (const mesh of shell.meshes)
+                            mesh.visible = false;
+                    }
                 }
             }
         }
+        this.seamLitChunks.delete(key);
     }
 
     /**

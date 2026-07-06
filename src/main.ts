@@ -5,15 +5,13 @@ import type { AppConfig } from './types';
 import { AudioController } from './audio/AudioController';
 import { PERFORMANCE, SPAWN } from './config';
 import { bootWithGuards } from './core/BootGuard';
-import { CableAudioUpdater } from './core/CableAudioUpdater';
-import { CableUplinkUpdater } from './core/CableUplinkUpdater';
 import { FrameClock } from './core/FrameClock';
 import { HudUpdater } from './core/HudUpdater';
 import { PauseController } from './core/PauseController';
 import { createPostProcessing, disposePostProcessing, renderComposed, resizeRendering } from './core/PostProcessing';
+import { ProximityUpdaters } from './core/ProximityUpdaters';
 import { RoomFlowUpdater } from './core/RoomFlowUpdater';
 import { createScene, updateScannerLight } from './core/SceneSetup';
-import { SeamSwapUpdater } from './core/SeamSwapUpdater';
 import { ShaderSyncUpdater } from './core/ShaderSyncUpdater';
 import { StatsSunsetUpdater } from './core/StatsSunsetUpdater';
 import { PlayerManager } from './player/PlayerManager';
@@ -61,9 +59,7 @@ class ChimeraVoid {
     private screenshotManager: ScreenshotManager;
 
     // Per-frame wiring helpers (core/)
-    private cableAudio: CableAudioUpdater;
-    private cableUplink: CableUplinkUpdater;
-    private seamSwap: SeamSwapUpdater;
+    private proximity: ProximityUpdaters;
     private roomFlow: RoomFlowUpdater;
     private statsSunset: StatsSunsetUpdater;
     private hudUpdater: HudUpdater;
@@ -72,9 +68,8 @@ class ChimeraVoid {
     // Clamped frame delta + elapsed seconds, reseeded on resume (M1).
     private clock = new FrameClock();
 
-    // Pause state machine + persistent window/document listeners: while
-    // paused (no pointer lock / start screen / tab hidden) the entire UPDATE
-    // phase is gated; only the render keeps presenting (H3/M1/M2/M4/H5).
+    // Pause state machine + persistent window/document listeners: while paused
+    // the entire UPDATE phase is gated, render keeps presenting (H3/M1/M2/M4/H5).
     private pause: PauseController;
 
     // Animation loop control
@@ -98,18 +93,16 @@ class ChimeraVoid {
         this.audio = new AudioController();
 
         // Player Manager (renderer canvas for pointer lock), spawned in the
-        // nearest quiet room (flow-audit medium #7): the origin chunk is
-        // always INFO_OVERFLOW, so the helper scans outward for quiet.
+        // nearest quiet room (flow-audit #7): origin is INFO_OVERFLOW, scan out.
         this.player = new PlayerManager(this.camera, this.renderer.domElement, this.audio);
         const spawn = findQuietSpawnPosition();
         this.player.setSpawnPosition(spawn.x, SPAWN.SPAWN_HEIGHT, spawn.z);
 
-        // Cross-run scar record (F2): ONE localStorage read at boot, cached
-        // in memory — the eye's familiarity and the world's scars read from it.
+        // Cross-run scar record (F2): ONE localStorage read at boot, cached in
+        // memory — eye familiarity + world scars both read it.
         this.scars = new ScarStore();
 
-        // World & environment, seeded from the actual spawn so the first
-        // frame doesn't blend in from the wrong room's palette.
+        // World & environment, seeded from the actual spawn (right palette frame 1).
         this.skyEye = new SkyEye(this.scene, this.scars.getRunsCompleted());
         this.chunkManager = new ChunkManager(
             this.scene,
@@ -123,21 +116,17 @@ class ChimeraVoid {
         this.screenshotManager = new ScreenshotManager(this.renderer);
 
         // Per-frame wiring helpers (core/) — each helper's own doc comment
-        // explains the systems it drives.
-        this.cableAudio = new CableAudioUpdater();
-        this.cableUplink = new CableUplinkUpdater();
-        this.seamSwap = new SeamSwapUpdater();
+        // explains the systems it drives. The near-player proximity passes
+        // (cable hum + light uplink + seam swap) compose behind ProximityUpdaters.
+        this.proximity = new ProximityUpdaters();
         // Room flow eases scene.fog toward the room horizon, feeds the live
-        // profile into the room ledger (F1), and drives + disposes the F3
-        // figures and the F4 ghost (loaded at boot, before any save).
+        // profile into the ledger (F1), drives + disposes the F3 figures, the F4
+        // ghost, and the snapshot echo (from LIVE run stats).
         this.roomFlow = new RoomFlowUpdater(
             this.scene.fog as THREE.Fog | null,
             () => this.runStats.getLiveProfile(),
             new FigureSystem(this.scene, this.chunkManager, this.scars.getScars()),
             new GhostSystem(this.scene),
-            // Snapshot echo drafts from the LIVE run stats (RunStatsCollector
-            // satisfies EchoStatsSource) and paints onto the chunk manager's
-            // buildings, both already constructed above.
             new SnapshotEcho(this.scene, this.runStats),
         );
         this.statsSunset = new StatsSunsetUpdater({
@@ -166,8 +155,8 @@ class ChimeraVoid {
             onDispose: () => this.dispose(),
         });
 
-        // Touch pause button -> pause state machine (touch fallback mode has
-        // no pointerlockchange event for PauseController to observe).
+        // Touch pause button -> pause state machine (touch fallback has no
+        // pointerlockchange event for PauseController to observe).
         this.player.controls.setOnPauseRequest(() => this.pause.syncPauseState());
 
         // Start loop
@@ -189,9 +178,7 @@ class ChimeraVoid {
             return;
         }
 
-        // 1. Update core world. Flower intensity (INFO_OVERFLOW flicker) is
-        // read pre-player-update — one frame stale by design, keeping the
-        // fixed update sequence.
+        // 1. Update core world (flower intensity read pre-player: 1 frame stale by design).
         updateCableTime(t);
         this.chunkManager.update(this.camera);
         this.chunkManager.animate(t, delta, this.camera.position, this.player.getFlowerIntensity());
@@ -217,22 +204,23 @@ class ChimeraVoid {
             this.audio,
         );
 
-        // 4. Cable Audio + light uplink (bright flower -> dashes race to the eye)
-        this.cableAudio.update(playerPos, this.chunkManager, this.audio);
-        this.cableUplink.update(t, playerPos, this.chunkManager, playerState.flowerIntensity);
-        // Seam dissolves us/them: near-seam POLARIZED buildings flicker into the
-        // other faction's language only while the player stands on the line.
-        this.seamSwap.update(t, playerPos, this.chunkManager, currentRoomType);
+        // 4. Near-player proximity: cable hum + light uplink + seam swap.
+        this.proximity.update(
+            t,
+            playerPos,
+            this.chunkManager,
+            this.audio,
+            playerState.flowerIntensity,
+            currentRoomType,
+        );
 
-        // 5. Stats & environment (run stats + day/night sunset snapshot),
-        // then room-weighted weather selection (flow-audit medium #3).
+        // 5. Stats & environment, then room-weighted weather (flow-audit #3).
         this.statsSunset.update(delta, playerState, playerPos, currentRoomType);
         const weatherState = this.weather.update(delta, t, currentRoomType);
         this.audio.updateWeatherAudio(weatherState.weatherType, weatherState.weatherIntensity, weatherState.weatherOnset);
         this.roomFlow.setWeather(weatherState.weatherType, weatherState.weatherIntensity);
 
-        // 6. Shaders & visuals: core/ShaderSyncUpdater mutates ONE reused
-        // params object (no per-frame allocation) and owns stress->grain (F5).
+        // 6. Shaders & visuals (ShaderSyncUpdater reuses one params object).
         this.shaderSync.update(
             delta,
             t,
@@ -244,8 +232,7 @@ class ChimeraVoid {
 
         this.audio.tick(delta);
 
-        // Sky Eye (perceives the flower, the gaze — flow-audit break #4 —
-        // the storm overhead, and dominates POLARIZED's sky, enhancement #11)
+        // Sky Eye (perceives flower + gaze + storm; dominates POLARIZED's sky).
         this.skyEye.update(
             delta,
             playerPos,
@@ -277,12 +264,9 @@ class ChimeraVoid {
         renderComposed(this.renderer, this.scene, this.camera, this.postProcessing);
     }
 
-    /**
-     * Cleanup all resources and stop the application
-     */
+    /** Cleanup all resources and stop the application. */
     dispose(): void {
-        // Stop animation loop
-        this.isRunning = false;
+        this.isRunning = false; // stop animation loop
         if (this.animationFrameId) {
             cancelAnimationFrame(this.animationFrameId);
         }
@@ -293,9 +277,7 @@ class ChimeraVoid {
         // Dispose subsystems
         this.player.dispose();
         this.chunkManager.dispose();
-        this.cableAudio.dispose(this.audio);
-        this.cableUplink.dispose();
-        this.seamSwap.dispose();
+        this.proximity.dispose(this.audio);
         this.roomFlow.dispose();
         this.audio.dispose();
         this.skyEye.dispose();

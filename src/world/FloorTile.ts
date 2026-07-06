@@ -437,7 +437,11 @@ let infoFloorPool: THREE.MeshLambertMaterial[] | null = null;
 // erased while the silent crowd keeps standing there. Object-level (no shader
 // uniform), and both the unit-disc geometry and the black material are
 // module-shared — no per-chunk allocation — so chunks add nothing to their
-// disposables; the pool is freed once via disposeFloorPool().
+// disposables. The black material is only ever released via disposeFloorPool()
+// (removeChunk skips materials); the shared geometry's GPU buffers, by contrast,
+// are disposed by removeChunk's chunk-tree traversal on every scarred-chunk
+// unload and re-uploaded lazily on next use — the same benign dispose/reupload
+// churn the flicker-variant shared geometries already ride.
 const REDACTION_LIFT = 0.02; // sit just above the floor plane; wins the depth test
 let redactionGeo: THREE.CircleGeometry | null = null;
 let redactionMat: THREE.MeshBasicMaterial | null = null;
@@ -452,10 +456,15 @@ function getRedactionAssets(): { geo: THREE.CircleGeometry; mat: THREE.MeshBasic
 }
 
 /**
- * One flat black redaction disc per scar whose REDACT_RADIUS overlaps chunk
+ * One flat black redaction disc per scar whose ANCHOR lies inside chunk
  * (cx, cz)'s footprint, positioned at the scar's chunk-local x/z and scaled to
- * the redaction radius. Lies in the XZ plane a hair above the floor. Shared
- * geometry/material, so nothing here needs per-chunk disposal.
+ * the redaction radius. Gating on the anchor (not mere disc overlap) gives each
+ * scar exactly one disc, owned by the chunk that contains it, so the black ink
+ * never lands on a neighbouring — possibly different-room — chunk's floor that
+ * has no glyph record to redact. A disc near the chunk edge still overhangs its
+ * (same-room) neighbours by up to REDACT_RADIUS, which is accepted. Lies in the
+ * XZ plane a hair above the floor. Shared geometry/material, so nothing here
+ * needs per-chunk disposal.
  */
 function buildRedactionDiscs(
     chunkSize: number,
@@ -470,10 +479,8 @@ function buildRedactionDiscs(
     for (const scar of scars) {
         const localX = scar.x - cx * chunkSize;
         const localZ = scar.z - cz * chunkSize;
-        // Skip scars whose disc cannot touch this chunk's footprint box.
-        const boxDx = Math.max(0, Math.abs(localX) - half);
-        const boxDz = Math.max(0, Math.abs(localZ) - half);
-        if (Math.hypot(boxDx, boxDz) >= REDACT_RADIUS)
+        // Only the chunk that CONTAINS the scar anchor draws its disc.
+        if (Math.abs(localX) > half || Math.abs(localZ) > half)
             continue;
         const disc = new THREE.Mesh(geo, mat);
         disc.rotation.x = -Math.PI / 2; // XY disc -> flat on the XZ floor

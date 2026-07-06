@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SNAPSHOT_ECHO } from '../src/config/constants';
+import { SNAPSHOT_ECHO, WORLD } from '../src/config/constants';
 import {
     echoDelaySeconds,
     echoDurationSeconds,
@@ -25,8 +25,13 @@ describe('snapshotEcho (world drafts your portrait)', () => {
         });
 
         it('keeps the search radius inside the 3x3 near-chunk scan window', () => {
-            // A radius >= CHUNK_SIZE could reach buildings the 3x3 scan misses.
-            expect(SNAPSHOT_ECHO.RADIUS).toBeLessThan(80);
+            // The 3x3 scan is a NEAR-complete heuristic, not exhaustive within
+            // RADIUS: buildings are matched by their chunk-local anchor, and a
+            // rim building whose placement+wander+scar dislocation (~40.5m) pushes
+            // it toward a two-steps-away chunk can sit inside RADIUS yet be missed.
+            // Keeping RADIUS < CHUNK_SIZE bounds that to at most the outer rim
+            // (benign: such a building simply cannot host that event — no crash).
+            expect(SNAPSHOT_ECHO.RADIUS).toBeLessThan(WORLD.CHUNK_SIZE);
         });
     });
 

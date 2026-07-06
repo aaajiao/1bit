@@ -356,7 +356,10 @@ export function resonanceInBand(flowerIntensity: number, wasInBand: boolean): bo
 /**
  * Advance the arming state one frame. Gazing (ambient discipline) or a flower
  * outside the hysteretic band resets the timer to 0 — resonance must be earned
- * fresh. In-band time accumulates and caps at RESONANCE_ARM_SECONDS. Pure.
+ * fresh. In-band time accumulates and caps at RESONANCE_ARM_SECONDS. Mutates
+ * `prev` in place and returns it (allocation-free on the per-frame path, called
+ * once per frame from animateFigures); the two fields it writes are the whole
+ * state, so callers can keep reassigning `state = updateResonanceArm(state, …)`.
  */
 export function updateResonanceArm(
     prev: ResonanceArm,
@@ -365,10 +368,11 @@ export function updateResonanceArm(
     delta: number,
 ): ResonanceArm {
     const inBand = !isGazing && resonanceInBand(flowerIntensity, prev.inBand);
-    const armTimer = inBand
+    prev.armTimer = inBand
         ? Math.min(FIGURES.RESONANCE_ARM_SECONDS, prev.armTimer + Math.max(0, delta))
         : 0;
-    return { inBand, armTimer };
+    prev.inBand = inBand;
+    return prev;
 }
 
 /** Whether the arming timer has reached the sustained threshold. Pure. */
