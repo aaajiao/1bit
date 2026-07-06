@@ -13,6 +13,7 @@ import { PauseController } from './core/PauseController';
 import { createPostProcessing, disposePostProcessing, renderComposed, resizeRendering } from './core/PostProcessing';
 import { RoomFlowUpdater } from './core/RoomFlowUpdater';
 import { createScene, updateScannerLight } from './core/SceneSetup';
+import { SeamSwapUpdater } from './core/SeamSwapUpdater';
 import { ShaderSyncUpdater } from './core/ShaderSyncUpdater';
 import { StatsSunsetUpdater } from './core/StatsSunsetUpdater';
 import { PlayerManager } from './player/PlayerManager';
@@ -62,6 +63,7 @@ class ChimeraVoid {
     // Per-frame wiring helpers (core/)
     private cableAudio: CableAudioUpdater;
     private cableUplink: CableUplinkUpdater;
+    private seamSwap: SeamSwapUpdater;
     private roomFlow: RoomFlowUpdater;
     private statsSunset: StatsSunsetUpdater;
     private hudUpdater: HudUpdater;
@@ -124,6 +126,7 @@ class ChimeraVoid {
         // explains the systems it drives.
         this.cableAudio = new CableAudioUpdater();
         this.cableUplink = new CableUplinkUpdater();
+        this.seamSwap = new SeamSwapUpdater();
         // Room flow eases scene.fog toward the room horizon, feeds the live
         // profile into the room ledger (F1), and drives + disposes the F3
         // figures and the F4 ghost (loaded at boot, before any save).
@@ -217,6 +220,9 @@ class ChimeraVoid {
         // 4. Cable Audio + light uplink (bright flower -> dashes race to the eye)
         this.cableAudio.update(playerPos, this.chunkManager, this.audio);
         this.cableUplink.update(t, playerPos, this.chunkManager, playerState.flowerIntensity);
+        // Seam dissolves us/them: near-seam POLARIZED buildings flicker into the
+        // other faction's language only while the player stands on the line.
+        this.seamSwap.update(t, playerPos, this.chunkManager, currentRoomType);
 
         // 5. Stats & environment (run stats + day/night sunset snapshot),
         // then room-weighted weather selection (flow-audit medium #3).
@@ -289,6 +295,7 @@ class ChimeraVoid {
         this.chunkManager.dispose();
         this.cableAudio.dispose(this.audio);
         this.cableUplink.dispose();
+        this.seamSwap.dispose();
         this.roomFlow.dispose();
         this.audio.dispose();
         this.skyEye.dispose();

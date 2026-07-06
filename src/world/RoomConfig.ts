@@ -719,6 +719,89 @@ export function inBetweenEdgeFactor(
 }
 
 /**
+ * POLARIZED seam language-swap (scene-richness): us/them is defined by WHERE
+ * YOU STAND. A POLARIZED chunk's razor seam line runs down its center x
+ * (createSeamFloorMesh, local x=0 = the chunk's world center); buildings are
+ * pushed onto the +X 'us' (solid) or -X 'them' (wireframe) bank of it. This
+ * block governs the ONE place that binary is allowed to dissolve: while the
+ * player stands within PLAYER_BAND of the seam, buildings hugging the seam
+ * flicker into the OTHER faction's render language (a counterpart shell,
+ * hard-toggled — never alpha-faded). The dissolve is deliberately local: it
+ * rises to MAX_DUTY only at the seam center and vanishes at the band edge, so
+ * stepping off the line re-polarizes the world completely.
+ *
+ * - PLAYER_BAND: |x| half-width (m) from the seam the player must be inside for
+ *   ANY swap; outside it every building holds its faction identity.
+ * - BUILDING_REACH: only buildings within this |chunk-local x| of the seam are
+ *   given a counterpart shell at generation time (keeps the shell count small —
+ *   the faction skew already parks buildings at |x| >= ~15m, so this catches
+ *   just the inner rank hugging the line).
+ * - MAX_DUTY: peak fraction of time a shell shows, reached at the seam center
+ *   (band factor 1); the guidance's "~0.5 at center". Kept < 1 so the building's
+ *   own faction language still dominates even on the line.
+ * - FLICKER_PERIOD: seconds per swap cycle; a per-building hash phase desyncs
+ *   the square wave so the rank never toggles in lockstep.
+ */
+export const POLARIZED_SEAM_SWAP = {
+    PLAYER_BAND: 6,
+    BUILDING_REACH: 20,
+    MAX_DUTY: 0.5,
+    FLICKER_PERIOD: 0.5,
+} as const;
+
+/**
+ * Band factor in [0,1] for the player at worldX relative to a seam at seamX:
+ * 1 exactly on the seam, easing linearly to 0 at (and beyond) bandHalfWidth.
+ * The single knob that decides whether us/them is allowed to dissolve at all.
+ * Pure, per-frame safe.
+ */
+export function seamBandFactor(
+    playerX: number,
+    seamX: number,
+    bandHalfWidth: number = POLARIZED_SEAM_SWAP.PLAYER_BAND,
+): number {
+    const d = Math.abs(playerX - seamX);
+    if (d >= bandHalfWidth)
+        return 0;
+    return 1 - d / bandHalfWidth;
+}
+
+/**
+ * Flicker duty (fraction of each cycle a counterpart shell shows) for a given
+ * band factor: 0 at the band edge, rising to maxDuty at the seam center. Pure.
+ */
+export function seamFlickerDuty(
+    bandFactor: number,
+    maxDuty: number = POLARIZED_SEAM_SWAP.MAX_DUTY,
+): number {
+    const b = bandFactor < 0 ? 0 : bandFactor > 1 ? 1 : bandFactor;
+    return b * maxDuty;
+}
+
+/**
+ * Whether a building's counterpart shell is showing at `time`, given its
+ * hash-desynced `phase` (a cycle fraction in [0,1)), the current `duty`, and
+ * the cycle `period`. A phase-shifted duty-cycle square wave: the shell is on
+ * for the first `duty` fraction of each period. Deterministic and allocation-
+ * free (no Math.random) — the same (time, phase, duty) always agree, so the
+ * per-frame toggle is frame-rate independent. Pure.
+ */
+export function seamSwapActive(
+    time: number,
+    phase: number,
+    duty: number,
+    period: number = POLARIZED_SEAM_SWAP.FLICKER_PERIOD,
+): boolean {
+    if (duty <= 0)
+        return false;
+    if (duty >= 1)
+        return true;
+    const raw = (time / period + phase) % 1;
+    const cyclePos = raw < 0 ? raw + 1 : raw;
+    return cyclePos < duty;
+}
+
+/**
  * Copy a shader config: fresh object plus fresh color tuples (the only nested
  * values), so a frozen transition snapshot can never alias a live or shared
  * config (e.g. the ROOM_CONFIGS baselines reactiveRoomShaderConfig may return).

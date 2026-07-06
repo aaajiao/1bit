@@ -5,6 +5,7 @@ import type {
     ChunkUserData,
     DynamicCable,
     FlickerGroup,
+    SeamShell,
 } from '../types';
 import type { BehaviorProfile, RoomShaderConfig } from './RoomConfig';
 import type { ScarPoint } from './ScarField';
@@ -20,7 +21,7 @@ import { createDynamicCable, disposeCableMaterial, disposeCableUplinkMaterial, s
 import { animateChunk } from './ChunkAnimator';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createInfoFloorMesh, createMoireFloorMesh, createSeamFloorMesh, disposeFloorPool } from './FloorTile';
 import { createTree } from './FloraFactory';
-import { FA_RIFT, IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, isWithinRiftClearance, riftLineXForWorldX, ROOM_CONFIGS, RoomType, worldToChunkCoord } from './RoomConfig';
+import { FA_RIFT, IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, isWithinRiftClearance, POLARIZED_SEAM_SWAP, riftLineXForWorldX, ROOM_CONFIGS, RoomType, seamBandFactor, seamFlickerDuty, seamSwapActive, worldToChunkCoord } from './RoomConfig';
 import {
     anomalyAt,
     applyLayout,
@@ -58,6 +59,10 @@ const FLICKER_VARIANT_SALT = 1019; // per-variant geometry/scale pick
 
 // FA rift banner salt (decorrelated from every prior per-chunk draw).
 const RIFT_BANNER_SALT = 1117; // banner count / z stagger / height / phase
+
+// POLARIZED seam-swap salt (decorrelated from every prior per-chunk draw here
+// <= 1117 and FigureSystem's <= 1291) — per-building shell flicker phase.
+const SEAM_SHELL_PHASE_SALT = 1327;
 
 // Cable uplink squared radius + reusable scratch for the allocation-free
 // per-frame proximity scan (scene-richness batch).
@@ -283,6 +288,12 @@ export class ChunkManager {
             ? (chunkData.flickerGroups = [])
             : null;
 
+        // POLARIZED near-seam counterpart shells accumulate here (only buildings
+        // hugging the seam get one — see addSeamShell / POLARIZED_SEAM_SWAP).
+        const seamShells = roomType === RoomType.POLARIZED
+            ? (chunkData.seamShells = [])
+            : null;
+
         // FORCED_ALIGNMENT grid occupancy: at most one building per snapped cell.
         const occupiedCells = roomType === RoomType.FORCED_ALIGNMENT ? new Set<string>() : null;
 
@@ -390,6 +401,14 @@ export class ChunkManager {
                         (obj as THREE.Mesh).material = factionMaterial;
                     }
                 });
+
+                // Seam dissolves us/them: buildings hugging the seam get a hidden
+                // counterpart-language shell the seam-swap pass flickers on when
+                // the player stands on the line. |bx| is the chunk-local distance
+                // to the seam (seam at local x=0).
+                if (seamShells && Math.abs(bx) < POLARIZED_SEAM_SWAP.BUILDING_REACH) {
+                    this.addSeamShell(buildGroup, seamShells, faction.solid, cx, i);
+                }
             }
 
             // IN_BETWEEN: spawn sub-millimetre coplanar "ghost" clones of the
@@ -694,6 +713,65 @@ export class ChunkManager {
             // Decorrelated per-group phase so groups do not toggle in lockstep.
             phase: hash(i + FLICKER_PHASE_SALT, cz) * 10,
             current: 0,
+        });
+    }
+
+    /**
+     * POLARIZED near-seam counterpart shell. Clones the building's mesh children
+     * with the OTHER faction's material (wireframe on a solid 'us' building,
+     * solid on a wireframe 'them' building) parented at the same local transform,
+     * hidden by default. Clones reuse the SAME shared geometry (Mesh.clone is a
+     * shallow copy) and are reassigned a SHARED material, so no new GPU data and
+     * NO new disposables — disposeObject3D frees the shells via traversal. The
+     * seam-swap pass hard-toggles their .visible; nothing here runs per frame.
+     * Shells cast/receive no shadows (a pure flicker overlay, not an occluder).
+     *
+     * Only ever called for buildings within POLARIZED_SEAM_SWAP.BUILDING_REACH of
+     * the seam, so the shell count per chunk stays small.
+     *
+     * @param buildGroup - The freshly built (faction-materialed) building group.
+     * @param seamShells - The chunk's seam-shell accumulator.
+     * @param solid - The building's faction (true = solid 'us', false = wire 'them').
+     * @param cx - Chunk X coordinate (deterministic seed).
+     * @param i - Building index within the chunk (deterministic seed).
+     */
+    private addSeamShell(
+        buildGroup: THREE.Group,
+        seamShells: SeamShell[],
+        solid: boolean,
+        cx: number,
+        i: number,
+    ): void {
+        // The counterpart language: the OTHER faction's shared material.
+        const counterpart = solid ? this.assets.matWire : this.assets.matSolid;
+
+        // Snapshot the current mesh children (we add clones to the group).
+        const sources: THREE.Mesh[] = [];
+        buildGroup.traverse((obj) => {
+            if ((obj as THREE.Mesh).isMesh)
+                sources.push(obj as THREE.Mesh);
+        });
+        if (sources.length === 0)
+            return;
+
+        const meshes: THREE.Object3D[] = [];
+        for (const src of sources) {
+            const shell = src.clone(); // shares geometry (+ material, replaced below)
+            shell.material = counterpart;
+            shell.castShadow = false;
+            shell.receiveShadow = false;
+            shell.visible = false;
+            // POLARIZED buildings add fragments directly to buildGroup, so the
+            // clone's local transform stays coincident with its source there.
+            buildGroup.add(shell);
+            meshes.push(shell);
+        }
+
+        seamShells.push({
+            meshes,
+            // Decorrelated per-building phase so the rank never toggles in lockstep.
+            phase: hash(i + SEAM_SHELL_PHASE_SALT, cx),
+            current: false,
         });
     }
 
@@ -1173,6 +1251,56 @@ export class ChunkManager {
                         on = playerPos.distanceToSquared(_uplinkMid) <= CABLE_UPLINK_RADIUS_SQ;
                     }
                     setCableUplinkActive(cable, on);
+                }
+            }
+        }
+    }
+
+    /**
+     * POLARIZED seam-swap pass (scene-richness): while the player stands within
+     * POLARIZED_SEAM_SWAP.PLAYER_BAND of a seam, near-seam buildings on that seam
+     * flicker into the OTHER faction's render language (their hidden counterpart
+     * shell hard-toggles on for a duty fraction of each cycle, rising to MAX_DUTY
+     * at the seam center). us/them dissolves ONLY on the line: outside the band —
+     * and whenever `active` is false (the player left POLARIZED entirely) — every
+     * shell is forced hidden and faction identity is whole again.
+     *
+     * A POLARIZED chunk's seam is its center x (chunk.position.x — the razor
+     * seam-line floor at local x=0), so the band factor is computed per chunk
+     * against that x. Allocation-free: only the 3x3 near-chunk window is scanned
+     * (the ±6m band never reaches a neighbouring column's seam), each .visible
+     * write is identity-guarded, and chunks without shells are skipped.
+     *
+     * @param playerPos - Player world position.
+     * @param time - Elapsed seconds (marches the flicker square wave).
+     * @param active - Whether the player is in POLARIZED this frame; false forces
+     *   every near shell hidden (the trailing re-polarize on room exit).
+     */
+    updateSeamSwap(playerPos: THREE.Vector3, time: number, active: boolean): void {
+        const cx = Math.floor(playerPos.x / CHUNK_SIZE);
+        const cz = Math.floor(playerPos.z / CHUNK_SIZE);
+
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                const chunk = this.activeChunks[`${cx + x},${cz + z}`];
+                if (!chunk)
+                    continue;
+                const shells = (chunk.userData as ExtendedChunkUserData).seamShells;
+                if (!shells || shells.length === 0)
+                    continue;
+
+                // Seam sits on the chunk center x (local seam-line floor at x=0).
+                const duty = active
+                    ? seamFlickerDuty(seamBandFactor(playerPos.x, chunk.position.x))
+                    : 0;
+
+                for (const shell of shells) {
+                    const on = seamSwapActive(time, shell.phase, duty);
+                    if (on !== shell.current) {
+                        shell.current = on;
+                        for (const mesh of shell.meshes)
+                            mesh.visible = on;
+                    }
                 }
             }
         }
