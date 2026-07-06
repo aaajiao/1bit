@@ -409,6 +409,21 @@ export const FIGURES = {
     /** Strobe rate (steps/s) and horizontal dislocation amplitude (m). */
     REBEL_FLICKER_RATE: 13,
     REBEL_JITTER_AMPLITUDE: 0.35,
+    /**
+     * Rebellion is contagious: a SUCCESSFUL player override (the same resist
+     * event that scars the world) opens a session-level contagion window of
+     * this many seconds during which the rebel arming gate counts down markedly
+     * faster — distant kin rebel more often in the minutes after you did.
+     * Each fresh success refreshes the window to full.
+     */
+    REBEL_CONTAGION_WINDOW: 180,
+    /**
+     * Gate acceleration while the contagion window is open: the arming
+     * countdown drains this many times faster, so the effective REBEL_*_INTERVAL
+     * band is divided by this factor. Rebel picks stay hash-deterministic; only
+     * the WAIT shortens (deterministic given the same window-state trajectory).
+     */
+    REBEL_CONTAGION_GATE_DIVISOR: 3,
 } as const;
 
 /**

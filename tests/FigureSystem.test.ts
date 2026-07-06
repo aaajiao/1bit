@@ -3,6 +3,7 @@ import { FIGURES, WORLD } from '../src/config/constants';
 import {
     breatheLight,
     conformistPressed,
+    contagionWindowTick,
     convergePhase,
     figureCountForChunk,
     figurePlacementsForChunk,
@@ -14,6 +15,7 @@ import {
     resonanceInBand,
     resonanceReferencePhase,
     resonantBreathe,
+    stepRebelArmTimer,
     updateResonanceArm,
 } from '../src/world/FigureSystem';
 import {
@@ -304,6 +306,84 @@ describe('figureSystem (F3 silhouettes)', () => {
             expect(rebelTearProximity(REBEL_MAX_DISTANCE ** 2)).toBe(0);
             const midDist = (REBEL_MIN_DISTANCE + REBEL_MAX_DISTANCE) / 2;
             expect(rebelTearProximity(midDist ** 2)).toBeCloseTo(0.5, 10);
+        });
+    });
+
+    describe('rebellion is contagious (override loosens the gate)', () => {
+        describe('config coherence', () => {
+            it('opens a positive window and accelerates the gate by >1', () => {
+                expect(FIGURES.REBEL_CONTAGION_WINDOW).toBeGreaterThan(0);
+                expect(FIGURES.REBEL_CONTAGION_GATE_DIVISOR).toBeGreaterThan(1);
+            });
+        });
+
+        describe('contagionWindowTick', () => {
+            it('refreshes to the full window on a successful override', () => {
+                expect(contagionWindowTick(0, 0.016, true))
+                    .toBe(FIGURES.REBEL_CONTAGION_WINDOW);
+                // A repeated success refreshes even a partly-drained window.
+                expect(contagionWindowTick(12, 0.016, true))
+                    .toBe(FIGURES.REBEL_CONTAGION_WINDOW);
+            });
+
+            it('drains by delta toward 0 and never goes negative', () => {
+                expect(contagionWindowTick(10, 4, false)).toBeCloseTo(6, 10);
+                expect(contagionWindowTick(3, 4, false)).toBe(0);
+                expect(contagionWindowTick(0, 4, false)).toBe(0);
+            });
+
+            it('ignores a negative delta (frozen, never grows)', () => {
+                expect(contagionWindowTick(10, -5, false)).toBe(10);
+            });
+
+            it('drains to exactly 0 over the full window duration', () => {
+                let remaining = contagionWindowTick(0, 0.016, true);
+                for (let i = 0; i < 100000 && remaining > 0; i++)
+                    remaining = contagionWindowTick(remaining, 0.05, false);
+                expect(remaining).toBe(0);
+            });
+        });
+
+        describe('stepRebelArmTimer', () => {
+            it('drains at 1x when the window is closed (calm gate)', () => {
+                expect(stepRebelArmTimer(100, 5, false)).toBeCloseTo(95, 10);
+            });
+
+            it('drains DIVISOR times faster while the window is open', () => {
+                const { REBEL_CONTAGION_GATE_DIVISOR: div } = FIGURES;
+                expect(stepRebelArmTimer(100, 5, true)).toBeCloseTo(100 - 5 * div, 10);
+            });
+
+            it('reaches 0 in 1/DIVISOR the time while contagious', () => {
+                const { REBEL_CONTAGION_GATE_DIVISOR: div } = FIGURES;
+                const start = rebelDelaySeconds(0);
+                // Calm frames to drain the whole interval.
+                let calm = start;
+                let calmFrames = 0;
+                while (calm > 0) {
+                    calm = stepRebelArmTimer(calm, 0.05, false);
+                    calmFrames++;
+                }
+                // Contagious frames to drain the same interval.
+                let hot = start;
+                let hotFrames = 0;
+                while (hot > 0) {
+                    hot = stepRebelArmTimer(hot, 0.05, true);
+                    hotFrames++;
+                }
+                // Roughly div times fewer frames (allow ±1 frame of rounding).
+                expect(hotFrames).toBeLessThanOrEqual(Math.ceil(calmFrames / div) + 1);
+                expect(hotFrames).toBeGreaterThanOrEqual(Math.floor(calmFrames / div) - 1);
+            });
+
+            it('clamps at 0 and never goes negative', () => {
+                expect(stepRebelArmTimer(1, 5, true)).toBe(0);
+                expect(stepRebelArmTimer(0, 5, false)).toBe(0);
+            });
+
+            it('ignores a negative delta (frozen gate)', () => {
+                expect(stepRebelArmTimer(50, -3, true)).toBe(50);
+            });
         });
     });
 

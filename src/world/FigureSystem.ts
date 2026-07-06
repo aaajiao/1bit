@@ -23,7 +23,10 @@
 //   only 30-60m out). A figure's light surges to full over ~2s, the body
 //   glitch-strobes (the GLITCH weather language localized), then it vanishes
 //   for the session — accompanied by a distant tear (playDistantTear),
-//   volume falling off with distance.
+//   volume falling off with distance. Rebellion is contagious: a SUCCESSFUL
+//   player override opens a session-level contagion window (config FIGURES.
+//   REBEL_CONTAGION_*) during which the arming gate drains markedly faster,
+//   so distant kin rebel more often in the minutes after you resisted.
 //
 // Lifecycle follows the SAME active chunk window as ChunkManager (figure
 // placement is per-chunk deterministic via the project hash, so re-entering
@@ -344,6 +347,33 @@ export function rebelDelaySeconds(eventIndex: number): number {
 }
 
 /**
+ * Rebellion is contagious: advance the session-level contagion window one
+ * frame. A SUCCESSFUL player override (`refresh` true this frame — the same
+ * resist event that scars the world) reopens the window to the full
+ * REBEL_CONTAGION_WINDOW; otherwise it drains by delta toward 0. Clamped to
+ * [0, WINDOW]. Pure — the window state is threaded frame to frame by the
+ * caller. Your resistance is not an isolated keypress: it licenses others.
+ */
+export function contagionWindowTick(remaining: number, delta: number, refresh: boolean): number {
+    if (refresh)
+        return FIGURES.REBEL_CONTAGION_WINDOW;
+    return Math.max(0, remaining - Math.max(0, delta));
+}
+
+/**
+ * Drain the rebel arming gate one frame. While the contagion window is open
+ * the countdown runs REBEL_CONTAGION_GATE_DIVISOR times faster, so the
+ * effective arming interval is divided by that factor and distant figures
+ * rebel more often in the minutes after a successful override. The picks and
+ * distances stay hash-deterministic; only the WAIT shortens (deterministic
+ * given the same window-state trajectory). Clamped at 0. Pure.
+ */
+export function stepRebelArmTimer(armTimer: number, delta: number, contagionActive: boolean): number {
+    const rate = contagionActive ? FIGURES.REBEL_CONTAGION_GATE_DIVISOR : 1;
+    return Math.max(0, armTimer - Math.max(0, delta) * rate);
+}
+
+/**
  * Deterministic candidate pick for rebel event `eventIndex` among
  * `candidateCount` eligible figures (callers sort candidates by stable id
  * first). Returns -1 when there is no candidate. Pure.
@@ -504,6 +534,12 @@ export class FigureSystem {
      * @param weatherIntensity - 0-1 current weather intensity; gently speeds
      *   the figures' flicker clock (WEATHER_FLICKER_GAIN). 0 (default)
      *   reproduces the calm behavior exactly.
+     * @param contagionActive - Whether the session-level contagion window is
+     *   open (a recent successful player override). While true the rebel
+     *   arming gate drains faster (stepRebelArmTimer). The window countdown is
+     *   owned upstream (RoomFlowUpdater) and threaded in as this small flag,
+     *   so the figures never reach into the override system. False (default)
+     *   reproduces the calm gate exactly.
      */
     update(
         delta: number,
@@ -512,12 +548,13 @@ export class FigureSystem {
         currentRoomType: RoomType,
         audio?: FigureAudio,
         weatherIntensity: number = 0,
+        contagionActive: boolean = false,
     ): void {
         this.clock += delta;
         this.flickerClock += delta * (1 + Math.max(0, weatherIntensity) * WEATHER_FLICKER_GAIN);
         this.syncChunks(playerPos, currentRoomType);
         this.animateFigures(delta, playerPos, playerState, audio);
-        this.updateRebelScheduler(delta, playerPos);
+        this.updateRebelScheduler(delta, playerPos, contagionActive);
     }
 
     /**
@@ -764,10 +801,13 @@ export class FigureSystem {
      * candidates) and commits to the surge -> glitch-strobe -> vanish arc.
      * No per-frame randomness anywhere in the gate.
      */
-    private updateRebelScheduler(delta: number, playerPos: THREE.Vector3): void {
+    private updateRebelScheduler(delta: number, playerPos: THREE.Vector3, contagionActive: boolean): void {
         if (this.activeRebel)
             return;
-        this.rebelArmTimer = Math.max(0, this.rebelArmTimer - delta);
+        // Contagion accelerates the countdown (stepRebelArmTimer): the gate is
+        // still a deterministic hash-drawn interval, only drained faster while
+        // a recent override keeps the window open.
+        this.rebelArmTimer = stepRebelArmTimer(this.rebelArmTimer, delta, contagionActive);
         if (this.rebelArmTimer > 0)
             return;
 

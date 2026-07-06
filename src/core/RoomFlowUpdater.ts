@@ -6,6 +6,7 @@ import type { FigureSystem } from '../world/FigureSystem';
 import type { GhostSystem } from '../world/GhostSystem';
 import type { BehaviorProfile, RoomFogConfig } from '../world/RoomConfig';
 import { GAMEPLAY, LIVE_PROFILE } from '../config';
+import { contagionWindowTick } from '../world/FigureSystem';
 import { RiftMechanic } from '../world/RiftMechanic';
 import { RAIN_FOG_FAR_FACTOR, ROOM_FOG, RoomType, stepFogToward } from '../world/RoomConfig';
 import { WEATHER_TYPES } from '../world/WeatherSystem';
@@ -37,6 +38,15 @@ export class RoomFlowUpdater {
     // Reusable rain-biased fog target (no per-frame allocation; ROOM_FOG
     // entries are shared constants and must never be mutated).
     private readonly rainFogTarget: RoomFogConfig = { near: 0, far: 0 };
+
+    // Rebellion-is-contagious window (FigureSystem): a successful player
+    // override (the rising edge of playerState.overrideTriggered — the same
+    // resist event that scars the world) opens a session-level window during
+    // which the figures' rebel gate drains faster. Owned here and threaded
+    // into figures.update as a small flag, so the figures never reach into the
+    // override system. Play-time seconds; the update below is pause-gated.
+    private contagionRemaining = 0;
+    private prevOverrideTriggered = false;
 
     /**
      * @param fog - The live scene fog (THREE.Fog satisfies the shape), eased
@@ -161,13 +171,30 @@ export class RoomFlowUpdater {
             audio.playInfoChirp(playerState.flowerIntensity);
         }
 
+        // Rebellion is contagious: refresh the contagion window on the rising
+        // edge of a successful override (reusing the override-success signal
+        // already surfaced in playerState), then drain it by delta. While it
+        // stays open the figures' rebel gate runs faster.
+        const overrideSucceeded = playerState.overrideTriggered && !this.prevOverrideTriggered;
+        this.prevOverrideTriggered = playerState.overrideTriggered;
+        this.contagionRemaining = contagionWindowTick(this.contagionRemaining, delta, overrideSucceeded);
+
         // F3 silhouette figures: distant kin living the same rooms. Runs
         // AFTER the room flow above so the chunk grid and the room ledger's
         // cluster pins are already settled for this frame; the system follows
         // the same active chunk window as ChunkManager, reports its rare
-        // rebel tears through the audio controller, and shimmers harder
-        // under the (one frame stale) weather intensity.
-        this.figures?.update(delta, playerPos, playerState, currentRoomType, audio, this.weatherIntensity);
+        // rebel tears through the audio controller, shimmers harder under the
+        // (one frame stale) weather intensity, and rebels more often while the
+        // contagion window is open (a recent successful override).
+        this.figures?.update(
+            delta,
+            playerPos,
+            playerState,
+            currentRoomType,
+            audio,
+            this.weatherIntensity,
+            this.contagionRemaining > 0,
+        );
 
         // F4 ghost replay: last run's you, retracing its recorded trail. It
         // ignores rooms entirely (memory predates this world's layout); it
