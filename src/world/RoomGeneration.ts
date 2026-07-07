@@ -11,8 +11,9 @@
 // IN_BETWEEN never settles (FLUID dominant); FORCED_ALIGNMENT is regimented
 // BLOCKS/SPIKES.
 
+import { WORLD } from '../config/constants';
 import { hash } from '../utils/hash';
-import { RoomType } from './RoomConfig';
+import { chunkToCluster, POLARIZED_MIRROR, RoomType } from './RoomConfig';
 
 /**
  * The four procedural building styles. String-literal union mirrors the
@@ -137,39 +138,80 @@ export function chunkBuildingCount(cx: number, cz: number, roomType?: RoomType):
 }
 
 /**
- * Faction descriptor for a POLARIZED building: which pole (+X vs -X half) it is
- * pushed toward and whether it is a filled 'us' (solid) or hollow 'them' (wire)
- * faction. Deterministic per (cx, cz, i).
- */
-export interface PolarizedFaction {
-    /** +1 pushes toward +X half, -1 toward -X half. */
-    pole: 1 | -1;
-    /** True => filled solid material ('us'); false => hollow wire ('them'). */
-    solid: boolean;
-}
-
-/**
- * Salt for the faction hash so it does not collide with the building-position
- * hashes (hash(cx+i, cz) / hash(cx, cz+i)) drawn for the same chunk.
+ * Salt for the pole hash so it does not collide with the building-position
+ * hashes (hash(cx+i, cz) / hash(cx, cz+i)) drawn for the same chunk. (The
+ * second FACTION_SALT stream — the per-building solid/wire bit — was retired
+ * by the mirror-twin pass: language is bank-determined, see
+ * polarizedMirrorFrame / POLARIZED_MIRROR.)
  */
 const FACTION_SALT = 211;
 
 /**
- * Deterministic POLARIZED faction for building i in chunk (cx, cz). A single
- * hash bit picks the pole; a second picks the material faction. Building COUNT
- * is unaffected (callers must keep cable node indices valid).
+ * Deterministic POLARIZED pole for building i in chunk (cx, cz): which half
+ * of the chunk (+X vs -X of its razor seam line) the building skews toward.
+ * Pole is CONTENT — callers must draw it in canonical mirror coordinates
+ * (polarizedMirrorFrame) so twin chunks agree — while the render language
+ * (solid 'us' vs wire 'them') is decided by the bank, not per building.
+ * Building COUNT is unaffected (callers must keep cable node indices valid).
  *
- * @param cx - Chunk X coordinate (integer).
+ * @param cx - Chunk X coordinate (integer; canonical genCx in POLARIZED).
  * @param cz - Chunk Z coordinate (integer).
  * @param i - Building index within the chunk.
- * @returns Pole sign and solid/wire faction flag.
+ * @returns +1 pushes toward the +X half, -1 toward the -X half.
  */
-export function polarizedFaction(cx: number, cz: number, i: number): PolarizedFaction {
+export function polarizedPole(cx: number, cz: number, i: number): 1 | -1 {
     const poleBit = hash(cx + i + FACTION_SALT, cz + FACTION_SALT);
-    const solidBit = hash(cz + FACTION_SALT, cx + i + FACTION_SALT);
+    return poleBit < 0.5 ? -1 : 1;
+}
+
+/**
+ * The mirror-twin chunk column of `cx` within its room cluster: columns of a
+ * cluster pair up symmetrically about the cluster center (local column l <->
+ * CLUSTER_CHUNKS-1-l), so reflecting a chunk-center across the cluster-center
+ * seam plane (clusterCenterWorld) lands exactly on the twin's chunk-center.
+ * An involution: polarizedTwinCx(polarizedTwinCx(cx)) === cx. Pure.
+ */
+export function polarizedTwinCx(cx: number): number {
+    const clusterBase = chunkToCluster(cx) * WORLD.CLUSTER_CHUNKS;
+    const local = cx - clusterBase;
+    return clusterBase + (WORLD.CLUSTER_CHUNKS - 1 - local);
+}
+
+/**
+ * Mirror frame for a POLARIZED chunk column (scene-style batch): the two
+ * columns of a POLARIZED cluster are the SAME content rendered in opposite
+ * languages. Every content draw (count, position, layout, style, pole,
+ * factory fragments, cables) is seeded by the CANONICAL (+x) column's genCx,
+ * so a chunk generates identically whether or not its twin is loaded; the -x
+ * column then reflects the finished placement across the cluster-center seam
+ * (local x negated, groups x-reflected). Language stays SIDE-determined after
+ * mirroring (POLARIZED_MIRROR.CANONICAL_SOLID on the +x bank, the opposite on
+ * the -x bank) — polarization lives in the rendering, not the content.
+ */
+export interface PolarizedMirrorFrame {
+    /** Canonical chunk X every content hash draw must use (the +x column). */
+    genCx: number;
+    /** True on the -x column: negate local x and x-reflect built groups. */
+    mirrored: boolean;
+    /** This bank's render language: true = filled solid 'us', false = wire 'them'. */
+    solid: boolean;
+}
+
+/**
+ * Computes the POLARIZED mirror frame for chunk column `cx`. Pure and local
+ * to the chunk (the canonical column is a function of cx alone), so per-chunk
+ * generation stays deterministic and order-independent. Twin columns share
+ * genCx, disagree on `mirrored`, and render opposite languages.
+ */
+export function polarizedMirrorFrame(cx: number): PolarizedMirrorFrame {
+    const twin = polarizedTwinCx(cx);
+    // The canonical column is the +x member of the pair; a self-twin middle
+    // column (odd CLUSTER_CHUNKS) is its own canonical and never mirrors.
+    const mirrored = cx < twin;
     return {
-        pole: poleBit < 0.5 ? -1 : 1,
-        solid: solidBit < 0.5,
+        genCx: mirrored ? twin : cx,
+        mirrored,
+        solid: mirrored ? !POLARIZED_MIRROR.CANONICAL_SOLID : POLARIZED_MIRROR.CANONICAL_SOLID,
     };
 }
 
