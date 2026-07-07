@@ -738,6 +738,130 @@ export const SNAPSHOT_ECHO = {
 } as const;
 
 /**
+ * Idealized shadows (scene-style batch): in FORCED_ALIGNMENT every building
+ * gets a fake "corrected" shadow — a hard-black, perfectly axis-aligned
+ * rectangle decal on the floor at its foot, displaced in ONE fixed global
+ * azimuth and sized from the building's footprint but quantized to the room's
+ * 8-unit grid rhythm. The slight mismatch between a building's real silhouette
+ * and its too-regular shadow is the point: the system idealizes even shadows.
+ * Near a cross-run scar the correction FAILS — the rectangle rotates, shears
+ * and slides by hash-drawn amounts scaled by scar severity. Scar reach reuses
+ * SCAR_FIELD.RADIUS via scarSeverityAt (one shared radius, no second knob).
+ * Geometry math lives in world/ShadowCorrection.
+ */
+export const FA_SHADOW = {
+    /**
+     * Fixed global shadow azimuth (radians in the world XZ plane; 0 = +x,
+     * PI/2 = +z): the ONE direction every corrected shadow is displaced in.
+     * The axis-aligned rect never rotates toward it — it only slides — which
+     * is exactly the institutional over-regularity the room speaks.
+     */
+    AZIMUTH_RAD: Math.PI / 4,
+    /**
+     * Rect size quantum (m): half the FA occupancy grid pitch
+     * (RoomGeneration.GRID_SNAP_SIZE = 8), so shadow sizes step in the same
+     * institutional rhythm without collapsing every small building to one size.
+     */
+    QUANT: 4,
+    /**
+     * Rect extent clamps (m) after quantization. Both MUST stay multiples of
+     * QUANT so clamping preserves the grid rhythm; MIN also floors footprints
+     * that would otherwise quantize to nothing.
+     */
+    MIN_SIZE: 4,
+    MAX_SIZE: 20,
+    /**
+     * Displacement magnitude as a fraction of the MEAN quantized rect extent
+     * ((width + depth) / 2): ONE scalar along the ONE azimuth, so every
+     * shadow's displacement direction is identical regardless of aspect ratio.
+     */
+    OFFSET_FACTOR: 0.4,
+    /**
+     * Lift (m) above the floor plane — the FloorTile redaction-disc epsilon
+     * pattern, paired with polygonOffset on the shared ink material so the
+     * decal never z-fights the floor at grazing distances.
+     */
+    LIFT: 0.02,
+    /**
+     * Per-chunk decal cap. The populated FA building count tops out at 9
+     * (chunkBuildingCount base 7 x OVERGROWN 1.35) before grid-occupancy and
+     * rift-clearance skips, so this bound normally never bites — it is a
+     * safety ceiling, not a rationing knob.
+     */
+    MAX_PER_CHUNK: 10,
+    /** Scar-skew clamp at full severity: rotation off axis-alignment (rad, ~20°). */
+    MAX_SKEW_ROT_RAD: 0.35,
+    /** Scar-skew clamp: XZ shear factor (m of x drift per m of rect depth). */
+    MAX_SHEAR: 0.5,
+    /** Scar-skew clamp: extra lateral slide off the corrected spot (m, per axis). */
+    MAX_SKEW_OFFSET: 2.5,
+    /**
+     * Half-width (m) of the keep-out band around the FA rift crack line: a
+     * decal whose x extent would enter this band is skipped entirely, so no
+     * shadow ever floats over the crack gap / abyss plane or visually bridges
+     * the jagged silhouette the shore corridor keeps open. Matches the abyss
+     * plane half-width in FloorTile.createCrackedFloorMesh (crackWidth/2 + 3),
+     * which already covers the maximum jag erosion.
+     */
+    CRACK_KEEPOUT: 5,
+} as const;
+
+/**
+ * Data waterfalls (scene-style batch): in INFO_OVERFLOW some facades leak the
+ * district's own records — thin vertical strips down which 1-bit glyph streams
+ * scroll, the floor's binary language climbing the walls. Strips are generated
+ * per eligible building (hash-gated fraction) and every strip in every chunk
+ * shares ONE glyph texture and ONE scrolling material; per-strip desync is
+ * baked into the strip UVs, never cloned materials. The scroll speed follows
+ * the player's CURRENT flower intensity — the brighter you burn, the faster
+ * the district churns your records. black = the system's ledger, white = the
+ * self written into it; every glyph pixel is hard on/off, no soft fades.
+ */
+export const DATA_WATERFALL = {
+    /** Fraction of eligible INFO buildings (non-TREE) that leak records. */
+    BUILDING_FRACTION: 0.35,
+    /** Strips per leaking building (hash-drawn within [MIN, MAX]). */
+    STRIPS_MIN: 1,
+    STRIPS_MAX: 3,
+    /** Strip quad width (m) — thin, a record column, not a billboard. */
+    STRIP_WIDTH: 0.55,
+    /**
+     * Distance (m) from the building-group center to the strip plane — the
+     * SNAPSHOT_ECHO.FACE_OFFSET approximation of "on the facade": buildings
+     * are fragment clusters with no exact wall, so a fixed offset reads as
+     * the face. Group biome scale multiplies it (bigger building, wider face).
+     */
+    FACE_OFFSET: 4.6,
+    /** Max lateral slide (m, ±) of a strip along its facade. */
+    LATERAL_RANGE: 3.0,
+    /** Strip bottom (m) — just above the glyph floor. */
+    BOTTOM_Y: 0.15,
+    /** Hash-drawn strip-top band (m) before clamping to the building height. */
+    HEIGHT_MIN: 6,
+    HEIGHT_MAX: 18,
+    /** Strip-height floor (m) after clamping, so stubs keep a legible stream. */
+    MIN_STRIP_HEIGHT: 2.5,
+    /** Baked UV density: texture heights per world metre (glyph size on wall). */
+    V_PER_METER: 0.06,
+    /**
+     * Shared glyph-strip texture size (texels). Both extents MUST be multiples
+     * of GLYPH_PITCH so cells align with the vertical wrap seam (no straddling
+     * glyph at the repeat boundary).
+     */
+    TEX_WIDTH: 8,
+    TEX_HEIGHT: 256,
+    /** Glyph cell pitch (texels) — mirrors the INFO floor's 4px dot-matrix. */
+    GLYPH_PITCH: 4,
+    /** Cells whose hash draw exceeds this are lit (~55%, the floor's density). */
+    GLYPH_GATE: 0.45,
+    /** Texels whose hash draw exceeds this become stray data bursts (sparse). */
+    BURST_GATE: 0.94,
+    /** Scroll speed (texture heights/s) at flower intensity 0 / extra gain at 1. */
+    SPEED_BASE: 0.06,
+    SPEED_FLOWER_GAIN: 0.28,
+} as const;
+
+/**
  * Chunk and world generation constants
  */
 export const WORLD = {
@@ -886,6 +1010,67 @@ export const SKY_EYE_WEATHER = {
 } as const;
 
 /**
+ * Per-room sky vocabulary (scene-style batch): the flat background becomes
+ * four skies. One camera-following inverted dome (world/RoomSky) draws the
+ * CURRENT room's treatment behind everything — sparse blinking specks
+ * (INFO_OVERFLOW's signal without meaning), ruled ledger lines
+ * (FORCED_ALIGNMENT's disciplined heaven), two misregistered celestial discs
+ * (IN_BETWEEN's heaven misread by both systems), and a hard ink/paper split
+ * through the seam plane (POLARIZED's binary reaching the sky). Everything is
+ * hard on/off — the treatment hard-swaps on room change with a frame-count
+ * flicker, never a crossfade; the full-screen dither pass owns all softness.
+ */
+export const ROOM_SKY = {
+    /**
+     * Dome radius (m). Must sit beyond every world feature (render window is
+     * (RENDER_DISTANCE+1) chunks = 240m; fog far 110m) yet safely inside the
+     * camera far plane (1000, SceneSetup) even at the rift fall's deepest
+     * point (FA_RIFT.FOG.BOTTOM = -165m: 450 + 165 = 615 < 1000). The dome
+     * follows the player on x/z, so it is never approached.
+     */
+    RADIUS: 450,
+    /** Sphere tessellation. One draw call; the shell only needs to be round. */
+    WIDTH_SEGMENTS: 48,
+    HEIGHT_SEGMENTS: 24,
+    /**
+     * Draw order: before (behind) every default-order object. Paired with
+     * depthWrite:false so the whole world overdraws the dome.
+     */
+    RENDER_ORDER: -1,
+    /**
+     * Room hard-swap flicker length (frames): the dome blinks off/on/off
+     * across this many frames when the treatment swaps, then settles visible
+     * — a 1-bit stutter, deliberately frame-counted (not time-based) so it
+     * stays a barely-there glitch at any frame rate. Odd counts end hidden
+     * -> settle visible (see world/RoomSky.swapFlickerVisible).
+     */
+    SWAP_FLICKER_FRAMES: 3,
+    // ===== INFO_OVERFLOW: sparse static specks =====
+    /** Lat/long speck-grid cells around the dome equator. */
+    SPECK_GRID: 96,
+    /** Fraction of grid cells hosting a speck (sparse — signal, not snow). */
+    SPECK_FILL: 0.07,
+    /** Speck edge as a fraction of its cell (small hard squares). */
+    SPECK_SIZE: 0.3,
+    /** Blink cycles per second (hard on/off phase, hash-desynced per cell). */
+    SPECK_BLINK_SPEED: 0.8,
+    // ===== FORCED_ALIGNMENT: horizontal ledger rule-lines =====
+    /** Rule-lines from horizon to zenith (even angular spacing). */
+    LINE_COUNT: 14,
+    /** Lit fraction of each line period (thin hard rules). */
+    LINE_THICKNESS: 0.06,
+    // ===== IN_BETWEEN: two misregistered celestial discs =====
+    /** Ink disc center: azimuth / elevation (rad above the horizon). */
+    DISC_AZIMUTH: 0.7,
+    DISC_ELEVATION: 0.62,
+    /** Angular radius (rad) of each disc. */
+    DISC_ANGULAR_RADIUS: 0.085,
+    /** Paper disc misregister offset (rad) — a heaven printed off-plate. */
+    DISC_OFFSET_AZIMUTH: 0.05,
+    DISC_OFFSET_ELEVATION: 0.02,
+} as const;
+
+/**
  * Camera constants
  */
 export const CAMERA = {
@@ -973,6 +1158,55 @@ export const VIEWMODEL = {
         /** CSS custom property holding the bottom inset (px). */
         CSS_VAR: '--sab',
     },
+} as const;
+
+/**
+ * IN_BETWEEN viewmodel misregister echo (scene-style batch): the room that
+ * cannot resolve you prints you twice. Only while the current room is
+ * IN_BETWEEN, the first-person viewmodel (hands + held flower) gains a
+ * second, misregistered image — the hands re-read as solid ink, the flower
+ * as bare paper wireframe — offset a few centimeters on the page like a
+ * duotone plate that missed registration. Two systems each read you once;
+ * they disagree. Hard on/off with a frame-counted flicker on room change
+ * (the batch's swap language, ROOM_SKY.SWAP_FLICKER_FRAMES); the echo shares
+ * the source geometries and mirrors the pose pairwise each frame
+ * (player/ViewmodelEcho).
+ */
+export const VIEWMODEL_ECHO = {
+    /**
+     * Camera-local offset (m) of the echo at VIEWMODEL.REFERENCE_ASPECT. The
+     * x component is rescaled by aspect / REFERENCE_ASPECT each frame
+     * (misregisterOffsetX) so the ON-SCREEN offset is aspect-stable —
+     * misregistration is a property of the page, not of the world. y needs
+     * no compensation (the vertical FOV is fixed; only aspect changes).
+     */
+    OFFSET_X: 0.035,
+    OFFSET_Y: 0.018,
+    /**
+     * Depth pushback (m, negative = deeper in front of the camera): overlap
+     * regions lose the depth test against the source cleanly, so the echo
+     * peeks out around the silhouette instead of z-fighting through it.
+     */
+    OFFSET_Z: -0.02,
+    /**
+     * Room hard-swap flicker length (frames), same language as
+     * ROOM_SKY.SWAP_FLICKER_FRAMES: frame-counted (not time-based) so it
+     * stays a barely-there stutter at any frame rate, and odd so the
+     * countdown ends hidden and the settle frame reads as the swap landing.
+     */
+    FLICKER_FRAMES: 3,
+    /**
+     * Drawn after the default-order opaque pass (world + source hands have
+     * written depth) and before the sky eye's authority overlay (999).
+     * Paired with depthWrite:false on both echo materials: the echo can only
+     * appear where it peeks out from behind the source, and can never punch
+     * holes into the source's transparent pass (petals/sepals).
+     */
+    RENDER_ORDER: 1,
+    /** Ink plate: the system that reads your body as solid mass. */
+    INK_COLOR: 0x000000,
+    /** Paper plate: the system that reads your desire as bare structure. */
+    PAPER_COLOR: 0xFFFFFF,
 } as const;
 
 /**

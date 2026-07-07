@@ -14,6 +14,7 @@ import { clearLastSnapshot, loadLastSnapshot, saveLastSnapshot } from '../stats/
 import { StateSnapshotGenerator } from '../stats/StateSnapshotGenerator';
 import { clearStoredTrail, saveTrail, TrailRecorder } from '../stats/TrailRecorder';
 import { DayNightCycle } from '../world/DayNightCycle';
+import { RoomSky } from '../world/RoomSky';
 
 /** Frame-stable dependencies wired once at construction. */
 export interface StatsSunsetDeps {
@@ -34,10 +35,16 @@ export interface StatsSunsetDeps {
  * snapshot overlay, the snapshot persistence/replay surfaces (the
  * "上次" start-screen line and the pause-menu replay entry — flow-audit
  * medium #8 / enhancement #8), and the F4 ghost-trail recorder (persisted on
- * the same sunset/unload boundaries). main.ts only threads per-frame state in.
+ * the same sunset/unload boundaries). Also owns the RoomSky dome (the
+ * per-room sky vocabulary): it lives beside the DayNightCycle because its
+ * ink/paper polarity must follow the cycle's day/night blend exactly.
+ * main.ts only threads per-frame state in.
  */
 export class StatsSunsetUpdater {
     private readonly dayNight = new DayNightCycle();
+    // Per-room sky dome (world/RoomSky): driven right after dayNight.update
+    // so it reads THIS frame's background color + day polarity.
+    private readonly roomSky: RoomSky;
     private readonly snapshotGenerator = new StateSnapshotGenerator();
     private readonly snapshotOverlay = new SnapshotOverlay();
     private readonly runStats: RunStatsCollector;
@@ -94,6 +101,9 @@ export class StatsSunsetUpdater {
             weather: deps.weather,
             onSunset: () => this.onSunset(),
         };
+
+        // The four skies (scene-style batch): one permanent dome on the scene.
+        this.roomSky = new RoomSky(deps.scene);
 
         // Restore the previous session's persisted snapshot (enhancement #8):
         // seed the replay cache and surface the observation as one quiet line.
@@ -282,6 +292,11 @@ export class StatsSunsetUpdater {
 
         this.dayNight.update(delta, this.dayNightContext);
 
+        // Per-room sky vocabulary: AFTER the day/night step, so the dome sees
+        // this frame's background color (via the scene) and day polarity —
+        // it follows the cycle's blend instead of fighting it.
+        this.roomSky.update(delta, playerPos, currentRoomType, this.dayNight.isDaytime());
+
         // Pre-sunset foreshadow (~30s lead, enhancement #8): derived from the
         // delta-driven cycle phase — no new wall clock. Audio half here; the
         // visual half is read by main.ts via getSunsetForeshadow().
@@ -336,5 +351,6 @@ export class StatsSunsetUpdater {
         this.forgetEl?.removeEventListener('click', this.boundForget);
         this.saveCardEl?.removeEventListener('click', this.boundSaveCard);
         this.snapshotOverlay.dispose();
+        this.roomSky.dispose();
     }
 }

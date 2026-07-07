@@ -12,7 +12,7 @@ import {
     chunkBuildingCount,
     GRID_SNAP_SIZE,
     layoutAt,
-    polarizedFaction,
+    polarizedPole,
     selectBuildingStyle,
     snapToGrid,
     SUB_PALETTE_COUNT,
@@ -149,37 +149,35 @@ describe('roomGeneration', () => {
         });
     });
 
-    describe('polarizedFaction', () => {
+    describe('polarizedPole', () => {
+        // Language (solid/wire) is no longer a per-building draw — it is
+        // bank-determined by the mirror twins (see PolarizedMirror.test.ts);
+        // only the pole (which chunk half a building parks on) stays content.
         it('should be deterministic for the same coords and index', () => {
-            const a = polarizedFaction(2, 9, 4);
-            const b = polarizedFaction(2, 9, 4);
-            expect(a).toEqual(b);
+            const a = polarizedPole(2, 9, 4);
+            const b = polarizedPole(2, 9, 4);
+            expect(a).toBe(b);
         });
 
-        it('should always return a valid pole and boolean faction', () => {
+        it('should always return a valid pole', () => {
             for (let cx = -10; cx <= 10; cx++) {
                 for (let cz = -10; cz <= 10; cz++) {
                     for (let i = 0; i < 7; i++) {
-                        const f = polarizedFaction(cx, cz, i);
-                        expect(f.pole === 1 || f.pole === -1).toBe(true);
-                        expect(typeof f.solid).toBe('boolean');
+                        const pole = polarizedPole(cx, cz, i);
+                        expect(pole === 1 || pole === -1).toBe(true);
                     }
                 }
             }
         });
 
-        it('should split into both poles and both factions across the world', () => {
+        it('should split into both poles across the world', () => {
             const poles = new Set<number>();
-            const factions = new Set<boolean>();
             for (let cx = -10; cx <= 10; cx++) {
                 for (let i = 0; i < 7; i++) {
-                    const f = polarizedFaction(cx, 0, i);
-                    poles.add(f.pole);
-                    factions.add(f.solid);
+                    poles.add(polarizedPole(cx, 0, i));
                 }
             }
             expect(poles.size).toBe(2);
-            expect(factions.size).toBe(2);
         });
     });
 

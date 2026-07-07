@@ -400,6 +400,15 @@ export class HandsModel {
     }
 
     /**
+     * The camera-parented viewmodel root (hands + held flower + hand light).
+     * Exposed for ViewmodelEcho, which mirrors this tree's pose each frame
+     * — read-only by contract; the echo never mutates the source.
+     */
+    getHandsGroup(): THREE.Group {
+        return this.handsGroup;
+    }
+
+    /**
      * Get reference to the flower prop
      */
     getFlower(): FlowerGroup | null {

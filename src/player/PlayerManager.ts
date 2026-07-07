@@ -9,6 +9,7 @@ import { forceFlowerIntensity, getFlowerIntensity, getFlowerTargetIntensity, ove
 import { GazeMechanic } from './GazeMechanic';
 import { HandsModel } from './HandsModel';
 import { OverrideMechanic } from './OverrideMechanic';
+import { ViewmodelEcho } from './ViewmodelEcho';
 
 export interface PlayerContext {
     currentRoomType: RoomType;
@@ -43,6 +44,7 @@ export class PlayerManager {
     public gaze: GazeMechanic;
     public override: OverrideMechanic;
     public flowerHint: FlowerHintMechanic;
+    public viewmodelEcho: ViewmodelEcho;
 
     // Cache for state
     private currentState: PlayerState;
@@ -70,6 +72,8 @@ export class PlayerManager {
         this.gaze = new GazeMechanic(camera);
         this.override = new OverrideMechanic();
         this.flowerHint = new FlowerHintMechanic();
+        // IN_BETWEEN misregister echo: mirrors the hands tree built above.
+        this.viewmodelEcho = new ViewmodelEcho(camera, this.hands.getHandsGroup());
 
         // Initialize state
         this.currentState = {
@@ -285,6 +289,10 @@ export class PlayerManager {
         // 6. Update Hands
         this.hands.animate(delta, isMoving, time * 1000);
 
+        // 7. IN_BETWEEN misregister echo — after hands.animate, so the echo
+        // mirrors THIS frame's pose. Free (one boolean gate) outside the room.
+        this.viewmodelEcho.update(context.currentRoomType);
+
         // Update cached state (reuse position object)
         this.currentState.position.copy(this.controls.getCamera().position);
         this.currentState.isMoving = isMoving;
@@ -366,6 +374,8 @@ export class PlayerManager {
      */
     public dispose(): void {
         this.controls.dispose();
+        // Echo first: it borrows the hands' geometries, HandsModel owns them.
+        this.viewmodelEcho.dispose();
         this.hands.dispose();
     }
 }

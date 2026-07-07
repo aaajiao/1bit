@@ -4,6 +4,7 @@ import type { ChunkManager } from '../world/ChunkManager';
 import type { RoomType } from '../world/RoomConfig';
 import { CableAudioUpdater } from './CableAudioUpdater';
 import { CableUplinkUpdater } from './CableUplinkUpdater';
+import { DataWaterfallUpdater } from './DataWaterfallUpdater';
 import { SeamSwapUpdater } from './SeamSwapUpdater';
 
 /**
@@ -15,11 +16,17 @@ import { SeamSwapUpdater } from './SeamSwapUpdater';
  * only the near-chunk scan shape); this aggregate just owns their construction,
  * a single per-frame update(), and disposal so main.ts wires ONE field instead
  * of three, mirroring PlayerManager's compose-and-expose-one-update pattern.
+ *
+ * Also hosts the DATA WATERFALL clock (scene-style batch): not a proximity
+ * scan — one global uniform write marching the INFO_OVERFLOW record strips —
+ * but it rides the same per-frame flower-intensity feed the uplink consumes,
+ * so it composes here rather than widening main.ts.
  */
 export class ProximityUpdaters {
     private cableAudio = new CableAudioUpdater();
     private cableUplink = new CableUplinkUpdater();
     private seamSwap = new SeamSwapUpdater();
+    private dataWaterfall = new DataWaterfallUpdater();
 
     /**
      * @param t - Elapsed seconds (marches dash + flicker phase).
@@ -42,15 +49,19 @@ export class ProximityUpdaters {
         // Seam dissolves us/them: near-seam POLARIZED buildings flicker into the
         // other faction's language only while the player stands on the line.
         this.seamSwap.update(t, playerPos, chunkManager, currentRoomType);
+        // The district churns your records: the INFO_OVERFLOW waterfall strips
+        // scroll at a speed set by this frame's flower intensity (one uniform).
+        this.dataWaterfall.update(t, flowerIntensity);
     }
 
     /**
-     * Dispose all three passes. The shared cable/uplink materials themselves are
-     * owned by ChunkManager; audio is threaded to the cable-audio teardown.
+     * Dispose all passes. The shared cable/uplink/waterfall materials themselves
+     * are owned by ChunkManager; audio is threaded to the cable-audio teardown.
      */
     dispose(audio: AudioController): void {
         this.cableAudio.dispose(audio);
         this.cableUplink.dispose();
         this.seamSwap.dispose();
+        this.dataWaterfall.dispose();
     }
 }

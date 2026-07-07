@@ -719,12 +719,35 @@ export function inBetweenEdgeFactor(
 }
 
 /**
+ * POLARIZED mirror twins (scene-style batch): polarization lives in the
+ * RENDERING, not the content. The two chunk columns of a POLARIZED cluster
+ * are the SAME buildings — every content draw is seeded by the CANONICAL
+ * (+x) column's coordinates (RoomGeneration.polarizedMirrorFrame) and the
+ * -x column reflects the result across the MIRROR SEAM, the cluster-center
+ * plane between the two columns (clusterCenterWorld; distinct from the
+ * per-chunk razor seam line at each chunk's own center, POLARIZED_SEAM_SWAP
+ * below). Language is BANK-determined after mirroring — identical twins face
+ * each other in opposite renderings — so crossing the cluster center is deja
+ * vu by design. Only cross-run scars (applied by WORLD position, after the
+ * mirror) break the symmetry: your resistance is the only asymmetry.
+ */
+export const POLARIZED_MIRROR = {
+    /**
+     * Render language of the canonical (+x) bank: true = filled solid 'us'.
+     * The mirrored (-x) bank always renders the opposite (hollow wire 'them').
+     */
+    CANONICAL_SOLID: true,
+} as const;
+
+/**
  * POLARIZED seam language-swap (scene-richness): us/them is defined by WHERE
  * YOU STAND. A POLARIZED chunk's razor seam line runs down its center x
- * (createSeamFloorMesh, local x=0 = the chunk's world center). Pole (which side
- * a building skews toward) and language (solid 'us' vs wireframe 'them') are
- * INDEPENDENT per-building hash draws (polarizedFaction), so both banks hold a
- * mix of solid and wire buildings. The seam swap flips each near-seam building's
+ * (createSeamFloorMesh, local x=0 = the chunk's world center). Pole (which
+ * side of its chunk a building skews toward) is a per-building content draw
+ * (RoomGeneration.polarizedPole, computed in canonical mirror coordinates);
+ * language (solid 'us' vs wireframe 'them') is BANK-determined by the mirror
+ * (POLARIZED_MIRROR above), so each chunk column holds ONE language. The seam
+ * swap flips each near-seam building's
  * OWN language to its counterpart, regardless of side. This block governs the
  * ONE place that binary is allowed to dissolve: while the
  * player stands within PLAYER_BAND of the seam, buildings hugging the seam

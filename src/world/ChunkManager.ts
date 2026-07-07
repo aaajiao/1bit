@@ -13,12 +13,13 @@ import type { SharedAssets } from './SharedAssets';
 import type { EchoTarget } from './SnapshotEcho';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
-import { CABLE_UPLINK, WORLD } from '../config/constants';
+import { CABLE_UPLINK, FA_SHADOW, WORLD } from '../config/constants';
 import { disposeObject3D } from '../utils/dispose';
 import { hash } from '../utils/hash';
 import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
 import { createDynamicCable, disposeCableMaterial, disposeCableUplinkMaterial, setCableUplinkActive } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
+import { attachWaterfallStrips, disposeWaterfallAssets, waterfallEligible } from './DataWaterfall';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createInfoFloorMesh, createMoireFloorMesh, createSeamFloorMesh, disposeFloorPool } from './FloorTile';
 import { createTree } from './FloraFactory';
 import { FA_RIFT, IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, isWithinRiftClearance, POLARIZED_SEAM_SWAP, riftLineXForWorldX, ROOM_CONFIGS, RoomType, seamBandFactor, seamFlickerDuty, seamSwapActive, worldToChunkCoord } from './RoomConfig';
@@ -30,7 +31,8 @@ import {
     biomeScaleFactor,
     chunkBuildingCount,
     layoutAt,
-    polarizedFaction,
+    polarizedLocalX,
+    polarizedMirrorFrame,
     selectBuildingStyle,
     snapToGrid,
     subPaletteIndex,
@@ -38,6 +40,7 @@ import {
 import { RoomLedger } from './RoomLedger';
 import { RoomTransition } from './RoomTransition';
 import { scarDistortionFor, scarSeverityAt, scarsNearChunk } from './ScarField';
+import { createCorrectedShadowDecal, disposeShadowAssets } from './ShadowCorrection';
 import { getSharedAssets } from './SharedAssets';
 
 // Configuration (sourced from centralized constants; re-exported for consumers)
@@ -199,12 +202,25 @@ export class ChunkManager {
 
         const chunkData = chunk.userData as ExtendedChunkUserData;
 
+        // POLARIZED mirror twins (scene-style batch): both chunk columns of a
+        // POLARIZED cluster draw their CONTENT from the canonical (+x) column's
+        // seeds, and the -x column reflects the result across the cluster-center
+        // seam plane — the factions are identical content whose only difference
+        // is the rendering language. gcx is the generation-seed chunk X every
+        // content draw below uses; it equals cx outside POLARIZED (and on the
+        // canonical column itself), so no other room changes. Scars and figures
+        // deliberately keep REAL world coordinates — they break the symmetry.
+        const mirror = roomType === RoomType.POLARIZED ? polarizedMirrorFrame(cx) : null;
+        const gcx = mirror ? mirror.genCx : cx;
+
         // Phase 4 world-scale variety, sampled once per chunk. Biome is the broad
         // substrate (macro-rhythm: nudges density/scale), layout is per-chunk
         // composition, and anomaly is the very-rare landmark swap. roomType stays
         // the dominant overlay (it still dictates building STYLE below).
-        const biome = biomeAt(cx, cz);
-        const layoutMode = layoutAt(cx, cz, roomType);
+        // Sampled at gcx so a POLARIZED twin pair always shares its biome nudges
+        // and composition (identical twins even where a biome belt would split).
+        const biome = biomeAt(gcx, cz);
+        const layoutMode = layoutAt(gcx, cz, roomType);
 
         // Cross-run scars (F2): the subset of persisted scars whose influence
         // reaches this chunk, filtered ONCE per chunk build (in-memory boot
@@ -215,16 +231,20 @@ export class ChunkManager {
             ? scarsNearChunk(this.bootScars, cx, cz)
             : this.bootScars;
 
+        // One rift per FA chunk COLUMN: the crack runs along the chunk's
+        // own center x (riftLineXForWorldX(cx * CHUNK_SIZE) is exactly
+        // cx * CHUNK_SIZE), so crackLocalX is identically 0 — every FA
+        // chunk carries one complete interior crack. Kept as a derivation
+        // so both consumers (the cracked floor and the corrected-shadow
+        // keep-out below) stay pinned to the single physical-crack source.
+        const faCrackLocalX = roomType === RoomType.FORCED_ALIGNMENT
+            ? riftLineXForWorldX(cx * CHUNK_SIZE, CHUNK_SIZE) - cx * CHUNK_SIZE
+            : null;
+
         // Floor - select type based on room
         let floor: THREE.Object3D;
-        if (roomType === RoomType.FORCED_ALIGNMENT) {
-            // One rift per FA chunk COLUMN: the crack runs along the chunk's
-            // own center x (riftLineXForWorldX(cx * CHUNK_SIZE) is exactly
-            // cx * CHUNK_SIZE), so crackLocalX is identically 0 — every FA
-            // chunk carries one complete interior crack. Kept as a derivation
-            // so the floor stays pinned to the single physical-crack source.
-            const crackLocalX = riftLineXForWorldX(cx * CHUNK_SIZE, CHUNK_SIZE) - cx * CHUNK_SIZE;
-            const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial, 4, cx, cz, crackLocalX);
+        if (faCrackLocalX !== null) {
+            const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial, 4, cx, cz, faCrackLocalX);
             floor = crackedSystem.group;
             chunkData.disposables.push(...crackedSystem.disposables);
 
@@ -237,7 +257,7 @@ export class ChunkManager {
             // Rift banner cables (rift presence): taut trembling lines strung
             // across the crack. The crack is interior to the chunk now, so
             // every FA chunk owns its own banners (no shared-edge owner rule).
-            this.createRiftBanners(chunk, cx, cz, crackLocalX);
+            this.createRiftBanners(chunk, cx, cz, faCrackLocalX);
         }
         else if (roomType === RoomType.IN_BETWEEN) {
             const moireSystem = createMoireFloorMesh(CHUNK_SIZE, this.floorMaterial);
@@ -266,10 +286,12 @@ export class ChunkManager {
         // landmark instead of the normal building loop. Cables still follow the
         // resulting nodes. Anomalies use existing factories with capped counts so
         // a giant never animates hundreds of fragments at full rate (LOD gates).
-        const anomaly = anomalyAt(cx, cz, roomType);
+        // Gated/seeded at gcx so a POLARIZED twin pair agrees on being (the same)
+        // landmark — a one-sided colossus would shatter the mirror.
+        const anomaly = anomalyAt(gcx, cz, roomType);
         if (anomaly) {
-            const anomalyNodes = this.buildAnomaly(chunk, anomaly, cx, cz, roomType, biome);
-            this.createCables(chunk, anomalyNodes, cx, cz);
+            const anomalyNodes = this.buildAnomaly(chunk, anomaly, gcx, cz, roomType, biome, mirror?.mirrored ?? false);
+            this.createCables(chunk, anomalyNodes, gcx, cz, mirror?.mirrored ?? false);
             this.activeChunks[`${cx},${cz}`] = chunk;
             this.chunkGroup.add(chunk);
             return;
@@ -280,7 +302,7 @@ export class ChunkManager {
         // createCables guards nodes.length<1 and the floor renders independently.
         // Biome nudges the POPULATED count multiplicatively without ever turning
         // a clearing into a populated chunk (a 0/1 result is left untouched).
-        const baseCount = chunkBuildingCount(cx, cz, roomType);
+        const baseCount = chunkBuildingCount(gcx, cz, roomType);
         const numBuildings = baseCount <= 1
             ? baseCount
             : Math.max(1, Math.round(baseCount * biomeDensityFactor(biome)));
@@ -302,16 +324,20 @@ export class ChunkManager {
         // FORCED_ALIGNMENT grid occupancy: at most one building per snapped cell.
         const occupiedCells = roomType === RoomType.FORCED_ALIGNMENT ? new Set<string>() : null;
 
+        // FORCED_ALIGNMENT corrected-shadow budget: one decal per placed
+        // building, bounded by the FA_SHADOW safety cap (idealized shadows).
+        let faShadowBudget = roomType === RoomType.FORCED_ALIGNMENT ? FA_SHADOW.MAX_PER_CHUNK : 0;
+
         for (let i = 0; i < numBuildings; i++) {
-            const rawX = (hash(cx + i, cz) - 0.5) * (CHUNK_SIZE - 20);
-            const rawZ = (hash(cx, cz + i) - 0.5) * (CHUNK_SIZE - 20);
+            const rawX = (hash(gcx + i, cz) - 0.5) * (CHUNK_SIZE - 20);
+            const rawZ = (hash(gcx, cz + i) - 0.5) * (CHUNK_SIZE - 20);
 
             // LAYOUT MODE: compose the raw scattered position (cluster / axial
             // street / scatter). SCATTER returns the raw position unchanged, so
             // scatter chunks reproduce the pre-Phase-4 placement exactly. Runs
             // BEFORE the FORCED_ALIGNMENT grid snap and POLARIZED pole skew so
             // those room rules still win (room is the dominant overlay).
-            const composed = applyLayout(layoutMode, rawX, rawZ, cx, cz, i, layoutHalf);
+            const composed = applyLayout(layoutMode, rawX, rawZ, gcx, cz, i, layoutHalf);
             let bx = composed.x;
             let bz = composed.z;
 
@@ -335,45 +361,46 @@ export class ChunkManager {
                     continue;
             }
 
-            // POLARIZED faction split: skew each building toward the +X or -X
-            // half and pick a filled 'us' (solid) vs hollow 'them' (wire)
-            // material. Count is unchanged so cable node indices stay valid.
-            let faction: ReturnType<typeof polarizedFaction> | null = null;
-            if (roomType === RoomType.POLARIZED) {
-                faction = polarizedFaction(cx, cz, i);
-                // Push toward the faction pole, clamped within chunk bounds.
-                const halfBound = (CHUNK_SIZE - 20) / 2;
-                const skew = faction.pole * (halfBound * 0.5);
-                bx = Math.max(-halfBound, Math.min(halfBound, Math.abs(bx) * faction.pole + skew));
+            // POLARIZED pole skew + mirror, computed in CANONICAL mirror
+            // coordinates via the shared pure composition (polarizedLocalX —
+            // the same function the mirror-twin tests exercise). Count is
+            // unchanged so cable node indices stay valid.
+            if (mirror) {
+                bx = polarizedLocalX(bx, gcx, cz, i, layoutHalf, mirror.mirrored);
             }
 
             const buildGroup = new THREE.Group();
             buildGroup.position.set(bx, 0, bz);
 
             // Determine style (room-skewed cutoffs).
-            const styleSeed = hash(i, cx);
+            const styleSeed = hash(i, gcx);
             const style = selectBuildingStyle(styleSeed, roomType);
 
             // Mobility settings. FORCED_ALIGNMENT is regimented: never mobile,
             // zero rotation (the grid must read as a fixed institutional grid).
+            // POLARIZED is likewise pinned: wander displaces along WORLD axes,
+            // which would desynchronize the mirror twins — the hard-binary rank
+            // holds formation instead.
             let isMobile = false;
             if (style !== 'TREE') {
                 isMobile = hash(i, i) > 0.3;
             }
-            if (roomType === RoomType.FORCED_ALIGNMENT) {
+            if (roomType === RoomType.FORCED_ALIGNMENT || mirror) {
                 isMobile = false;
             }
 
             (buildGroup.userData as BuildingUserData) = {
                 initialPos: buildGroup.position.clone(),
                 wanderSpeed: 0.2 + hash(i, i) * 0.3,
-                wanderRange: 2.0 + hash(i, cx) * 5.0,
+                wanderRange: 2.0 + hash(i, gcx) * 5.0,
                 offset: hash(i, cz) * 100,
                 isMobile,
             };
 
             let maxHeight = 0;
-            const params = { i, cx, cz, assets: this.assets, roomType };
+            // Factories draw fragment layout from params.cx, so the canonical
+            // gcx makes twin buildings byte-identical inside their groups.
+            const params = { i, cx: gcx, cz, assets: this.assets, roomType };
             const animatedObjects = chunk.userData.animatedObjects;
             const disposables = chunkData.disposables;
 
@@ -396,11 +423,13 @@ export class ChunkManager {
                 buildGroup.rotation.y = 0;
             }
 
-            // POLARIZED: post-traverse meshes and reassign the faction material
-            // (solid 'us' vs wire 'them'). Both are shared assets, so no new
+            // POLARIZED: post-traverse meshes and reassign the faction material.
+            // Language is BANK-determined after mirroring (the +x bank solid
+            // 'us', the -x bank wire 'them') so identical twins face each other
+            // in opposite renderings. Both are shared assets, so no new
             // disposables are added; factories stay untouched.
-            if (faction) {
-                const factionMaterial = faction.solid ? this.assets.matSolid : this.assets.matWire;
+            if (mirror) {
+                const factionMaterial = mirror.solid ? this.assets.matSolid : this.assets.matWire;
                 buildGroup.traverse((obj) => {
                     if ((obj as THREE.Mesh).isMesh) {
                         (obj as THREE.Mesh).material = factionMaterial;
@@ -410,9 +439,9 @@ export class ChunkManager {
                 // Seam dissolves us/them: buildings hugging the seam get a hidden
                 // counterpart-language shell the seam-swap pass flickers on when
                 // the player stands on the line. |bx| is the chunk-local distance
-                // to the seam (seam at local x=0).
+                // to the seam (seam at local x=0), unchanged by the mirror.
                 if (seamShells && Math.abs(bx) < POLARIZED_SEAM_SWAP.BUILDING_REACH) {
-                    this.addSeamShell(buildGroup, seamShells, faction.solid, cx, cz, i);
+                    this.addSeamShell(buildGroup, seamShells, mirror.solid, cx, cz, i);
                 }
             }
 
@@ -429,7 +458,7 @@ export class ChunkManager {
             // greyscale tint, biased per biome. Shared singleton material => no
             // new disposables, no per-instance allocation. Skipped under faction
             // override (POLARIZED) so the us/them material split is not undone.
-            if (!faction) {
+            if (!mirror) {
                 this.applySubPalette(buildGroup, biome, cx, cz, i);
             }
 
@@ -443,6 +472,16 @@ export class ChunkManager {
                 maxHeight *= scaleFactor;
             }
 
+            // MIRROR REFLECTION (POLARIZED -x bank): x-reflect the whole group
+            // about its own local YZ plane so fragment offsets and rotations
+            // mirror EXACTLY — three.js flips the face winding for negative
+            // matrix determinants, so solid shading and shadows survive. Runs
+            // AFTER the biome scale (setScalar would wipe the sign) and BEFORE
+            // the scar block, so scars distort the already-mirrored twin.
+            if (mirror?.mirrored) {
+                buildGroup.scale.x *= -1;
+            }
+
             // CROSS-RUN SCAR (F2): buildings near a place the player once
             // successfully resisted lean, settle and dislocate permanently —
             // hash-deterministic, severity growing with the aggregated count
@@ -452,20 +491,48 @@ export class ChunkManager {
             // and LOD (world-position distance) are unaffected. initialPos
             // is re-captured so the wander animation orbits the scarred pose
             // instead of snapping back to the clean one.
-            if (nearScars.length > 0) {
-                const severity = scarSeverityAt(
-                    nearScars,
-                    cx * CHUNK_SIZE + buildGroup.position.x,
-                    cz * CHUNK_SIZE + buildGroup.position.z,
-                );
-                if (severity > 0) {
-                    const scar = scarDistortionFor(severity, i, cx, cz);
-                    buildGroup.rotation.x += scar.tiltX;
-                    buildGroup.rotation.z += scar.tiltZ;
-                    buildGroup.position.x += scar.offsetX;
-                    buildGroup.position.z += scar.offsetZ;
-                    buildGroup.position.y -= scar.sink;
-                    (buildGroup.userData as BuildingUserData).initialPos.copy(buildGroup.position);
+            // Severity is computed at the PRE-distortion position (the anchor
+            // the scar math has always used) and reused below by the
+            // FORCED_ALIGNMENT corrected-shadow decal — the scar breaks the
+            // shadow's correction too.
+            // In POLARIZED this runs on the WORLD position of the already-
+            // mirrored twin, with REAL chunk seeds: a scar warps one twin and
+            // not the other, so scars BREAK the mirror symmetry on purpose —
+            // your resistance is the only asymmetry the room allows.
+            const scarSeverity = nearScars.length > 0
+                ? scarSeverityAt(
+                        nearScars,
+                        cx * CHUNK_SIZE + buildGroup.position.x,
+                        cz * CHUNK_SIZE + buildGroup.position.z,
+                    )
+                : 0;
+            if (scarSeverity > 0) {
+                const scar = scarDistortionFor(scarSeverity, i, cx, cz);
+                buildGroup.rotation.x += scar.tiltX;
+                buildGroup.rotation.z += scar.tiltZ;
+                buildGroup.position.x += scar.offsetX;
+                buildGroup.position.z += scar.offsetZ;
+                buildGroup.position.y -= scar.sink;
+                (buildGroup.userData as BuildingUserData).initialPos.copy(buildGroup.position);
+            }
+
+            // FORCED_ALIGNMENT idealized shadow (scene-style batch): a
+            // hard-black, perfectly axis-aligned rect decal at the building's
+            // foot, cast in the ONE global azimuth and quantized to the 8-unit
+            // grid — deliberately too regular for the building's real shape.
+            // Runs AFTER the scar block so the decal sits at the building's
+            // final (possibly dislocated) foot, and near a scar the correction
+            // fails: the rect rotates/shears/slides by scarSeverity
+            // (ShadowCorrection). The chunk's crack line is threaded through
+            // so a shore-edge decal that would bridge the crack gap is skipped
+            // (null). Parented to the CHUNK — not the building — so it stays
+            // a floor decal (FA buildings never wander) and disposes with the
+            // chunk tree. Static: zero per-frame cost.
+            if (faShadowBudget > 0) {
+                const decal = createCorrectedShadowDecal(buildGroup, scarSeverity, cx, cz, i, faCrackLocalX);
+                if (decal) {
+                    chunk.add(decal);
+                    faShadowBudget--;
                 }
             }
 
@@ -475,6 +542,19 @@ export class ChunkManager {
             if (flickerGroups && flickerGroups.length < FLICKER_MAX_GROUPS_PER_CHUNK
                 && hash(i + FLICKER_GATE_SALT, cx) > 0.55) {
                 this.addFlickerGroup(buildGroup, flickerGroups, cx, cz, i);
+            }
+
+            // INFO_OVERFLOW data waterfall (scene-style batch): a hash-gated
+            // subset of facades leak the district's records — 1-3 thin strips
+            // of scrolling glyphs (world/DataWaterfall; shared texture/material,
+            // static meshes, disposed with the chunk tree). TREEs keep no
+            // records. Attached LAST so the sub-palette traversal and the
+            // flicker anchor pick above never touch a strip; the height is
+            // divided back to the group's local frame so the biome scale
+            // applies to the strips exactly once.
+            if (roomType === RoomType.INFO_OVERFLOW && style !== 'TREE'
+                && waterfallEligible(cx, cz, i)) {
+                attachWaterfallStrips(buildGroup, maxHeight / scaleFactor, cx, cz, i);
             }
 
             chunk.add(buildGroup);
@@ -487,8 +567,11 @@ export class ChunkManager {
             chunk.userData.buildings.push(buildGroup);
         }
 
-        // Create cables between buildings
-        this.createCables(chunk, nodes, cx, cz);
+        // Create cables between buildings. Seeded at gcx so a POLARIZED twin
+        // pair strings the same strand counts / droops between mirrored nodes;
+        // the mirrored flag x-reflects the ground-dangle fans (10-25m runs)
+        // and the ±1m jitter offsets so the static geometry mirrors exactly.
+        this.createCables(chunk, nodes, gcx, cz, mirror?.mirrored ?? false);
 
         this.activeChunks[`${cx},${cz}`] = chunk;
         this.chunkGroup.add(chunk);
@@ -795,10 +878,13 @@ export class ChunkManager {
      *
      * @param chunk - The chunk group being built.
      * @param anomaly - Which landmark kind to build.
-     * @param cx - Chunk X coordinate (deterministic seed).
+     * @param cx - Chunk X coordinate (deterministic seed; the canonical genCx
+     *   in POLARIZED so mirror-twin chunks build the same landmark).
      * @param cz - Chunk Z coordinate (deterministic seed).
      * @param roomType - Room type (threaded into building params).
      * @param biome - The chunk's biome (light scale nudge).
+     * @param mirrored - POLARIZED -x bank flag: x-reflect the landmark so the
+     *   twin pair stays a true mirror (false everywhere else).
      * @returns Cable nodes for the landmark's anchor buildings.
      */
     private buildAnomaly(
@@ -808,6 +894,7 @@ export class ChunkManager {
         cz: number,
         roomType: RoomType,
         biome: ReturnType<typeof biomeAt>,
+        mirrored: boolean,
     ): CableNode[] {
         const chunkData = chunk.userData as ExtendedChunkUserData;
         const animatedObjects = chunk.userData.animatedObjects;
@@ -821,6 +908,11 @@ export class ChunkManager {
             const group = new THREE.Group();
             let h = createBlocksBuilding(group, params);
             group.scale.setScalar(ANOMALY_COLOSSUS_SCALE);
+            // POLARIZED mirror: the twin colossus is the same landmark seen in
+            // a mirror (x-reflected; winding handled by three.js), centered on
+            // the chunk so its placement is its own reflection.
+            if (mirrored)
+                group.scale.x *= -1;
             h *= ANOMALY_COLOSSUS_SCALE;
             (group.userData as BuildingUserData) = {
                 initialPos: group.position.clone(),
@@ -843,7 +935,12 @@ export class ChunkManager {
                     const cone = new THREE.Mesh(this.assets.coneGeo, this.assets.matDark);
                     const sy = 6 + hash(gx + gz, cx + cz) * 6;
                     cone.scale.set(1.2, sy, 1.2);
-                    cone.position.set(start + gx * spacing, sy * 1.5, start + gz * spacing);
+                    // POLARIZED mirror: the height pattern is not x-symmetric,
+                    // so the twin grid reflects each needle's x to stay a true
+                    // mirror (cones are rotationally symmetric — no reflection
+                    // of the mesh itself needed).
+                    const px = start + gx * spacing;
+                    cone.position.set(mirrored ? -px : px, sy * 1.5, start + gz * spacing);
                     cone.castShadow = true;
                     cone.receiveShadow = true;
                     chunk.add(cone);
@@ -884,11 +981,19 @@ export class ChunkManager {
     }
 
     /**
-     * Create cables for a chunk
+     * Create cables for a chunk. All hash draws are seeded by the caller's
+     * (canonical, in POLARIZED) cx/cz; `mirrored` x-reflects the dangle
+     * directions and strand jitter offsets on the POLARIZED -x column, so the
+     * static cable geometry mirrors its twin exactly (node positions arrive
+     * already mirrored). Per-frame sway phases stay position-seeded
+     * (CableSystem) and thus differ between twins — animation noise only.
      */
-    private createCables(chunk: Chunk, nodes: CableNode[], cx: number, cz: number): void {
+    private createCables(chunk: Chunk, nodes: CableNode[], cx: number, cz: number, mirrored: boolean = false): void {
         if (nodes.length < 1)
             return;
+
+        // x-reflection factor for the POLARIZED mirror twin.
+        const mx = mirrored ? -1 : 1;
 
         // Cables between buildings
         if (nodes.length > 1) {
@@ -902,12 +1007,12 @@ export class ChunkManager {
                         droop: 5 + hash(i, s) * 10,
                         heavySag: hash(i, i) > 0.8,
                         offsetS: new THREE.Vector3(
-                            (hash(s, i) - 0.5) * 2,
+                            (hash(s, i) - 0.5) * 2 * mx,
                             0,
                             (hash(i, s) - 0.5) * 2,
                         ),
                         offsetE: new THREE.Vector3(
-                            (hash(s, i + 1) - 0.5) * 2,
+                            (hash(s, i + 1) - 0.5) * 2 * mx,
                             0,
                             (hash(i + 1, s) - 0.5) * 2,
                         ),
@@ -929,7 +1034,7 @@ export class ChunkManager {
                     const dist = 10 + hash(i, k) * 15;
                     const groundPos = startNode.obj.position.clone().add(
                         new THREE.Vector3(
-                            Math.cos(angle) * dist,
+                            Math.cos(angle) * dist * mx,
                             0,
                             Math.sin(angle) * dist,
                         ),
@@ -946,7 +1051,7 @@ export class ChunkManager {
                         droop: 2,
                         heavySag: false,
                         offsetS: new THREE.Vector3(
-                            hash(k, i) - 0.5,
+                            (hash(k, i) - 0.5) * mx,
                             0,
                             hash(i, k) - 0.5,
                         ),
@@ -1397,6 +1502,15 @@ export class ChunkManager {
         // singleton in CableSystem, never disposed per-chunk).
         disposeCableMaterial();
         disposeCableUplinkMaterial();
+
+        // Dispose the module-shared corrected-shadow decal assets exactly once
+        // (shared unit quad + ink material — never disposed per-chunk).
+        disposeShadowAssets();
+
+        // Dispose the module-shared data-waterfall assets exactly once (ONE
+        // glyph texture + ONE scrolling strip material shared by every strip
+        // in every INFO chunk — never disposed per-chunk).
+        disposeWaterfallAssets();
 
         // Dispose shared assets
         this.assets.dispose();
