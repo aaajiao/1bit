@@ -1149,6 +1149,134 @@ export const WEATHER_BEHAVIOR_BIAS = {
 } as const;
 
 /**
+ * The world reacts (weather batch): weather is FELT because everything else
+ * responds. GALE strength + heading lean on the cables, whip the FA rift
+ * banners, tilt the distant figures and shear the INFO record strips; the
+ * FOREWARN ramp turns kin toward the coming storm and quickens the cable
+ * uplink; and each room answers the AFTERMATH in its own vocabulary — INFO
+ * pools the rain's records into glyph puddles, FORCED_ALIGNMENT lets its
+ * idealized shadows shudder before re-tidying them bit-exact, POLARIZED
+ * leaves a couple of near-seam buildings stuck in the other faction's
+ * language until the residue settles. Every effect is gated by its phase
+ * scalar (intensity / forewarn / aftermath) and decays to an exact rest
+ * state with it; all visual language stays hard on/off (per-pixel threshold
+ * dissolves, stepped jitter, hard holds — never a soft fade).
+ */
+export const WEATHER_REACTIONS = {
+    /** GALE — the directional shove, felt through what it moves. */
+    GALE: {
+        /**
+         * Aftermath residual: fraction of the wind surviving into the
+         * aftermath tail (wind = intensity while the gale runs, then
+         * RESIDUAL x aftermath as the residue decays). The tail re-arrives
+         * hard at the event boundary — the 1-bit language — and drains to 0
+         * with the aftermath window. Applies to the ENVIRONMENT consumers
+         * (cables, banners, strips); figures straighten with the live storm.
+         */
+        AFTERMATH_RESIDUAL: 0.5,
+        /** Ordinary cables: mid-point swing amplitude (m) at full wind. */
+        CABLE_SWAY_AMPLITUDE: 0.8,
+        /** Ordinary cables: swing angular speed (rad/s) — fixed frequency. */
+        CABLE_SWAY_SPEED: 2.4,
+        /** Steady downwind bow of the cable mid-point (m) at full wind. */
+        CABLE_BOW: 0.5,
+        /** FA banners: tremble AMPLITUDE multiplier gain at full wind (x(1+g)). */
+        BANNER_AMP_GAIN: 2.0,
+        /**
+         * FA banners: the whip layer — a second, faster oscillation added on
+         * top of the base tremble, amplitude-gated by the wind. Frequency is
+         * FIXED and the wind scales only amplitude: time-warping the existing
+         * tremble's speed (sin(t x speed x wind)) would kick the phase by
+         * t x d(wind)/dt on every intensity ramp — a violent artifact.
+         */
+        BANNER_WHIP_AMPLITUDE: 0.25,
+        BANNER_WHIP_SPEED: 23,
+        /** Figures: body tilt into the wind (rad) at full wind. */
+        FIGURE_LEAN_RAD: 0.09,
+        /**
+         * INFO record strips: sideways texture shear at full wind (u per v
+         * texture unit), signed by the wind heading's x component. Content
+         * shear, not geometry: the records FALL diagonally.
+         */
+        WATERFALL_SHEAR_MAX: 0.45,
+    },
+    /** FOREWARN omens — the world announces what the sky has drawn. */
+    FOREWARN: {
+        /** Cable uplink pulse-rate multiplier gain at full ramp (x(1+g)). */
+        UPLINK_RATE_GAIN: 0.4,
+    },
+    /**
+     * INFO_OVERFLOW after RAIN: the downpour's records pool on the floor —
+     * a few glyph-language blot decals stamped near the player, dissolving
+     * cell-by-cell (hard per-pixel threshold) across the aftermath window.
+     */
+    PUDDLES: {
+        /** Decal pool size (fixed; stamped per event, reused, never grows). */
+        COUNT: 5,
+        /** Placement ring around the player: min / max radius (m). */
+        RADIUS_MIN: 2,
+        RADIUS_MAX: 9,
+        /** Decal footprint edge (m): min + hash-drawn span. */
+        SIZE_MIN: 0.9,
+        SIZE_SPAN: 1.3,
+        /**
+         * Floor-decal lift (m), paired with polygonOffset -1/-1 (the
+         * FloorTile / FA_SHADOW pattern). Between FA_SHADOW.LIFT (0.02) and
+         * the ash-trace pool (0.03) — distinct layers never coincide.
+         */
+        LIFT: 0.025,
+        /** Shared blot texture size (texels); multiple of GLYPH_PITCH. */
+        TEX_SIZE: 32,
+        /** Glyph cell pitch (texels) — the INFO floor's 4px dot-matrix. */
+        GLYPH_PITCH: 4,
+        /** Cells whose hash draw exceeds this carry a lit record dot. */
+        GLYPH_GATE: 0.45,
+        /** Peak cell-existence gate at the blot center (radial falloff). */
+        SHAPE_FILL: 0.85,
+        /**
+         * Hash salts (utils/hash, distinct integer namespaces past the
+         * PRECIPITATION traces' 1637): stamp angle/radius/spin/size draws
+         * and the shared texture field. Next feature picks > 1721
+         * (SEAM_HOLD below owns 1709/1721).
+         */
+        SALTS: { ANGLE: 1657, RADIUS: 1663, SPIN: 1667, SIZE: 1669, TEX: 1693 },
+    },
+    /**
+     * FORCED_ALIGNMENT after STATIC: the corrected shadows shudder — decals
+     * within RADIUS of the player take small stepped jitter offsets for the
+     * aftermath window, then snap back EXACTLY to their corrected pose (the
+     * system re-tidies after inspection). Stored-and-restored transforms;
+     * amplitude drains with the aftermath scalar.
+     */
+    SHADOW_JITTER: {
+        /** Collection radius (m) around the player at aftermath start. */
+        RADIUS: 30,
+        /** Hard cap on jittered decals (bounded per-frame pass). */
+        MAX_DECALS: 12,
+        /** Jitter re-draw steps per second (stepped, never smooth). */
+        STEP_RATE: 8,
+        /** Max |offset| (m) per axis at full aftermath. */
+        AMPLITUDE: 0.3,
+        /** Hash salts for the per-step x/z offset draws. */
+        SALTS: { X: 1697, Z: 1699 },
+    },
+    /**
+     * POLARIZED after GLITCH: the rupture leaves 1-2 near-seam buildings
+     * HOLDING their counterpart-faction shell for the aftermath window
+     * (ChunkManager.holdSeamShellsForAftermath), then releases them back to
+     * the live seam-swap pass. Choice is deterministic per event (hash +
+     * event direction).
+     */
+    SEAM_HOLD: {
+        /** Buildings held per event (hash-drawn within [MIN, MAX]). */
+        COUNT_MIN: 1,
+        COUNT_MAX: 2,
+        /** Hash salts: how many to hold / which candidates. */
+        SALTS: { COUNT: 1709, PICK: 1721 },
+    },
+} as const;
+
+/**
  * Per-room sky vocabulary (scene-style batch): the flat background becomes
  * four skies. One camera-following inverted dome (world/RoomSky) draws the
  * CURRENT room's treatment behind everything — sparse blinking specks

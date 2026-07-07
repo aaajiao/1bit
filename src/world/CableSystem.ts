@@ -1,9 +1,69 @@
 import type { CableNode, CableOptions, DynamicCable } from '../types';
 // 1-bit Chimera Void - Cable System
 import * as THREE from 'three';
-import { CABLE_UPLINK } from '../config';
+import { CABLE_UPLINK, WEATHER_REACTIONS } from '../config';
 import { CableShader } from '../shaders/DitherShader';
 import { hash } from '../utils/hash';
+
+// --- Weather reactions: the wind on the wires -------------------------------
+// Module-level wind state (the updateCableTime precedent: one write per frame
+// from core/WeatherReactionsUpdater, read by every cable's geometry update).
+// While a GALE runs — and through its half-strength aftermath residual — the
+// mid-point of every cable swings and bows downwind, and the FA rift banners
+// whip harder. Exactly 0 in calm: the wind branch is skipped entirely and the
+// geometry math stays bit-identical to the windless path.
+let cableWindStrength = 0;
+let cableWindX = 0;
+let cableWindZ = 0;
+
+// Forewarn omen: pulse-rate multiplier folded into the uplink speed mapping
+// (updateCableUplinkUniforms). 1 = no announcement (bit-identical uplink).
+let uplinkRateScale = 1;
+
+/**
+ * Set this frame's gale wind on the cable layer. Strength is clamped to
+ * [0,1]; the heading uses the project's (sin, cos) azimuth convention (the
+ * precipitation layer's wind vector). Written once per frame by
+ * core/WeatherReactionsUpdater; consumed by updateCableGeometry.
+ */
+export function setCableWind(strength: number, directionRad: number): void {
+    cableWindStrength = Math.max(0, Math.min(1, strength));
+    cableWindX = Math.sin(directionRad);
+    cableWindZ = Math.cos(directionRad);
+}
+
+/**
+ * Set this frame's forewarn pulse-rate multiplier for the uplink dashes
+ * (uplinkForewarnScale). 1 restores the exact base mapping. Written once per
+ * frame by core/WeatherReactionsUpdater; consumed by
+ * updateCableUplinkUniforms.
+ */
+export function setUplinkRateScale(scale: number): void {
+    uplinkRateScale = Math.max(0, scale);
+}
+
+/**
+ * FA banner tremble amplitude under wind: the base amplitude multiplied up
+ * by GALE.BANNER_AMP_GAIN at full wind (x1 exactly in calm). The banners'
+ * SPEED content rises via the separate fixed-frequency whip layer instead of
+ * time-warping this oscillator (see WEATHER_REACTIONS.GALE doc). Pure;
+ * exported for testing.
+ */
+export function windTrembleAmplitude(base: number, windStrength: number): number {
+    const w = Math.max(0, Math.min(1, windStrength));
+    return base * (1 + w * WEATHER_REACTIONS.GALE.BANNER_AMP_GAIN);
+}
+
+/**
+ * Forewarn pulse-rate multiplier for the uplink dashes: 1 at ramp 0 rising
+ * linearly to 1 + FOREWARN.UPLINK_RATE_GAIN at full ramp — the wires report
+ * a little faster while the storm is announced. Ramp clamped to [0,1].
+ * Pure; exported for testing.
+ */
+export function uplinkForewarnScale(forewarn: number): number {
+    const f = Math.max(0, Math.min(1, forewarn));
+    return 1 + f * WEATHER_REACTIONS.FOREWARN.UPLINK_RATE_GAIN;
+}
 
 // Shared shader material for all cables
 let cableShaderMat: THREE.ShaderMaterial | null = null;
@@ -173,7 +233,10 @@ export function updateCableUplinkUniforms(time: number, boost: number): void {
         return;
     const u = cableUplinkMat.uniforms;
     u.time.value = time;
-    u.speed.value = uplinkPulseSpeed(boost);
+    // Forewarn omen (weather reactions): the announced storm quickens the
+    // report rate — the base speed mapping times uplinkForewarnScale (1 when
+    // nothing is drawn, restoring the exact legacy speed).
+    u.speed.value = uplinkPulseSpeed(boost) * uplinkRateScale;
     u.density.value = uplinkDashDensity(boost);
 }
 
@@ -327,9 +390,36 @@ export function updateCableGeometry(cable: DynamicCable, time: number = 0): void
     // oscillation of the curve's control point — taut cables quiver rather
     // than sway. Pure function of absolute time, so it is frame-rate
     // independent; ordinary cables carry no tremble and skip this entirely.
+    // Under a GALE the banners whip harder: the base amplitude multiplies up
+    // (windTrembleAmplitude) and a second, faster fixed-frequency whip layer
+    // rides on top, amplitude-gated by the wind so it decays to exactly
+    // nothing with the storm (phase x 1.7 decorrelates it from the base
+    // quiver without a second stored phase).
     if (options.tremble) {
         const { amplitude, speed, phase } = options.tremble;
-        mid.y += Math.sin(time * speed + phase) * amplitude;
+        mid.y += Math.sin(time * speed + phase) * windTrembleAmplitude(amplitude, cableWindStrength);
+        if (cableWindStrength > 0) {
+            const { BANNER_WHIP_AMPLITUDE, BANNER_WHIP_SPEED } = WEATHER_REACTIONS.GALE;
+            mid.y += Math.sin(time * BANNER_WHIP_SPEED + phase * 1.7)
+                * BANNER_WHIP_AMPLITUDE * cableWindStrength;
+        }
+    }
+
+    // GALE on ordinary wires (weather reactions): the wind swings every
+    // cable's control point vertically and bows it steadily downwind. The
+    // desync phase is derived from the stable start anchor with the project
+    // hash's magic constants (the ChunkAnimator fog-recycle trick — this is
+    // a per-cable per-frame path, so no hash() call), and the oscillator is
+    // a pure function of absolute time at FIXED frequency: only amplitude
+    // follows the wind, so the sway decays cleanly with the storm and the
+    // calm path (strength 0) skips the branch entirely.
+    if (cableWindStrength > 0) {
+        const { CABLE_SWAY_AMPLITUDE, CABLE_SWAY_SPEED, CABLE_BOW } = WEATHER_REACTIONS.GALE;
+        const windPhase = pStart.x * 12.9898 + pStart.z * 78.233;
+        mid.y += Math.sin(time * CABLE_SWAY_SPEED + windPhase)
+            * CABLE_SWAY_AMPLITUDE * cableWindStrength;
+        mid.x += cableWindX * CABLE_BOW * cableWindStrength;
+        mid.z += cableWindZ * CABLE_BOW * cableWindStrength;
     }
 
     // Update positions and lineDistance arrays

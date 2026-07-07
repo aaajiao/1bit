@@ -153,6 +153,14 @@ export interface SeamShell {
     phase: number;
     /** Last visibility written, to skip redundant .visible writes. */
     current: boolean;
+    /**
+     * GLITCH-aftermath hold (weather reactions): while true the shell stays
+     * forced visible — the building is stuck in the other faction's language
+     * — outranking the live seam-swap duty until
+     * ChunkManager.releaseHeldSeamShells clears it. Absent/false on every
+     * shell the aftermath never touched (the live pass behaves identically).
+     */
+    held?: boolean;
 }
 
 export interface ChunkUserData {

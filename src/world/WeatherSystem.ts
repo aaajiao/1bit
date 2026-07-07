@@ -45,6 +45,23 @@ export const ONSET_SECONDS = 1.6;
 
 export type WeatherType = typeof WEATHER_TYPES[keyof typeof WEATHER_TYPES];
 
+// Module-level mirror of the app instance's latest broadcast (the CableSystem
+// module-singleton precedent). main.ts wires exactly one WeatherSystem; helpers
+// that neither hold it nor can be rethreaded through main's fixed call list
+// (core/RoomFlowUpdater's weather-reactions layer) read the last update() here
+// — one frame stale for consumers earlier in the frame order, exactly the
+// getLastState() staleness contract. Null until the first update().
+let lastBroadcast: WeatherState | null = null;
+
+/**
+ * Latest WeatherState returned by ANY WeatherSystem.update() call this
+ * session (in the app there is exactly one instance). See getLastState for
+ * the staleness contract; prefer the instance method when you hold one.
+ */
+export function getLastWeatherBroadcast(): WeatherState | null {
+    return lastBroadcast;
+}
+
 /**
  * Map a weather type to the value the SCREEN shader may see. The DitherShader
  * gates EVERY weather overlay — the per-type effects, the onset strobe/sweep
@@ -297,6 +314,7 @@ export class WeatherSystem implements WeatherSystemInterface {
                 ? Math.min(1, this.elapsed / this.duration)
                 : 0,
         };
+        lastBroadcast = this.lastState;
         return this.lastState;
     }
 

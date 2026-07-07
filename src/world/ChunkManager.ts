@@ -42,6 +42,7 @@ import { RoomTransition } from './RoomTransition';
 import { scarDistortionFor, scarSeverityAt, scarsNearChunk } from './ScarField';
 import { createCorrectedShadowDecal, disposeShadowAssets } from './ShadowCorrection';
 import { getSharedAssets } from './SharedAssets';
+import { heldSwapCount, pickHeldShellIndex } from './WeatherReactions';
 
 // Configuration (sourced from centralized constants; re-exported for consumers)
 export const CHUNK_SIZE = WORLD.CHUNK_SIZE;
@@ -106,6 +107,10 @@ export class ChunkManager {
     // of the 3x3 scan window while still loaded (RENDER_DISTANCE keeps a 5x5),
     // instead of freezing them in the counterpart faction's language forever.
     private seamLitChunks = new Set<string>();
+    // GLITCH-aftermath seam holds (weather reactions): the shells currently
+    // forced into the counterpart language, with their chunk keys, so
+    // releaseHeldSeamShells can hand them back to the live pass cleanly.
+    private heldSeamShells: { shell: SeamShell; key: string }[] = [];
     private chunkGroup: THREE.Group = new THREE.Group();
     private floorMaterial: THREE.MeshLambertMaterial;
     private assets: SharedAssets;
@@ -1443,7 +1448,12 @@ export class ChunkManager {
 
                 let anyLit = false;
                 for (const shell of shells) {
-                    const on = seamSwapActive(time, shell.phase, duty);
+                    // A GLITCH-aftermath hold outranks the live duty: the
+                    // building stays stuck in the other faction's language
+                    // until releaseHeldSeamShells hands it back (weather
+                    // reactions). held is undefined on every untouched shell,
+                    // so the ordinary flicker path is unchanged.
+                    const on = shell.held === true || seamSwapActive(time, shell.phase, duty);
                     if (on !== shell.current) {
                         shell.current = on;
                         for (const mesh of shell.meshes)
@@ -1463,13 +1473,21 @@ export class ChunkManager {
     /**
      * Force every seam shell in chunk `key` hidden and drop the key from the
      * lit-chunk set. No-op (but still clears the key) if the chunk unloaded.
+     * HELD shells (GLITCH-aftermath, weather reactions) are exempt: they keep
+     * their counterpart language even out of the scan window, and the key
+     * stays tracked so this sweep revisits them until the hold releases.
      */
     private hideSeamShells(key: string): void {
         const chunk = this.activeChunks[key];
+        let anyHeld = false;
         if (chunk) {
             const shells = (chunk.userData as ExtendedChunkUserData).seamShells;
             if (shells) {
                 for (const shell of shells) {
+                    if (shell.held === true) {
+                        anyHeld = true;
+                        continue;
+                    }
                     if (shell.current) {
                         shell.current = false;
                         for (const mesh of shell.meshes)
@@ -1478,13 +1496,122 @@ export class ChunkManager {
                 }
             }
         }
-        this.seamLitChunks.delete(key);
+        if (!anyHeld)
+            this.seamLitChunks.delete(key);
+    }
+
+    /**
+     * GLITCH-aftermath seam hold (weather reactions): pick 1-2 near-seam
+     * buildings from the 3x3 window around the player — deterministically
+     * per event (hash + the event's own heading; heldSwapCount /
+     * pickHeldShellIndex) — and force their counterpart shells ON for the
+     * aftermath window. The rupture's residue: us/them stays dissolved on a
+     * couple of buildings after the storm. Extends the live seam-swap pass's
+     * own contract rather than fighting it: updateSeamSwap treats held
+     * shells as lit regardless of duty, hideSeamShells exempts them from the
+     * out-of-window sweep, and the lit-chunk bookkeeping keeps tracking them
+     * until releaseHeldSeamShells hands control back. Any prior hold is
+     * released first (one aftermath at a time — a fresh event clears the
+     * previous residue upstream). Runs once per event, never per frame.
+     *
+     * @param playerPos - Player world position at the aftermath's start.
+     * @param directionRad - The ended event's heading (the deterministic seed).
+     */
+    holdSeamShellsForAftermath(playerPos: THREE.Vector3, directionRad: number): void {
+        this.releaseHeldSeamShells();
+
+        const cx = Math.floor(playerPos.x / CHUNK_SIZE);
+        const cz = Math.floor(playerPos.z / CHUNK_SIZE);
+        // Candidates in a fixed scan order (stable per world state), so the
+        // hash pick is deterministic per event.
+        const candidates: { shell: SeamShell; key: string }[] = [];
+        for (let x = -1; x <= 1; x++) {
+            for (let z = -1; z <= 1; z++) {
+                const key = `${cx + x},${cz + z}`;
+                const chunk = this.activeChunks[key];
+                if (!chunk)
+                    continue;
+                const shells = (chunk.userData as ExtendedChunkUserData).seamShells;
+                if (!shells)
+                    continue;
+                for (const shell of shells)
+                    candidates.push({ shell, key });
+            }
+        }
+        if (candidates.length === 0)
+            return;
+
+        const count = Math.min(heldSwapCount(directionRad), candidates.length);
+        for (let n = 0; n < count; n++) {
+            let idx = pickHeldShellIndex(n, candidates.length, directionRad);
+            // Collision between picks: step to the next free candidate
+            // (count <= candidates.length guarantees one exists).
+            while (candidates[idx].shell.held === true)
+                idx = (idx + 1) % candidates.length;
+            const { shell, key } = candidates[idx];
+            shell.held = true;
+            if (!shell.current) {
+                shell.current = true;
+                for (const mesh of shell.meshes)
+                    mesh.visible = true;
+            }
+            this.seamLitChunks.add(key);
+            this.heldSeamShells.push({ shell, key });
+        }
+    }
+
+    /**
+     * Release every GLITCH-aftermath seam hold back to normal seam-swap
+     * control: clear the flags, hide the shells (the live pass — which may
+     * not even be running if the player left POLARIZED — re-lights them next
+     * frame if the duty says so), and tidy the lit-chunk keys that no longer
+     * track anything lit. Idempotent; runs once per event end, never per
+     * frame. Shells whose chunk already unloaded are dead references — the
+     * flag/visibility writes are harmless no-ops on detached objects.
+     */
+    releaseHeldSeamShells(): void {
+        if (this.heldSeamShells.length === 0)
+            return;
+        for (const held of this.heldSeamShells) {
+            held.shell.held = false;
+            if (held.shell.current) {
+                held.shell.current = false;
+                for (const mesh of held.shell.meshes)
+                    mesh.visible = false;
+            }
+        }
+        for (const held of this.heldSeamShells) {
+            const chunk = this.activeChunks[held.key];
+            const shells = chunk
+                ? (chunk.userData as ExtendedChunkUserData).seamShells
+                : undefined;
+            if (!shells || !shells.some(s => s.current))
+                this.seamLitChunks.delete(held.key);
+        }
+        this.heldSeamShells.length = 0;
+    }
+
+    /**
+     * The loaded chunk containing world position (x, z), or null when that
+     * chunk is outside the active window. The chunk group's own position is
+     * its origin (cx x CHUNK_SIZE, 0, cz x CHUNK_SIZE), so callers parenting
+     * decals into it (weather-reaction aftermath traces: chunk-parented
+     * objects dispose with their chunk) subtract it for chunk-local coords.
+     */
+    getChunkAt(worldX: number, worldZ: number): Chunk | null {
+        const cx = Math.floor(worldX / CHUNK_SIZE);
+        const cz = Math.floor(worldZ / CHUNK_SIZE);
+        return this.activeChunks[`${cx},${cz}`] ?? null;
     }
 
     /**
      * Dispose all resources and cleanup
      */
     dispose(): void {
+        // Drop any GLITCH-aftermath seam holds (the shells die with their
+        // chunks below; this just empties the reference list).
+        this.heldSeamShells.length = 0;
+
         // Remove all active chunks
         for (const key in this.activeChunks) {
             this.removeChunk(key);
