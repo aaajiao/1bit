@@ -280,6 +280,8 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
 
 这些存在也会回应你：把花保持在中等亮度数秒，近处剪影会渐渐与你同频呼吸；成功反抗后的几分钟里，远处的 rebel 爆发更频繁——你的反抗给了他者许可；剪影会围立在疤痕周围见证，而 INFO 房间的字符地板在疤痕处被系统涂抹。你的光也逃不出这张网：花过亮时电缆浮现流向天眼的虚线脉冲（上报），建筑立面偶尔硬闪烁出本局快照的低清草稿（`SnapshotEcho`），而在 POLARIZED 的 seam 线上，两侧阵营的渲染语言会在你站上去时互相渗透——us/them 由你站的位置定义。
 
+天空不再是一块纯色：每个房间有自己的天穹（`RoomSky`）——INFO 的闪烁微点、FA 的水平账本线、IN_BETWEEN 错位的双月、POLARIZED 沿 seam 对半分的墨与纸。天气也不再只是镜头上的噪声：每场天气有前兆（剪影转向来向、电缆脉冲变密、天穹微微劣化），有世界空间的落体（雨的短竖线、灰烬的慢沉降），也有余波（INFO 的字符水洼、FA 被打歪又被系统精确摆正的阴影、POLARIZED 残留翻转的建筑）。除了雨/静电/故障，还有灰烬、风，以及极罕见的蚀——墨盘横穿天穹，白昼塌向黑夜，所有剪影抬头；若你的花够亮，黑暗中他们会转向你。天气的频率与类型还会被你的行为温和偏置：世界以气象回应你的活法。
+
 ---
 
 ### 阶段四：解决 (Resolution)
@@ -450,6 +452,9 @@ bun run build && bun run preview   # 构建并预览构建产物，才能验证 
     │   ├── CableUplinkUpdater.ts   # 花光过亮时驱动线缆上报脉冲
     │   ├── SeamSwapUpdater.ts      # POLARIZED seam 带内阵营语言互换驱动
     │   ├── ProximityUpdaters.ts    # 近玩家扫描统一入口（线缆音频/上报 + seam 互换）
+    │   ├── DataWaterfallUpdater.ts # INFO 数据瀑布滚动驱动（花亮度调速）
+    │   ├── PrecipitationUpdater.ts # 世界降水驱动（雨/灰烬/风）
+    │   ├── WeatherReactionsUpdater.ts # 天气行为反应驱动（风吹/前兆/余波）
     │   ├── RoomFlowUpdater.ts      # 房间归属/行为画像/世界系统驱动
     │   ├── StatsSunsetUpdater.ts   # 日落快照/遗忘入口/疤痕记录
     │   ├── StressLevel.ts          # 应激等级（抖动语言驱动）
@@ -475,6 +480,7 @@ bun run build && bun run preview   # 构建并预览构建产物，才能验证 
     │   ├── FlowerProp.ts       # 手持发光花朵
     │   ├── FlowerHintMechanic.ts # 花朵提示机制
     │   ├── GazeMechanic.ts     # 凝视机制
+    │   ├── ViewmodelEcho.ts    # IN_BETWEEN 视模型错位重影
     │   └── OverrideMechanic.ts # 反抗（override）机制
     ├── world/
     │   ├── ChunkManager.ts    # 无限地形区块管理
@@ -493,7 +499,16 @@ bun run build && bun run preview   # 构建并预览构建产物，才能验证 
     │   ├── GhostSystem.ts     # 上一局轨迹幽灵
     │   ├── ScarField.ts       # 跨局疤痕场
     │   ├── SnapshotEcho.ts    # 运行中把本局快照草稿闪现到附近立面
-    │   ├── WeatherSystem.ts   # 天气效果系统（逐房间签名天气）
+    │   ├── RoomSky.ts         # 每房间一种天空（穹顶，随天气/昼夜/蚀响应）
+    │   ├── DataWaterfall.ts   # INFO 立面数据瀑布（字符流）
+    │   ├── ShadowCorrection.ts # FA 理想化阴影贴片（疤痕处失准）
+    │   ├── Precipitation.ts   # 世界空间降水（雨短竖线/灰烬微粒，单 draw call）
+    │   ├── AshTraces.ts       # 灰烬地面痕迹池（余波期逐像素溶解）
+    │   ├── EclipseDarkening.ts # 蚀的暗化通道（不经过昼夜状态机）
+    │   ├── RainGlyphPuddles.ts # INFO 雨后字符水洼
+    │   ├── ShadowAftermath.ts  # FA 风暴余波阴影抖动与精确复位
+    │   ├── WeatherReactions.ts # 天气反应纯逻辑（风吹/前兆朝向/余波选取）
+    │   ├── WeatherSystem.ts   # 天气核心（前兆→爆发→余波；雨/静电/故障/灰烬/风/蚀；行为偏置）
     │   ├── DayNightCycle.ts   # 昼夜循环系统
     │   └── SkyEye.ts          # 天空之眼
     ├── stats/
@@ -890,7 +905,7 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 | 指标 | 数值 |
 |------|------|
 | TypeScript 代码 | ~18,800 行（另有 ~8,300 行测试） |
-| 单元测试 | 816 个（34 个文件） |
+| 单元测试 | 1045 个（43 个文件） |
 | 设计文档 | ~80,000 字 |
 | 核心机制 | 4 个 |
 | 房间状态 | 4 种 |

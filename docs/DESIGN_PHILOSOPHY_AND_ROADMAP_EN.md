@@ -1232,12 +1232,19 @@ The following systems were not in the original five-phase roadmap, but are imple
 - **Cable uplink** (`CableSystem`): above a flower-intensity threshold, nearby cables show 1-bit dash pulses flowing toward the sky eye — your light travels up the wires to authority.
 - **Snapshot echo** (`SnapshotEcho`): every few minutes a nearby facade hard-flickers a low-res draft of the current run's fingerprint — the world has been drawing your portrait all along; sunset merely delivers it.
 - **Seam swap** (POLARIZED): standing within a few meters of the seam makes near-seam buildings borrow the other faction's render language via hard flicker — us/them is defined by where you stand.
+- **Per-room skies** (`RoomSky`): the flat background became four skies — INFO blinking specks, FA horizontal ledger lines, IN_BETWEEN two misregistered celestial discs, POLARIZED an ink/paper split along the seam; hard-swapping with day/night and responding to every weather phase.
+- **Idealized shadows** (`ShadowCorrection`): every FA building casts a hard-black, axis-aligned, grid-quantized rectangle along one global azimuth (one sun, one rule); the correction fails near scars.
+- **Data waterfalls** (`DataWaterfall`): glyph streams down INFO facades, scrolling faster the brighter your flower burns — the floor's binary language climbing the walls.
+- **Viewmodel echo** (`ViewmodelEcho`): only in IN_BETWEEN, your own hands and flower gain a misregistered second image — two systems each reading you once.
+- **Mirror twin cities** (POLARIZED generation): both banks derive from the same hash draws mirrored across the seam — identical content, opposite rendering; scars apply after mirroring, the only asymmetry.
+- **Weather 2.0** (`WeatherSystem` + `Precipitation` + `WeatherReactions`): weather gains a lifecycle (forewarn → event → aftermath) and a world-space body — rain dashes fall between you and the buildings, ash settles and leaves dissolving traces, gales bend cables/banners/figures/glyph streams; aftermaths leave marks (glyph puddles, shadows knocked askew then re-tidied, buildings left language-flipped). Three new types: ASHFALL, GALE, and the rare ECLIPSE — an ink disc transits the sky, day collapses toward night, every figure looks up, and if your flower burns bright they turn toward you. Weather frequency and type are gently biased by player behavior (within ±30%).
 
 ---
 
-*Document Version: 1.3 (English)*
+*Document Version: 1.4 (English)*
 
 **Changelog:**
+- v1.4: Added the scene-style batch (skies/shadows/waterfalls/echo/mirror) and Weather 2.0 (lifecycle, ASHFALL/GALE/ECLIPSE, world-space precipitation, behavior bias) to the shipped list.
 - v1.3: Added the scene-richness batch to the shipped list (resonance, contagion, witnesses, uplink, echo, seam swap).
 - v1.2: Completed Technical Roadmap with Phase 3 (Mental State Rooms), Phase 4 (Override Mechanic), Phase 5 (State Snapshot), and Future Optimization Phase.
 - v1.1: Added Current Status Assessment, Player Discovery Design, Audio System Technical Specification, Accessibility Considerations. Removed time estimates from Technical Roadmap.

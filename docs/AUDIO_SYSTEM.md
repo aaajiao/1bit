@@ -30,6 +30,8 @@ graph LR
     GazeFilter --> Destination[音频输出 Destination]
 ```
 
+> 低通滤镜现由多个来源共享：凝视、日落快照、以及天气"蚀"（ECLIPSE）事件（深度随凌日曲线，配置见 `config/audio.ts` 的 `ECLIPSE_AUDIO`）。合成规则为**取最深截止频率者**（deepest-cutoff-wins，`AudioEngine.tick` 中取 min）。
+
 ### 生命周期 (Lifecycle)
 
 - **初始化**: `core/PauseController.ts` 在首次用户手势时调用 `audio.init()`（自动播放策略；同时启动环境低鸣），若仍在开始界面/暂停菜单则立即 `suspend()`。
