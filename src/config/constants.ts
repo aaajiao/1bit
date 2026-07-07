@@ -1149,6 +1149,134 @@ export const WEATHER_BEHAVIOR_BIAS = {
 } as const;
 
 /**
+ * World-space precipitation (weather batch): weather stops being a screen
+ * overlay and becomes something that falls BETWEEN the player and the world.
+ * One instanced quad cloud in a camera-following wrap volume (world/
+ * Precipitation) draws RAIN as hard vertical dashes and ASHFALL as sparse
+ * drifting motes; GALE exports pure wind that tilts dashes and streams motes
+ * sideways. Everything is strict 1-bit: instances pop in/out on hard seed
+ * thresholds (never a fade), the far rim drops whole dashes via discard, and
+ * the ash TRACES ground pool (world/AshTraces) dissolves per-pixel on hard
+ * hash thresholds across the aftermath window.
+ */
+export const PRECIPITATION = {
+    /** Instance budget (single InstancedMesh, ONE draw call at any fraction). */
+    COUNT: 1024,
+    /**
+     * Horizontal wrap box edge (m) around the player. Instances are world-
+     * anchored inside it and recycle across the far edge as the player moves,
+     * so precipitation always surrounds the camera without following it.
+     * The dithered rim (EDGE_INNER) hides the square footprint as a circle.
+     */
+    BOX_SIZE: 40,
+    /** Vertical wrap cylinder height (m) above the floor plane. */
+    HEIGHT: 24,
+    /**
+     * Wrap span (s / m) for the accumulated time / fall-distance uniforms.
+     * Integrating on the CPU keeps intensity ramps from teleporting particles
+     * (y depends on the integral of speed, not time x speed); the wrap keeps
+     * float32 precision healthy on long sessions at the cost of ONE hard
+     * reshuffle frame every ~34 minutes — invisible under the dither.
+     */
+    ACCUM_WRAP: 2048,
+    /** Per-instance fall-rate jitter span (fraction of 1; columns desync). */
+    SPEED_JITTER: 0.5,
+    /**
+     * Fraction of the wrap radius where the dithered rim begins: each
+     * instance draws a hashed cutoff radius between this and 1.0 and drops
+     * ALL its pixels past it (discard, never alpha).
+     */
+    EDGE_INNER: 0.7,
+    /** RAIN: short hard dashes falling fast, tilted by their own wind. */
+    RAIN: {
+        /** Active instance fraction at intensity 0 / extra at intensity 1. */
+        FRACTION_BASE: 0.2,
+        FRACTION_SPAN: 0.6,
+        /** Fall speed (m/s) at intensity 0 / extra at intensity 1. */
+        SPEED_BASE: 13,
+        SPEED_SPAN: 9,
+        /** Horizontal wind magnitude (m/s) at full intensity (slight tilt). */
+        WIND: 2.5,
+        /**
+         * How much of the room's weatherRainDensity flavor (RoomConfig, e.g.
+         * INFO_OVERFLOW's 2.5 data downpour) leans the fall speed. Density
+         * multiplies the active fraction directly; speed only leans.
+         */
+        DENSITY_SPEED_LEAN: 0.2,
+        /** Dash quad width / length (m) — a short vertical stroke. */
+        WIDTH: 0.03,
+        LENGTH: 0.55,
+    },
+    /** ASHFALL: sparse slow motes drifting down with lateral wander. */
+    ASH: {
+        FRACTION_BASE: 0.06,
+        FRACTION_SPAN: 0.16,
+        SPEED_BASE: 0.7,
+        SPEED_SPAN: 0.6,
+        /** Gentle drift wind magnitude (m/s) at full intensity. */
+        WIND: 1.1,
+        /** Mote quad edge (m) — a small camera-facing square. */
+        WIDTH: 0.07,
+        LENGTH: 0.07,
+        /** Lateral wander amplitude (m) / frequency (rad/s phase rate). */
+        WANDER_AMP: 0.8,
+        WANDER_FREQ: 0.9,
+    },
+    /**
+     * GALE wind magnitude (m/s) at full intensity. The gale owns NO particles
+     * — it is exported as pure wind for whatever the falling layer shows.
+     */
+    GALE_WIND: 16,
+    /**
+     * Advance guard: max active fraction of the UPCOMING type's particles at
+     * full forewarn ramp — a few stray dashes/motes before the storm breaks.
+     */
+    FOREWARN_FRACTION_MAX: 0.04,
+    /**
+     * Hash salts (utils/hash, distinct integer namespaces; primes above the
+     * 1597 weather-direction salt) for the once-at-construction per-instance
+     * bake: wrap-box cell x/z, activation seed, vertical/wander phase.
+     */
+    SALTS: { CELL_X: 1601, CELL_Z: 1607, SEED: 1609, PHASE: 1613 },
+    /**
+     * Ash traces — the memory layer: during ASHFALL small pale specks settle
+     * on the floor near the player (bounded recycled pool, world-anchored)
+     * and dissolve per-pixel across the aftermath window when it ends.
+     */
+    TRACES: {
+        /** Pool capacity (hard cap; oldest slots recycle — never grows). */
+        CAP: 48,
+        /** Spawn rate (traces/s) at full ASHFALL intensity. */
+        RATE_MAX: 2.5,
+        /** Per-frame spawn cap (also bounds the carry-over accumulator). */
+        MAX_PER_FRAME: 2,
+        /** Placement ring around the player: min / max radius (m). */
+        RADIUS_MIN: 1.5,
+        RADIUS: 10,
+        /** Speck footprint edge (m): min + hash-drawn span. */
+        SIZE_MIN: 0.12,
+        SIZE_SPAN: 0.22,
+        /**
+         * Floor-decal lift (m): the FloorTile-decal z-fighting pattern
+         * (paired with polygonOffset -1/-1), above FA_SHADOW.LIFT (0.02) and
+         * the IN_BETWEEN moire layer (0.02) so specks land on top of both.
+         */
+        LIFT: 0.03,
+        /** Dissolve grain cells across one speck (per-pixel hard threshold). */
+        GRAIN: 6,
+        /** Fraction of grain cells that exist at all (irregular blot shape). */
+        SHAPE_FILL: 0.62,
+        /**
+         * Keep-out half-band (m) around a FORCED_ALIGNMENT rift line: ash
+         * never settles over the abyss (the FA_SHADOW crack-keepout analogue).
+         */
+        CRACK_KEEPOUT: 4,
+        /** Hash salts: placement angle/radius, size draw, per-slot pixel seed. */
+        SALTS: { ANGLE: 1619, RADIUS: 1621, SIZE: 1627, SLOT_SEED: 1637 },
+    },
+} as const;
+
+/**
  * The world reacts (weather batch): weather is FELT because everything else
  * responds. GALE strength + heading lean on the cables, whip the FA rift
  * banners, tilt the distant figures and shear the INFO record strips; the

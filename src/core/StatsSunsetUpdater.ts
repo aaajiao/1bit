@@ -16,6 +16,7 @@ import { clearStoredTrail, saveTrail, TrailRecorder } from '../stats/TrailRecord
 import { DayNightCycle } from '../world/DayNightCycle';
 import { EclipseDarkening, eclipseTransitDepth } from '../world/EclipseDarkening';
 import { RoomSky } from '../world/RoomSky';
+import { PrecipitationUpdater } from './PrecipitationUpdater';
 
 /** Frame-stable dependencies wired once at construction. */
 export interface StatsSunsetDeps {
@@ -37,8 +38,9 @@ export interface StatsSunsetDeps {
  * "上次" start-screen line and the pause-menu replay entry — flow-audit
  * medium #8 / enhancement #8), and the F4 ghost-trail recorder (persisted on
  * the same sunset/unload boundaries). Also owns the RoomSky dome (the
- * per-room sky vocabulary): it lives beside the DayNightCycle because its
- * ink/paper polarity must follow the cycle's day/night blend exactly.
+ * per-room sky vocabulary) and the world-space precipitation layers
+ * (core/PrecipitationUpdater): both live beside the DayNightCycle because
+ * their ink/paper polarity must follow the cycle's day/night blend exactly.
  * main.ts only threads per-frame state in.
  */
 export class StatsSunsetUpdater {
@@ -53,8 +55,11 @@ export class StatsSunsetUpdater {
     // step and the dome so RoomSky's per-frame uBase copy sees the darkened
     // color and dome + background stay consistent.
     private readonly eclipse: EclipseDarkening;
-    // Kept for the dome's weather feed: the sky answers the lifecycle
-    // broadcast (forewarn/onset/peak/aftermath/eclipse) via getLastState().
+    // World-space precipitation (weather batch): rain dashes / ash motes /
+    // gale wind + the ash-trace ground pool, driven from the weather
+    // system's LAST broadcast (this helper runs before the weather step in
+    // main's fixed order — one frame stale by design, the sky-eye precedent).
+    private readonly precipitation: PrecipitationUpdater;
     private readonly weather: WeatherSystem;
     private readonly snapshotGenerator = new StateSnapshotGenerator();
     private readonly snapshotOverlay = new SnapshotOverlay();
@@ -120,6 +125,10 @@ export class StatsSunsetUpdater {
         // ECLIPSE darkening (weather batch): additive background/fog compose,
         // no scene objects of its own — nothing to dispose.
         this.eclipse = new EclipseDarkening(deps.scene);
+
+        // Weather made physical (weather batch): the falling layer + ash
+        // traces, permanent scene residents like the dome.
+        this.precipitation = new PrecipitationUpdater(deps.scene);
 
         // Restore the previous session's persisted snapshot (enhancement #8):
         // seed the replay cache and surface the observation as one quiet line.
@@ -333,6 +342,17 @@ export class StatsSunsetUpdater {
             this.weather.getLastState(),
         );
 
+        // World-space precipitation: same day-polarity feed as the dome; the
+        // weather broadcast is the LAST frame's (null on the boot frame —
+        // main updates weather after this helper), which is by design.
+        this.precipitation.update(
+            delta,
+            this.weather.getLastState(),
+            playerPos,
+            currentRoomType,
+            this.dayNight.isDaytime(),
+        );
+
         // Pre-sunset foreshadow (~30s lead, enhancement #8): derived from the
         // delta-driven cycle phase — no new wall clock. Audio half here; the
         // visual half is read by main.ts via getSunsetForeshadow().
@@ -388,5 +408,6 @@ export class StatsSunsetUpdater {
         this.saveCardEl?.removeEventListener('click', this.boundSaveCard);
         this.snapshotOverlay.dispose();
         this.roomSky.dispose();
+        this.precipitation.dispose();
     }
 }
