@@ -98,6 +98,15 @@ export interface RoomShaderConfig {
     //   strikes + horizontal tear lines every few seconds (POLARIZED's
     //   rupture-storm; a faint 0.25 echo in IN_BETWEEN).
     weatherInvertStrike: number;
+    // ===== Burn-in afterimage (INFO_OVERFLOW) =====
+    // burnInStrength: 0-1 gate + coverage of the stare burn-in ghost
+    //   (uBurnAmount). In the overload room, what you hold your gaze on
+    //   accumulates into a heat ghost (core/BurnInPass) that stays stamped
+    //   over the world as hard ink, eroding pixel by pixel — what you stared
+    //   at cannot be unseen. Nonzero ONLY in INFO_OVERFLOW; 0 elsewhere, so
+    //   the standard RoomTransition lerp fades the whole feature in/out at
+    //   room boundaries and every other room skips the GPU pass entirely.
+    burnInStrength: number;
 }
 
 /**
@@ -153,6 +162,8 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             weatherBandStrength: 0.0,
             weatherMisregisterBoost: 0.0,
             weatherInvertStrike: 0.0,
+            // Staring burns the image in: everything you look at leaves residue.
+            burnInStrength: 0.85,
         },
         audio: {
             baseFrequency: 60,
@@ -192,6 +203,7 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             weatherBandStrength: 1.0,
             weatherMisregisterBoost: 0.0,
             weatherInvertStrike: 0.0,
+            burnInStrength: 0.0,
         },
         audio: {
             baseFrequency: 55,
@@ -233,6 +245,7 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             weatherMisregisterBoost: 1.0,
             // Faint echo of the rupture-storm: occasional invert strikes.
             weatherInvertStrike: 0.25,
+            burnInStrength: 0.0,
         },
         audio: {
             baseFrequency: 50,
@@ -273,6 +286,7 @@ export const ROOM_CONFIGS: Record<RoomType, RoomConfig> = {
             weatherBandStrength: 0.0,
             weatherMisregisterBoost: 0.0,
             weatherInvertStrike: 1.0,
+            burnInStrength: 0.0,
         },
         audio: {
             baseFrequency: 40,
@@ -978,6 +992,9 @@ export function lerpRoomShaderConfig(
         weatherBandStrength: lerp(from.weatherBandStrength, to.weatherBandStrength),
         weatherMisregisterBoost: lerp(from.weatherMisregisterBoost, to.weatherMisregisterBoost),
         weatherInvertStrike: lerp(from.weatherInvertStrike, to.weatherInvertStrike),
+        // Burn-in gate: a plain scalar, so RoomTransition's lerp IS the
+        // feature's fade-in/out at room boundaries.
+        burnInStrength: lerp(from.burnInStrength, to.burnInStrength),
     };
 }
 

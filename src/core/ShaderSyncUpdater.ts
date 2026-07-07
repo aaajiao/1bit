@@ -3,7 +3,9 @@ import type { PlayerManager, PlayerState } from '../player/PlayerManager';
 import type { WeatherState } from '../types';
 import type { ChunkManager } from '../world/ChunkManager';
 import type { RoomType } from '../world/RoomConfig';
+import type { BurnInPass } from './BurnInPass';
 import type { ShaderUniformParams } from './ShaderUniformUpdater';
+import { getBurnInPass } from './BurnInPass';
 import { createShaderUniformParams, updateShaderUniforms } from './ShaderUniformUpdater';
 import { StressLevel } from './StressLevel';
 
@@ -12,13 +14,17 @@ import { StressLevel } from './StressLevel';
  * object from this frame's player/world state (fields mutated in place — the
  * per-frame uniform sync allocates nothing) and pushes it into the
  * DitherShader uniforms. Also owns the F5 stress->grain smoother
- * (core/StressLevel): pressure coarsens the dither sampling grid.
- * main.ts only threads per-frame state in.
+ * (core/StressLevel): pressure coarsens the dither sampling grid — and feeds
+ * the burn-in pass its CPU frame (camera stillness + room gate) along the
+ * same camera-state route. main.ts only threads per-frame state in.
  */
 export class ShaderSyncUpdater {
     private readonly params: ShaderUniformParams;
     // F5 stress->grain smoother (pressure coarsens the dither sampling grid).
     private readonly stress = new StressLevel();
+    // Burn-in afterimage (INFO_OVERFLOW): the GPU pass registered against the
+    // shader quad by createPostProcessing; fed one CPU frame per update.
+    private readonly burnIn: BurnInPass | null;
 
     constructor(
         shaderQuad: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>,
@@ -29,6 +35,7 @@ export class ShaderSyncUpdater {
             shaderQuad,
             chunkManager.getCurrentShaderConfig(),
         );
+        this.burnIn = getBurnInPass(shaderQuad);
     }
 
     /**
@@ -70,6 +77,15 @@ export class ShaderSyncUpdater {
             playerState.flowerIntensity,
             currentRoomType,
             sunsetForeshadow,
+        );
+        // Burn-in stare detection (INFO_OVERFLOW afterimage): camera
+        // orientation -> stillness, plus the room's transition-blended burn
+        // gate. Delta-driven HERE — main gates this update while paused, so a
+        // paused frame arms no accumulation and the ghost freezes.
+        this.burnIn?.setFrame(
+            delta,
+            this.player.controls.getCamera().quaternion,
+            sp.shaderConfig.burnInStrength,
         );
         updateShaderUniforms(sp);
     }

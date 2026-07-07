@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { createBlueNoiseTexture } from '../shaders/BlueNoiseTexture';
 import { DitherShader } from '../shaders/DitherShader';
 import { disposeRenderTarget } from '../utils/dispose';
+import { BurnInPass, registerBurnInPass } from './BurnInPass';
 
 /**
  * Components created by post-processing setup
@@ -13,6 +14,13 @@ export interface PostProcessingComponents {
     composerScene: THREE.Scene;
     composerCamera: THREE.OrthographicCamera;
     shaderQuad: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>;
+    /**
+     * Burn-in afterimage heat pass (INFO_OVERFLOW): low-res ping-pong buffer
+     * stepped between the scene render and the dither composite. Registered
+     * against the shader quad so ShaderSyncUpdater can feed it per-frame CPU
+     * state without main.ts learning a new wire (core/BurnInPass registry).
+     */
+    burnIn: BurnInPass;
 }
 
 /**
@@ -107,6 +115,12 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
                 uDitherModeTo: { value: 0 },
                 uDitherModeBlend: { value: 1.0 },
                 tBlueNoise: { value: createBlueNoiseTexture() },
+                // Burn-in afterimage (INFO_OVERFLOW). The amount rides the
+                // room chain via ShaderUniformUpdater (default 0 = inert,
+                // which also parks the null sampler); the heat texture is
+                // bound directly by the BurnInPass in renderComposed.
+                uBurnAmount: { value: 0.0 },
+                uBurnMap: { value: null },
             } satisfies DitherUniforms,
             vertexShader: DitherShader.vertexShader,
             fragmentShader: DitherShader.fragmentShader,
@@ -114,7 +128,12 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
     );
     composerScene.add(shaderQuad);
 
-    return { renderTarget, composerScene, composerCamera, shaderQuad };
+    // Burn-in heat pass, sized against the composer target and reachable
+    // from the shader quad (see PostProcessingComponents.burnIn doc).
+    const burnIn = new BurnInPass(width, height);
+    registerBurnInPass(shaderQuad, burnIn);
+
+    return { renderTarget, composerScene, composerCamera, shaderQuad, burnIn };
 }
 
 /**
@@ -124,6 +143,8 @@ export function createPostProcessing(renderScale: number): PostProcessingCompone
  */
 export function disposePostProcessing(components: PostProcessingComponents): void {
     disposeRenderTarget(components.renderTarget);
+    // Burn-in heat pass (its ping-pong targets + accumulation quad).
+    components.burnIn.dispose();
     const material = components.shaderQuad.material;
     const blueNoise = material.uniforms.tBlueNoise?.value as THREE.Texture | null | undefined;
     blueNoise?.dispose();
@@ -142,6 +163,8 @@ export function updatePostProcessingSize(
     const height = window.innerHeight * renderScale;
 
     components.renderTarget.setSize(width, height);
+    // Keep the burn-in heat buffer proportional to the composer target.
+    components.burnIn.setSize(width, height);
     (components.shaderQuad.material.uniforms.resolution.value as THREE.Vector2).set(width, height);
     // Keep the dither-scale anchor on the OUTPUT framebuffer center (canvas
     // px — the final pass renders at full window size, unscaled).
@@ -177,6 +200,12 @@ export function renderComposed(
 ): void {
     renderer.setRenderTarget(components.renderTarget);
     renderer.render(scene, camera);
+    // Burn-in heat step (INFO_OVERFLOW): consumes THIS frame's render as the
+    // burn source and binds the heat texture for the composite below. Frame
+    // tickets come from the pause-gated update phase, so a paused render
+    // (start screen, tab-back) neither accumulates nor decays; outside the
+    // burn room (and once drained) the call is a boolean check.
+    components.burnIn.run(renderer, components.renderTarget.texture, components.shaderQuad.material);
     renderer.setRenderTarget(null);
     renderer.render(components.composerScene, components.composerCamera);
 }
