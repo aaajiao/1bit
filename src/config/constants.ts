@@ -1148,6 +1148,55 @@ export const VIEWMODEL = {
 } as const;
 
 /**
+ * IN_BETWEEN viewmodel misregister echo (scene-style batch): the room that
+ * cannot resolve you prints you twice. Only while the current room is
+ * IN_BETWEEN, the first-person viewmodel (hands + held flower) gains a
+ * second, misregistered image — the hands re-read as solid ink, the flower
+ * as bare paper wireframe — offset a few centimeters on the page like a
+ * duotone plate that missed registration. Two systems each read you once;
+ * they disagree. Hard on/off with a frame-counted flicker on room change
+ * (the batch's swap language, ROOM_SKY.SWAP_FLICKER_FRAMES); the echo shares
+ * the source geometries and mirrors the pose pairwise each frame
+ * (player/ViewmodelEcho).
+ */
+export const VIEWMODEL_ECHO = {
+    /**
+     * Camera-local offset (m) of the echo at VIEWMODEL.REFERENCE_ASPECT. The
+     * x component is rescaled by aspect / REFERENCE_ASPECT each frame
+     * (misregisterOffsetX) so the ON-SCREEN offset is aspect-stable —
+     * misregistration is a property of the page, not of the world. y needs
+     * no compensation (the vertical FOV is fixed; only aspect changes).
+     */
+    OFFSET_X: 0.035,
+    OFFSET_Y: 0.018,
+    /**
+     * Depth pushback (m, negative = deeper in front of the camera): overlap
+     * regions lose the depth test against the source cleanly, so the echo
+     * peeks out around the silhouette instead of z-fighting through it.
+     */
+    OFFSET_Z: -0.02,
+    /**
+     * Room hard-swap flicker length (frames), same language as
+     * ROOM_SKY.SWAP_FLICKER_FRAMES: frame-counted (not time-based) so it
+     * stays a barely-there stutter at any frame rate, and odd so the
+     * countdown ends hidden and the settle frame reads as the swap landing.
+     */
+    FLICKER_FRAMES: 3,
+    /**
+     * Drawn after the default-order opaque pass (world + source hands have
+     * written depth) and before the sky eye's authority overlay (999).
+     * Paired with depthWrite:false on both echo materials: the echo can only
+     * appear where it peeks out from behind the source, and can never punch
+     * holes into the source's transparent pass (petals/sepals).
+     */
+    RENDER_ORDER: 1,
+    /** Ink plate: the system that reads your body as solid mass. */
+    INK_COLOR: 0x000000,
+    /** Paper plate: the system that reads your desire as bare structure. */
+    PAPER_COLOR: 0xFFFFFF,
+} as const;
+
+/**
  * Override mechanic constants
  */
 export const OVERRIDE = {
