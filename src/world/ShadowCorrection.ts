@@ -9,7 +9,10 @@
 // outline: idealized, filed, subtly wrong. Near a cross-run scar the tidying
 // FAILS: the rectangle rotates, shears and slides by hash-drawn amounts scaled
 // by scar severity (ScarField) — where you resisted, even the shadows stay
-// uncorrected. Hard on/off ink only: no soft penumbra, no alpha fade.
+// uncorrected. Hard on/off ink only: no soft penumbra, no alpha fade. One
+// exception to "every building": a decal whose x reach would enter the rift
+// crack's keep-out band is skipped (shadowCrossesCrack) — the shore corridor's
+// crack gap stays visually open, never bridged by a floating black quad.
 //
 // Generation-time only. Decals are static meshes parented to the CHUNK and
 // freed with it: the module-shared unit-quad geometry rides the same benign
@@ -85,9 +88,11 @@ export function quantizeShadowExtent(extent: number): number {
 /**
  * The idealized shadow rect for a building footprint: both extents quantized
  * to the grid, and the rect center displaced along the ONE fixed global
- * azimuth by OFFSET_FACTOR of each (quantized) extent — so the offset steps
- * in the same institutional rhythm as the sizes. Every FA building in the
- * world shares the same azimuth: one sun, one rule. Pure.
+ * azimuth by a single magnitude — OFFSET_FACTOR of the MEAN quantized extent,
+ * so the offset still steps in the grid rhythm while the displacement
+ * DIRECTION stays exactly AZIMUTH_RAD for every aspect ratio (scaling each
+ * component by its own extent would bend the direction per building). Every
+ * FA building in the world shares the same azimuth: one sun, one rule. Pure.
  *
  * @param footprintX - Building footprint extent along world x (m).
  * @param footprintZ - Building footprint extent along world z (m).
@@ -96,11 +101,12 @@ export function correctedShadowRect(footprintX: number, footprintZ: number): Sha
     const { AZIMUTH_RAD, OFFSET_FACTOR } = FA_SHADOW;
     const width = quantizeShadowExtent(footprintX);
     const depth = quantizeShadowExtent(footprintZ);
+    const magnitude = OFFSET_FACTOR * (width + depth) / 2;
     return {
         width,
         depth,
-        offsetX: Math.cos(AZIMUTH_RAD) * width * OFFSET_FACTOR,
-        offsetZ: Math.sin(AZIMUTH_RAD) * depth * OFFSET_FACTOR,
+        offsetX: Math.cos(AZIMUTH_RAD) * magnitude,
+        offsetZ: Math.sin(AZIMUTH_RAD) * magnitude,
     };
 }
 
@@ -135,6 +141,35 @@ export function scarShadowSkew(
         offsetX: (hash(i + SHADOW_OFFSET_X_SALT, cx + cz) - 0.5) * 2 * MAX_SKEW_OFFSET * s,
         offsetZ: (hash(i + SHADOW_OFFSET_Z_SALT, cz) - 0.5) * 2 * MAX_SKEW_OFFSET * s,
     };
+}
+
+/**
+ * Whether a shadow decal at building foot `footX` (chunk-local) would enter
+ * the keep-out band of the chunk's rift crack line — the FA "shore corridor"
+ * rule applied to shadows: buildings respect FA_RIFT.CLEARANCE, but a large
+ * decal's offset + half-extent can out-reach it and visually bridge the crack
+ * gap, floating over the abyss plane. The x half-extent is EXACT for the
+ * composed T·RotY·Shear·Scale decal transform (shear first, then rotation),
+ * so unscarred rects degrade to width/2. Pure; exported for testing.
+ *
+ * @param footX - Building foot chunk-local x (m).
+ * @param crackLocalX - Chunk-local x of the crack line (0 on the regular path).
+ * @param rect - The corrected shadow rect (correctedShadowRect).
+ * @param skew - The scar skew (scarShadowSkew; zeros when unscarred).
+ */
+export function shadowCrossesCrack(
+    footX: number,
+    crackLocalX: number,
+    rect: ShadowRect,
+    skew: ShadowSkew,
+): boolean {
+    const centerX = footX + rect.offsetX + skew.offsetX;
+    // Max |x - centerX| over the four transformed corners (±w/2, ±d/2):
+    // shear maps x -> x + shear·z, then rotY maps x -> cos·x + sin·z.
+    const halfX = Math.abs(Math.cos(skew.rotY)) * rect.width / 2
+        + Math.abs(Math.cos(skew.rotY) * skew.shear + Math.sin(skew.rotY)) * rect.depth / 2;
+    return centerX - halfX < crackLocalX + FA_SHADOW.CRACK_KEEPOUT
+        && centerX + halfX > crackLocalX - FA_SHADOW.CRACK_KEEPOUT;
 }
 
 // --- Module-shared decal assets ---------------------------------------------
@@ -195,7 +230,10 @@ const _mScale = new THREE.Matrix4();
  * @param cx - Chunk X coordinate (deterministic seed).
  * @param cz - Chunk Z coordinate (deterministic seed).
  * @param i - Building index within the chunk (deterministic seed).
- * @returns The decal mesh, positioned in chunk-local space.
+ * @param crackLocalX - Chunk-local x of the chunk's rift crack line, or null
+ *   when the chunk has none: a decal whose x reach would enter the crack's
+ *   keep-out band is skipped (shadowCrossesCrack) so it never bridges the gap.
+ * @returns The decal mesh, positioned in chunk-local space; null when skipped.
  */
 export function createCorrectedShadowDecal(
     buildGroup: THREE.Group,
@@ -203,12 +241,18 @@ export function createCorrectedShadowDecal(
     cx: number,
     cz: number,
     i: number,
-): THREE.Mesh {
+    crackLocalX: number | null = null,
+): THREE.Mesh | null {
     _footprintBox.setFromObject(buildGroup);
     _footprintBox.getSize(_footprintSize); // (0,0,0) when the box is empty
 
     const rect = correctedShadowRect(_footprintSize.x, _footprintSize.z);
     const skew = scarShadowSkew(scarSeverity, i, cx, cz);
+
+    if (crackLocalX !== null
+        && shadowCrossesCrack(buildGroup.position.x, crackLocalX, rect, skew)) {
+        return null;
+    }
 
     const { geo, mat } = getShadowAssets();
     const decal = new THREE.Mesh(geo, mat);

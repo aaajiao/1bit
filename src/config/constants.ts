@@ -770,7 +770,11 @@ export const FA_SHADOW = {
      */
     MIN_SIZE: 4,
     MAX_SIZE: 20,
-    /** Fraction of each rect extent it is displaced along the azimuth. */
+    /**
+     * Displacement magnitude as a fraction of the MEAN quantized rect extent
+     * ((width + depth) / 2): ONE scalar along the ONE azimuth, so every
+     * shadow's displacement direction is identical regardless of aspect ratio.
+     */
     OFFSET_FACTOR: 0.4,
     /**
      * Lift (m) above the floor plane — the FloorTile redaction-disc epsilon
@@ -791,6 +795,15 @@ export const FA_SHADOW = {
     MAX_SHEAR: 0.5,
     /** Scar-skew clamp: extra lateral slide off the corrected spot (m, per axis). */
     MAX_SKEW_OFFSET: 2.5,
+    /**
+     * Half-width (m) of the keep-out band around the FA rift crack line: a
+     * decal whose x extent would enter this band is skipped entirely, so no
+     * shadow ever floats over the crack gap / abyss plane or visually bridges
+     * the jagged silhouette the shore corridor keeps open. Matches the abyss
+     * plane half-width in FloorTile.createCrackedFloorMesh (crackWidth/2 + 3),
+     * which already covers the maximum jag erosion.
+     */
+    CRACK_KEEPOUT: 5,
 } as const;
 
 /**

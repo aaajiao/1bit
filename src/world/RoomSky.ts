@@ -259,6 +259,13 @@ export class RoomSky {
         this.mesh.renderOrder = ROOM_SKY.RENDER_ORDER;
         // The shell always surrounds the camera — culling it would blank the sky.
         this.mesh.frustumCulled = false;
+        // Hidden until the first update: the app boots PAUSED behind the start
+        // screen (PauseController) and renders without updating, so the dome
+        // would otherwise show these constructor defaults (SPECKS, ink/paper)
+        // regardless of the spawn room. Keeping the flat background until the
+        // real room is known matches pre-dome behavior; the first update's
+        // settle branch reveals it (no flicker — waking up is not a room swap).
+        this.mesh.visible = false;
         scene.add(this.mesh);
     }
 

@@ -4,10 +4,12 @@
 // content from the canonical (+x) column's seeds and the -x column reflects
 // the result across the cluster-center seam plane, so the factions are
 // identical content whose only difference is the rendering language (solid
-// 'us' vs wireframe 'them'). These tests cover the pure mirror math and a
-// faithful replication of the ChunkManager placement pipeline: involution,
-// mirrored twin placements, side-determined language, and per-chunk
-// determinism independent of generation order.
+// 'us' vs wireframe 'them'). These tests cover the pure mirror math and the
+// placement pipeline composed from the SAME pure helpers ChunkManager
+// consumes (polarizedLocalX carries the skew+clamp+mirror step, so the
+// contract cannot silently diverge): involution, mirrored twin placements,
+// side-determined language, and per-chunk determinism independent of
+// generation order.
 
 import { describe, expect, it } from 'vitest';
 import { WORLD } from '../src/config/constants';
@@ -22,8 +24,8 @@ import {
     applyLayout,
     chunkBuildingCount,
     layoutAt,
+    polarizedLocalX,
     polarizedMirrorFrame,
-    polarizedPole,
     polarizedTwinCx,
     selectBuildingStyle,
 } from '../src/world/RoomGeneration';
@@ -31,8 +33,9 @@ import {
 const CHUNK = WORLD.CHUNK_SIZE;
 
 /**
- * Replicates ChunkManager.createChunk's POLARIZED placement pipeline with the
- * pure helpers only: canonical raw draw -> layout -> pole skew -> mirror.
+ * Composes ChunkManager.createChunk's POLARIZED placement pipeline from the
+ * shared pure helpers: canonical raw draw -> layout -> polarizedLocalX
+ * (pole skew + clamp + mirror — the exact function ChunkManager calls).
  * Returns the building's chunk-local (x, z) and the world x.
  */
 function polarizedPlacement(cx: number, cz: number, i: number): { x: number; z: number; worldX: number } {
@@ -43,11 +46,7 @@ function polarizedPlacement(cx: number, cz: number, i: number): { x: number; z: 
     const rawZ = (hash(gcx, cz + i) - 0.5) * (CHUNK - 20);
     const layoutMode = layoutAt(gcx, cz, RoomType.POLARIZED);
     const composed = applyLayout(layoutMode, rawX, rawZ, gcx, cz, i, half);
-    const pole = polarizedPole(gcx, cz, i);
-    const skew = pole * (half * 0.5);
-    let bx = Math.max(-half, Math.min(half, Math.abs(composed.x) * pole + skew));
-    if (frame.mirrored)
-        bx = -bx;
+    const bx = polarizedLocalX(composed.x, gcx, cz, i, half, frame.mirrored);
     return { x: bx, z: composed.z, worldX: cx * CHUNK + bx };
 }
 
@@ -116,6 +115,40 @@ describe('polarizedMirror', () => {
                 const canonical = frame.mirrored ? twinFrame : frame;
                 expect(canonical.solid).toBe(POLARIZED_MIRROR.CANONICAL_SOLID);
             }
+        });
+    });
+
+    describe('polarizedLocalX', () => {
+        const HALF = (CHUNK - 20) / 2;
+
+        it('stays within the placement bounds for any composed x', () => {
+            for (const composedX of [-HALF * 2, -HALF, -7.3, 0, 12.9, HALF, HALF * 2]) {
+                for (let i = 0; i < 6; i++) {
+                    const x = polarizedLocalX(composedX, 4, -3, i, HALF, false);
+                    expect(Math.abs(x)).toBeLessThanOrEqual(HALF);
+                }
+            }
+        });
+
+        it('mirrored is the exact negation of the canonical result', () => {
+            for (const composedX of [-22.5, -1, 0, 8.4, 29]) {
+                for (let i = 0; i < 6; i++) {
+                    const canonical = polarizedLocalX(composedX, 4, -3, i, HALF, false);
+                    expect(polarizedLocalX(composedX, 4, -3, i, HALF, true)).toBe(-canonical);
+                }
+            }
+        });
+
+        it('parks the building on its hash-chosen pole (sign follows the pole draw)', () => {
+            // |x|*pole + pole*half/2 always lands on the pole's half-chunk.
+            const signs = new Set<number>();
+            for (let i = 0; i < 12; i++) {
+                const x = polarizedLocalX(10, 4, -3, i, HALF, false);
+                expect(x).not.toBe(0);
+                signs.add(Math.sign(x));
+            }
+            // Both poles occur across a building sweep (not one shared side).
+            expect(signs.size).toBe(2);
         });
     });
 

@@ -114,7 +114,7 @@ describe('skyPalette', () => {
     });
 });
 
-describe('rOOM_SKY config', () => {
+describe('config contract (ROOM_SKY)', () => {
     it('keeps the dome inside the camera far plane even at the rift bottom', () => {
         // Camera far is 1000 (SceneSetup); the deepest camera position is the
         // rift fall (FA_RIFT.FOG.BOTTOM), and the dome follows x/z only.

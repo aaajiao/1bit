@@ -9,12 +9,16 @@ import {
 } from '../src/world/DataWaterfall';
 
 describe('dataWaterfall (INFO_OVERFLOW facades leak their records)', () => {
-    describe('dATA_WATERFALL config contract', () => {
+    describe('config contract (DATA_WATERFALL)', () => {
         it('keeps the building gate a usable fraction and the strip band sane', () => {
             expect(DATA_WATERFALL.BUILDING_FRACTION).toBeGreaterThan(0);
             expect(DATA_WATERFALL.BUILDING_FRACTION).toBeLessThanOrEqual(1);
             expect(DATA_WATERFALL.STRIPS_MIN).toBeGreaterThanOrEqual(1);
             expect(DATA_WATERFALL.STRIPS_MIN).toBeLessThanOrEqual(DATA_WATERFALL.STRIPS_MAX);
+            // waterfallStripParams folds k in at a x4 seed stride (s = i*4+k):
+            // raising STRIPS_MAX past 4 would make building i's strip 4 collide
+            // with building i+1's strip 0 across every placement draw.
+            expect(DATA_WATERFALL.STRIPS_MAX).toBeLessThanOrEqual(4);
             // A record column, not a billboard.
             expect(DATA_WATERFALL.STRIP_WIDTH).toBeGreaterThan(0);
             expect(DATA_WATERFALL.STRIP_WIDTH).toBeLessThan(2);

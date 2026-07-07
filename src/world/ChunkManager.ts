@@ -31,8 +31,8 @@ import {
     biomeScaleFactor,
     chunkBuildingCount,
     layoutAt,
+    polarizedLocalX,
     polarizedMirrorFrame,
-    polarizedPole,
     selectBuildingStyle,
     snapToGrid,
     subPaletteIndex,
@@ -231,16 +231,20 @@ export class ChunkManager {
             ? scarsNearChunk(this.bootScars, cx, cz)
             : this.bootScars;
 
+        // One rift per FA chunk COLUMN: the crack runs along the chunk's
+        // own center x (riftLineXForWorldX(cx * CHUNK_SIZE) is exactly
+        // cx * CHUNK_SIZE), so crackLocalX is identically 0 — every FA
+        // chunk carries one complete interior crack. Kept as a derivation
+        // so both consumers (the cracked floor and the corrected-shadow
+        // keep-out below) stay pinned to the single physical-crack source.
+        const faCrackLocalX = roomType === RoomType.FORCED_ALIGNMENT
+            ? riftLineXForWorldX(cx * CHUNK_SIZE, CHUNK_SIZE) - cx * CHUNK_SIZE
+            : null;
+
         // Floor - select type based on room
         let floor: THREE.Object3D;
-        if (roomType === RoomType.FORCED_ALIGNMENT) {
-            // One rift per FA chunk COLUMN: the crack runs along the chunk's
-            // own center x (riftLineXForWorldX(cx * CHUNK_SIZE) is exactly
-            // cx * CHUNK_SIZE), so crackLocalX is identically 0 — every FA
-            // chunk carries one complete interior crack. Kept as a derivation
-            // so the floor stays pinned to the single physical-crack source.
-            const crackLocalX = riftLineXForWorldX(cx * CHUNK_SIZE, CHUNK_SIZE) - cx * CHUNK_SIZE;
-            const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial, 4, cx, cz, crackLocalX);
+        if (faCrackLocalX !== null) {
+            const crackedSystem = createCrackedFloorMesh(CHUNK_SIZE, this.floorMaterial, 4, cx, cz, faCrackLocalX);
             floor = crackedSystem.group;
             chunkData.disposables.push(...crackedSystem.disposables);
 
@@ -253,7 +257,7 @@ export class ChunkManager {
             // Rift banner cables (rift presence): taut trembling lines strung
             // across the crack. The crack is interior to the chunk now, so
             // every FA chunk owns its own banners (no shared-edge owner rule).
-            this.createRiftBanners(chunk, cx, cz, crackLocalX);
+            this.createRiftBanners(chunk, cx, cz, faCrackLocalX);
         }
         else if (roomType === RoomType.IN_BETWEEN) {
             const moireSystem = createMoireFloorMesh(CHUNK_SIZE, this.floorMaterial);
@@ -287,7 +291,7 @@ export class ChunkManager {
         const anomaly = anomalyAt(gcx, cz, roomType);
         if (anomaly) {
             const anomalyNodes = this.buildAnomaly(chunk, anomaly, gcx, cz, roomType, biome, mirror?.mirrored ?? false);
-            this.createCables(chunk, anomalyNodes, gcx, cz);
+            this.createCables(chunk, anomalyNodes, gcx, cz, mirror?.mirrored ?? false);
             this.activeChunks[`${cx},${cz}`] = chunk;
             this.chunkGroup.add(chunk);
             return;
@@ -357,19 +361,12 @@ export class ChunkManager {
                     continue;
             }
 
-            // POLARIZED pole skew, computed in CANONICAL mirror coordinates:
-            // each building parks on a hash-chosen half of the canonical chunk,
-            // then the -x twin column negates the finished x — twin chunks hold
-            // identical content at reflected positions. Count is unchanged so
-            // cable node indices stay valid.
+            // POLARIZED pole skew + mirror, computed in CANONICAL mirror
+            // coordinates via the shared pure composition (polarizedLocalX —
+            // the same function the mirror-twin tests exercise). Count is
+            // unchanged so cable node indices stay valid.
             if (mirror) {
-                const pole = polarizedPole(gcx, cz, i);
-                // Push toward the pole, clamped within chunk bounds.
-                const halfBound = (CHUNK_SIZE - 20) / 2;
-                const skew = pole * (halfBound * 0.5);
-                bx = Math.max(-halfBound, Math.min(halfBound, Math.abs(bx) * pole + skew));
-                if (mirror.mirrored)
-                    bx = -bx;
+                bx = polarizedLocalX(bx, gcx, cz, i, layoutHalf, mirror.mirrored);
             }
 
             const buildGroup = new THREE.Group();
@@ -526,12 +523,17 @@ export class ChunkManager {
             // Runs AFTER the scar block so the decal sits at the building's
             // final (possibly dislocated) foot, and near a scar the correction
             // fails: the rect rotates/shears/slides by scarSeverity
-            // (ShadowCorrection). Parented to the CHUNK — not the building —
-            // so it stays a floor decal (FA buildings never wander) and
-            // disposes with the chunk tree. Static: zero per-frame cost.
+            // (ShadowCorrection). The chunk's crack line is threaded through
+            // so a shore-edge decal that would bridge the crack gap is skipped
+            // (null). Parented to the CHUNK — not the building — so it stays
+            // a floor decal (FA buildings never wander) and disposes with the
+            // chunk tree. Static: zero per-frame cost.
             if (faShadowBudget > 0) {
-                chunk.add(createCorrectedShadowDecal(buildGroup, scarSeverity, cx, cz, i));
-                faShadowBudget--;
+                const decal = createCorrectedShadowDecal(buildGroup, scarSeverity, cx, cz, i, faCrackLocalX);
+                if (decal) {
+                    chunk.add(decal);
+                    faShadowBudget--;
+                }
             }
 
             // INFO_OVERFLOW buildingFlicker: on a CAPPED subset of fragments,
@@ -566,9 +568,10 @@ export class ChunkManager {
         }
 
         // Create cables between buildings. Seeded at gcx so a POLARIZED twin
-        // pair strings the same strand counts / droops between mirrored nodes
-        // (the small hash jitter offsets stay unreflected — sub-metre noise).
-        this.createCables(chunk, nodes, gcx, cz);
+        // pair strings the same strand counts / droops between mirrored nodes;
+        // the mirrored flag x-reflects the ground-dangle fans (10-25m runs)
+        // and the ±1m jitter offsets so the static geometry mirrors exactly.
+        this.createCables(chunk, nodes, gcx, cz, mirror?.mirrored ?? false);
 
         this.activeChunks[`${cx},${cz}`] = chunk;
         this.chunkGroup.add(chunk);
@@ -978,11 +981,19 @@ export class ChunkManager {
     }
 
     /**
-     * Create cables for a chunk
+     * Create cables for a chunk. All hash draws are seeded by the caller's
+     * (canonical, in POLARIZED) cx/cz; `mirrored` x-reflects the dangle
+     * directions and strand jitter offsets on the POLARIZED -x column, so the
+     * static cable geometry mirrors its twin exactly (node positions arrive
+     * already mirrored). Per-frame sway phases stay position-seeded
+     * (CableSystem) and thus differ between twins — animation noise only.
      */
-    private createCables(chunk: Chunk, nodes: CableNode[], cx: number, cz: number): void {
+    private createCables(chunk: Chunk, nodes: CableNode[], cx: number, cz: number, mirrored: boolean = false): void {
         if (nodes.length < 1)
             return;
+
+        // x-reflection factor for the POLARIZED mirror twin.
+        const mx = mirrored ? -1 : 1;
 
         // Cables between buildings
         if (nodes.length > 1) {
@@ -996,12 +1007,12 @@ export class ChunkManager {
                         droop: 5 + hash(i, s) * 10,
                         heavySag: hash(i, i) > 0.8,
                         offsetS: new THREE.Vector3(
-                            (hash(s, i) - 0.5) * 2,
+                            (hash(s, i) - 0.5) * 2 * mx,
                             0,
                             (hash(i, s) - 0.5) * 2,
                         ),
                         offsetE: new THREE.Vector3(
-                            (hash(s, i + 1) - 0.5) * 2,
+                            (hash(s, i + 1) - 0.5) * 2 * mx,
                             0,
                             (hash(i + 1, s) - 0.5) * 2,
                         ),
@@ -1023,7 +1034,7 @@ export class ChunkManager {
                     const dist = 10 + hash(i, k) * 15;
                     const groundPos = startNode.obj.position.clone().add(
                         new THREE.Vector3(
-                            Math.cos(angle) * dist,
+                            Math.cos(angle) * dist * mx,
                             0,
                             Math.sin(angle) * dist,
                         ),
@@ -1040,7 +1051,7 @@ export class ChunkManager {
                         droop: 2,
                         heavySag: false,
                         offsetS: new THREE.Vector3(
-                            hash(k, i) - 0.5,
+                            (hash(k, i) - 0.5) * mx,
                             0,
                             hash(i, k) - 0.5,
                         ),

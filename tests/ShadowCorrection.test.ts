@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { FA_SHADOW } from '../src/config/constants';
+import { FA_RIFT } from '../src/world/RoomConfig';
 import {
     correctedShadowRect,
     quantizeShadowExtent,
     scarShadowSkew,
+    shadowCrossesCrack,
 } from '../src/world/ShadowCorrection';
 
 describe('shadowCorrection (FORCED_ALIGNMENT idealized shadows)', () => {
-    describe('fA_SHADOW config contract', () => {
+    describe('config contract (FA_SHADOW)', () => {
         it('keeps the size clamps on the quantization grid', () => {
             // quantizeShadowExtent clamps AFTER rounding; the clamps must be
             // multiples of QUANT or clamping would break the grid rhythm.
@@ -30,6 +32,15 @@ describe('shadowCorrection (FORCED_ALIGNMENT idealized shadows)', () => {
             expect(FA_SHADOW.MAX_SHEAR).toBeGreaterThan(0);
             expect(FA_SHADOW.MAX_SHEAR).toBeLessThan(1);
             expect(FA_SHADOW.MAX_SKEW_OFFSET).toBeGreaterThan(0);
+        });
+
+        it('keeps the crack keep-out band covering the gap without eating the corridor', () => {
+            // Must cover the abyss plane half-width (crackWidth/2 + 3 = 5 in
+            // FloorTile.createCrackedFloorMesh) so no decal floats over it...
+            expect(FA_SHADOW.CRACK_KEEPOUT).toBeGreaterThanOrEqual(5);
+            // ...but stay below the building clearance, or every
+            // shore-adjacent decal would be skipped outright.
+            expect(FA_SHADOW.CRACK_KEEPOUT).toBeLessThan(FA_RIFT.CLEARANCE);
         });
     });
 
@@ -78,12 +89,17 @@ describe('shadowCorrection (FORCED_ALIGNMENT idealized shadows)', () => {
         });
 
         it('displaces every rect along the ONE fixed global azimuth', () => {
-            const dirX = Math.cos(FA_SHADOW.AZIMUTH_RAD);
-            const dirZ = Math.sin(FA_SHADOW.AZIMUTH_RAD);
-            for (const [fx, fz] of [[3, 3], [6, 10], [14, 5], [30, 30]]) {
+            // Direction constancy is the contract: anisotropic footprints
+            // (4x20, 20x4, 8x16) must displace at exactly AZIMUTH_RAD, not an
+            // aspect-ratio-bent angle; the magnitude is OFFSET_FACTOR of the
+            // mean quantized extent.
+            for (const [fx, fz] of [[3, 3], [4, 20], [20, 4], [8, 16], [6, 10], [14, 5], [30, 30]]) {
                 const rect = correctedShadowRect(fx, fz);
-                expect(rect.offsetX).toBeCloseTo(dirX * rect.width * FA_SHADOW.OFFSET_FACTOR, 10);
-                expect(rect.offsetZ).toBeCloseTo(dirZ * rect.depth * FA_SHADOW.OFFSET_FACTOR, 10);
+                expect(Math.atan2(rect.offsetZ, rect.offsetX)).toBeCloseTo(FA_SHADOW.AZIMUTH_RAD, 10);
+                expect(Math.hypot(rect.offsetX, rect.offsetZ)).toBeCloseTo(
+                    FA_SHADOW.OFFSET_FACTOR * (rect.width + rect.depth) / 2,
+                    10,
+                );
             }
         });
 
@@ -140,6 +156,49 @@ describe('shadowCorrection (FORCED_ALIGNMENT idealized shadows)', () => {
             for (let i = 0; i < 8; i++)
                 rots.add(scarShadowSkew(1, i, 0, 0).rotY);
             expect(rots.size).toBeGreaterThan(1);
+        });
+    });
+
+    describe('shadowCrossesCrack', () => {
+        const NO_SKEW = { rotY: 0, shear: 0, offsetX: 0, offsetZ: 0 };
+
+        it('passes decals that stay clear of the crack band', () => {
+            // Small decal deep on the -x bank: center -30 + offsetX, half 2.
+            const rect = correctedShadowRect(4, 4);
+            expect(shadowCrossesCrack(-30, 0, rect, NO_SKEW)).toBe(false);
+        });
+
+        it('catches a max-size decal at the -x shore edge (azimuth points +x)', () => {
+            // Foot at -CLEARANCE: offset cos(PI/4)*0.4*20 = 5.66 plus half
+            // width 10 reaches x = 3.66 — over the crack gap.
+            const rect = correctedShadowRect(20, 20);
+            expect(shadowCrossesCrack(-FA_RIFT.CLEARANCE, 0, rect, NO_SKEW)).toBe(true);
+        });
+
+        it('passes the same decal on the +x bank (displaced AWAY from the crack)', () => {
+            const rect = correctedShadowRect(20, 20);
+            expect(shadowCrossesCrack(FA_RIFT.CLEARANCE, 0, rect, NO_SKEW)).toBe(false);
+        });
+
+        it('accounts for scar rotation/shear/slide widening the reach', () => {
+            // A mid-size decal on the +x bank clears the band unscarred...
+            const rect = correctedShadowRect(16, 16);
+            expect(shadowCrossesCrack(FA_RIFT.CLEARANCE, 0, rect, NO_SKEW)).toBe(false);
+            // ...but a full-severity skew (max rot + shear + slide toward the
+            // crack) pushes its near corner across the keep-out edge.
+            const skew = {
+                rotY: FA_SHADOW.MAX_SKEW_ROT_RAD,
+                shear: FA_SHADOW.MAX_SHEAR,
+                offsetX: -FA_SHADOW.MAX_SKEW_OFFSET,
+                offsetZ: 0,
+            };
+            expect(shadowCrossesCrack(FA_RIFT.CLEARANCE, 0, rect, skew)).toBe(true);
+        });
+
+        it('judges against the supplied crack line, not a hardcoded zero', () => {
+            const rect = correctedShadowRect(20, 20);
+            // Same decal, crack moved far away: no crossing.
+            expect(shadowCrossesCrack(-FA_RIFT.CLEARANCE, 60, rect, NO_SKEW)).toBe(false);
         });
     });
 });

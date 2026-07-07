@@ -216,6 +216,37 @@ export function polarizedMirrorFrame(cx: number): PolarizedMirrorFrame {
 }
 
 /**
+ * POLARIZED chunk-local building x: the pole skew + clamp + mirror negation
+ * applied on top of a layout-composed x. This is the ONE placement
+ * composition shared by ChunkManager.createChunk and the mirror-twin tests
+ * (PolarizedMirror.test.ts), so the mirror contract can never silently
+ * diverge from the real pipeline. Each building parks on its hash-chosen
+ * half of the CANONICAL chunk; the -x twin column then negates the finished
+ * x — twin chunks hold identical content at reflected positions. Pure.
+ *
+ * @param composedX - Layout-composed chunk-local x (drawn with canonical seeds).
+ * @param gcx - Canonical generation chunk X (polarizedMirrorFrame.genCx).
+ * @param cz - Chunk Z coordinate (integer).
+ * @param i - Building index within the chunk.
+ * @param halfBound - Placement half-extent the skewed x is clamped to.
+ * @param mirrored - True on the -x column: negate the finished x.
+ */
+export function polarizedLocalX(
+    composedX: number,
+    gcx: number,
+    cz: number,
+    i: number,
+    halfBound: number,
+    mirrored: boolean,
+): number {
+    const pole = polarizedPole(gcx, cz, i);
+    // Push toward the pole, clamped within chunk bounds.
+    const skew = pole * (halfBound * 0.5);
+    const x = Math.max(-halfBound, Math.min(halfBound, Math.abs(composedX) * pole + skew));
+    return mirrored ? -x : x;
+}
+
+/**
  * FORCED_ALIGNMENT grid size, in world units. Buildings quantize to this grid.
  */
 export const GRID_SNAP_SIZE = 8;

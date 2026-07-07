@@ -27,15 +27,21 @@ import { hash } from '../utils/hash';
 
 // Distinct integer salts for the waterfall draws, decorrelated from every
 // prior draw across src/ (ShadowCorrection <= 1381, ChunkManager <= 1327,
-// SnapshotEcho <= 1307, FigureSystem <= 1291). Documented so the next
-// feature picks decorrelated integers > 1447.
-const WATERFALL_GATE_SALT = 1409; // which buildings leak records
-const WATERFALL_COUNT_SALT = 1423; // strips per leaking building
-const WATERFALL_SIDE_SALT = 1427; // facade pick per strip
-const WATERFALL_LATERAL_SALT = 1429; // slide along the facade per strip
-const WATERFALL_HEIGHT_SALT = 1433; // strip-top draw per strip
-const WATERFALL_PHASE_SALT = 1439; // baked UV scroll phase per strip (desync)
+// SnapshotEcho <= 1307, FigureSystem <= 1291). The per-strip families
+// (SIDE/LATERAL/HEIGHT/PHASE) are seeded by s = i*4 + k, which spans up to
+// ~35 (i <= 8 buildings, k <= 3 strips), so their salts are spaced >= 40
+// apart: no two draws — within OR across families — can ever share a hash
+// first argument, keeping the decorrelation exact even where second-arg
+// mixes coincide (cz*31+cx == cx+cz*31). The per-building GATE/COUNT ranges
+// (i <= 8) and the TEX seed stay clear of every per-strip span. Documented
+// so the next feature picks decorrelated integers > 1620 (past PHASE's span).
+const WATERFALL_GATE_SALT = 1409; // which buildings leak records (per building)
+const WATERFALL_COUNT_SALT = 1423; // strips per leaking building (per building)
 const WATERFALL_TEX_SALT = 1447; // shared glyph-texture field seed
+const WATERFALL_SIDE_SALT = 1451; // facade pick per strip
+const WATERFALL_LATERAL_SALT = 1493; // slide along the facade per strip
+const WATERFALL_HEIGHT_SALT = 1543; // strip-top draw per strip
+const WATERFALL_PHASE_SALT = 1583; // baked UV scroll phase per strip (desync)
 
 /**
  * Whether building `i` of chunk (cx, cz) leaks its records — the hash-gated
@@ -92,8 +98,10 @@ export interface WaterfallStrip {
  * The strip-top draw is clamped to the building's height (records never
  * scroll off into empty air above the roof), floored at MIN_STRIP_HEIGHT so
  * a stub building still keeps a legible stream. Seeds fold k in at a x4
- * stride (k < STRIPS_MAX + 1) so building i's strip 1 never collides with
- * building i+1's strip 0. Pure; exported for testing.
+ * stride (valid while STRIPS_MAX <= 4, pinned by the config-contract test)
+ * so building i's strip 1 never collides with building i+1's strip 0; the
+ * >= 40 salt spacing (see the salt block) keeps the four per-strip draws
+ * collision-free ACROSS families too. Pure; exported for testing.
  *
  * @param cx - Chunk X coordinate (deterministic seed).
  * @param cz - Chunk Z coordinate (deterministic seed).
