@@ -794,6 +794,61 @@ export const FA_SHADOW = {
 } as const;
 
 /**
+ * Data waterfalls (scene-style batch): in INFO_OVERFLOW some facades leak the
+ * district's own records — thin vertical strips down which 1-bit glyph streams
+ * scroll, the floor's binary language climbing the walls. Strips are generated
+ * per eligible building (hash-gated fraction) and every strip in every chunk
+ * shares ONE glyph texture and ONE scrolling material; per-strip desync is
+ * baked into the strip UVs, never cloned materials. The scroll speed follows
+ * the player's CURRENT flower intensity — the brighter you burn, the faster
+ * the district churns your records. black = the system's ledger, white = the
+ * self written into it; every glyph pixel is hard on/off, no soft fades.
+ */
+export const DATA_WATERFALL = {
+    /** Fraction of eligible INFO buildings (non-TREE) that leak records. */
+    BUILDING_FRACTION: 0.35,
+    /** Strips per leaking building (hash-drawn within [MIN, MAX]). */
+    STRIPS_MIN: 1,
+    STRIPS_MAX: 3,
+    /** Strip quad width (m) — thin, a record column, not a billboard. */
+    STRIP_WIDTH: 0.55,
+    /**
+     * Distance (m) from the building-group center to the strip plane — the
+     * SNAPSHOT_ECHO.FACE_OFFSET approximation of "on the facade": buildings
+     * are fragment clusters with no exact wall, so a fixed offset reads as
+     * the face. Group biome scale multiplies it (bigger building, wider face).
+     */
+    FACE_OFFSET: 4.6,
+    /** Max lateral slide (m, ±) of a strip along its facade. */
+    LATERAL_RANGE: 3.0,
+    /** Strip bottom (m) — just above the glyph floor. */
+    BOTTOM_Y: 0.15,
+    /** Hash-drawn strip-top band (m) before clamping to the building height. */
+    HEIGHT_MIN: 6,
+    HEIGHT_MAX: 18,
+    /** Strip-height floor (m) after clamping, so stubs keep a legible stream. */
+    MIN_STRIP_HEIGHT: 2.5,
+    /** Baked UV density: texture heights per world metre (glyph size on wall). */
+    V_PER_METER: 0.06,
+    /**
+     * Shared glyph-strip texture size (texels). Both extents MUST be multiples
+     * of GLYPH_PITCH so cells align with the vertical wrap seam (no straddling
+     * glyph at the repeat boundary).
+     */
+    TEX_WIDTH: 8,
+    TEX_HEIGHT: 256,
+    /** Glyph cell pitch (texels) — mirrors the INFO floor's 4px dot-matrix. */
+    GLYPH_PITCH: 4,
+    /** Cells whose hash draw exceeds this are lit (~55%, the floor's density). */
+    GLYPH_GATE: 0.45,
+    /** Texels whose hash draw exceeds this become stray data bursts (sparse). */
+    BURST_GATE: 0.94,
+    /** Scroll speed (texture heights/s) at flower intensity 0 / extra gain at 1. */
+    SPEED_BASE: 0.06,
+    SPEED_FLOWER_GAIN: 0.28,
+} as const;
+
+/**
  * Chunk and world generation constants
  */
 export const WORLD = {

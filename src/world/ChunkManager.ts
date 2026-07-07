@@ -19,6 +19,7 @@ import { hash } from '../utils/hash';
 import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
 import { createDynamicCable, disposeCableMaterial, disposeCableUplinkMaterial, setCableUplinkActive } from './CableSystem';
 import { animateChunk } from './ChunkAnimator';
+import { attachWaterfallStrips, disposeWaterfallAssets, waterfallEligible } from './DataWaterfall';
 import { createCrackedFloorMesh, createFloorMaterial, createFloorMesh, createInfoFloorMesh, createMoireFloorMesh, createSeamFloorMesh, disposeFloorPool } from './FloorTile';
 import { createTree } from './FloraFactory';
 import { FA_RIFT, IN_BETWEEN_EDGE_GHOSTS, inBetweenEdgeFactor, isWithinRiftClearance, POLARIZED_SEAM_SWAP, riftLineXForWorldX, ROOM_CONFIGS, RoomType, seamBandFactor, seamFlickerDuty, seamSwapActive, worldToChunkCoord } from './RoomConfig';
@@ -499,6 +500,19 @@ export class ChunkManager {
             if (flickerGroups && flickerGroups.length < FLICKER_MAX_GROUPS_PER_CHUNK
                 && hash(i + FLICKER_GATE_SALT, cx) > 0.55) {
                 this.addFlickerGroup(buildGroup, flickerGroups, cx, cz, i);
+            }
+
+            // INFO_OVERFLOW data waterfall (scene-style batch): a hash-gated
+            // subset of facades leak the district's records — 1-3 thin strips
+            // of scrolling glyphs (world/DataWaterfall; shared texture/material,
+            // static meshes, disposed with the chunk tree). TREEs keep no
+            // records. Attached LAST so the sub-palette traversal and the
+            // flicker anchor pick above never touch a strip; the height is
+            // divided back to the group's local frame so the biome scale
+            // applies to the strips exactly once.
+            if (roomType === RoomType.INFO_OVERFLOW && style !== 'TREE'
+                && waterfallEligible(cx, cz, i)) {
+                attachWaterfallStrips(buildGroup, maxHeight / scaleFactor, cx, cz, i);
             }
 
             chunk.add(buildGroup);
@@ -1425,6 +1439,11 @@ export class ChunkManager {
         // Dispose the module-shared corrected-shadow decal assets exactly once
         // (shared unit quad + ink material — never disposed per-chunk).
         disposeShadowAssets();
+
+        // Dispose the module-shared data-waterfall assets exactly once (ONE
+        // glyph texture + ONE scrolling strip material shared by every strip
+        // in every INFO chunk — never disposed per-chunk).
+        disposeWaterfallAssets();
 
         // Dispose shared assets
         this.assets.dispose();
