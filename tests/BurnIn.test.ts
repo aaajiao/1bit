@@ -126,7 +126,7 @@ describe('stepHeatCooldown / shouldRunBurnPass', () => {
     });
 });
 
-describe('bURN_IN config contract', () => {
+describe('the BURN_IN config contract', () => {
     it('keeps the heat buffer scale in (0, 1]', () => {
         expect(BURN_IN.BUFFER_SCALE).toBeGreaterThan(0);
         expect(BURN_IN.BUFFER_SCALE).toBeLessThanOrEqual(1);
