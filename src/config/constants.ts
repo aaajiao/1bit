@@ -1010,6 +1010,98 @@ export const SKY_EYE_WEATHER = {
 } as const;
 
 /**
+ * Weather lifecycle broadcast (weather core): a REAL rotation event now lives
+ * a full arc — forewarn -> onset -> peak -> aftermath — instead of snapping
+ * in and out of existence. WeatherSystem exposes each phase as a scalar in
+ * WeatherState so world systems can lean into an approaching storm and let
+ * its residue settle after it passes. Transient ambient glitches bypass the
+ * whole arc, exactly as they bypass the onset broadcast.
+ */
+export const WEATHER_LIFECYCLE = {
+    /**
+     * Forewarn window (s): once the next real event is drawn (cooldown enters
+     * this window), WeatherState.forewarn ramps 0 -> 1 until the event
+     * breaks, and upcomingType / eventDirection name what is coming.
+     */
+    FOREWARN_SECONDS: 15,
+    /**
+     * Aftermath window (s): after a real event ends, WeatherState.aftermath
+     * decays 1 -> 0 while lastEndedType names what just passed — the world
+     * keeps ringing after the storm.
+     */
+    AFTERMATH_SECONDS: 25,
+    /**
+     * Hash salt (utils/hash, distinct integer namespace — max in use
+     * elsewhere is 1583) for the once-per-event direction draw: each real
+     * event gets one deterministic heading in radians for the whole
+     * forewarn -> aftermath arc.
+     */
+    DIRECTION_SALT: 1597,
+} as const;
+
+/**
+ * ECLIPSE scheduler (weather core): the rare cross-room event where the
+ * authority's sky goes dark. NOT part of the per-room weighted rotation — it
+ * runs on its own session clock, pauses the rotation while it lasts (no new
+ * event starts; an in-progress event is never cut short — the eclipse waits),
+ * and never draws a screen overlay (world systems consume eclipseProgress).
+ */
+export const WEATHER_ECLIPSE = {
+    /** Minimum session play time (s) before the first eclipse can fire. */
+    FIRST_MIN_SECONDS: 240,
+    /** Random interval (s) between eclipses after the first, [min, max]. */
+    INTERVAL_RANGE: [480, 900] as [number, number],
+    /** Eclipse duration (s) — eclipseProgress runs 0 -> 1 across it. */
+    DURATION_SECONDS: 15,
+} as const;
+
+/**
+ * Per-type lifecycle tuning for the NEW rotation weather types (weather
+ * core). Applied on top of the room's ROOM_WEATHER_PROFILES draw: duration
+ * scales, intensity scales then clamps. STATIC/RAIN/GLITCH deliberately have
+ * NO entry — the legacy cadence must stay bit-identical.
+ */
+export const WEATHER_TYPE_TUNING = {
+    /** ASHFALL — the settling of noise: long, gentle, never a downpour. */
+    ASHFALL: {
+        DURATION_SCALE: 1.5,
+        INTENSITY_SCALE: 0.6,
+        INTENSITY_MIN: 0.2,
+        INTENSITY_MAX: 0.7,
+    },
+    /** GALE — a directional shove: a little shorter, full room intensity. */
+    GALE: {
+        DURATION_SCALE: 0.75,
+        INTENSITY_SCALE: 1.0,
+        INTENSITY_MIN: 0.5,
+        INTENSITY_MAX: 1.0,
+    },
+} as const;
+
+/**
+ * Behavior -> weather bias (weather core, mirror layer 4): the run-long
+ * behavior profile (stats/RunStatsCollector.getLiveProfile — the SAME object
+ * the room ledger consumes) gently skews WHAT the sky sends and HOW SOON.
+ * Sustained bright/loud play (blazing flower, frequent overrides) leans the
+ * rotation toward storm types and shortens the calm between events; sustained
+ * dim/still play leans toward ASHFALL and stretches the calm. A null or
+ * neutral profile is EXACTLY the unbiased behavior (bit-identical weights).
+ */
+export const WEATHER_BEHAVIOR_BIAS = {
+    /** Max fractional shift of a type weight in either direction (+-30%). */
+    MAX_WEIGHT_SHIFT: 0.3,
+    /** Max fractional shift of a sampled cooldown in either direction. */
+    MAX_COOLDOWN_SHIFT: 0.3,
+    /**
+     * avgFlower pivot +- deadzone (same convention as BEHAVIOR_ROOM_BIAS in
+     * RoomConfig): inside the deadzone — including the 0.5 boot default —
+     * the flower exerts no weather bias at all.
+     */
+    FLOWER_PIVOT: 0.5,
+    FLOWER_DEADZONE: 0.1,
+} as const;
+
+/**
  * Per-room sky vocabulary (scene-style batch): the flat background becomes
  * four skies. One camera-following inverted dome (world/RoomSky) draws the
  * CURRENT room's treatment behind everything — sparse blinking specks
