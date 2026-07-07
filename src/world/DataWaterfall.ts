@@ -202,7 +202,11 @@ function createWaterfallTexture(): THREE.DataTexture {
     const tex = new THREE.DataTexture(data, TEX_WIDTH, TEX_HEIGHT, THREE.RGBAFormat);
     tex.magFilter = THREE.NearestFilter;
     tex.minFilter = THREE.NearestFilter;
-    tex.wrapS = THREE.ClampToEdgeWrapping;
+    // Both axes repeat-wrap: v is the scroll axis; u wraps so the GALE shear
+    // (uShear below) can slide the sample sideways without clamped-edge
+    // smearing. For u in [0,1] — the whole calm path — Repeat samples the
+    // same texels Clamp did, so windless strips stay bit-identical.
+    tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping; // the vertical scroll axis
     tex.needsUpdate = true;
     return tex;
@@ -221,6 +225,9 @@ function getWaterfallMaterial(): THREE.ShaderMaterial {
             uniforms: {
                 uGlyphs: { value: waterfallTex },
                 uOffset: { value: 0 },
+                // GALE shear (weather reactions): ONE signed sideways-skew
+                // uniform shared by every strip — see updateWaterfallShear.
+                uShear: { value: 0 },
                 uInk: { value: new THREE.Color(0x000000) },
                 uPaper: { value: new THREE.Color(0xCCCCCC) },
             },
@@ -234,15 +241,21 @@ function getWaterfallMaterial(): THREE.ShaderMaterial {
             fragmentShader: `
                 uniform sampler2D uGlyphs;
                 uniform float uOffset;
+                uniform float uShear;
                 uniform vec3 uInk;
                 uniform vec3 uPaper;
                 varying vec2 vUv;
                 void main() {
                     // Records fall: sampling at v + offset slides the glyph
                     // column DOWN the facade as the offset grows (RepeatWrapping
-                    // owns the wrap). step() keeps every pixel hard on/off —
-                    // the full-screen dither pass owns the only softness.
-                    float g = texture2D(uGlyphs, vec2(vUv.x, vUv.y + uOffset)).r;
+                    // owns the wrap). The GALE shear skews the sample sideways
+                    // in proportion to v, so as a glyph rides the scroll its u
+                    // shifts too — the records fall DIAGONALLY, blown by the
+                    // wind (uShear 0 restores the exact vertical fall; each
+                    // strip's baked v phase just offsets its shear column, the
+                    // same desync the scroll already has). step() keeps every
+                    // pixel hard on/off — the dither pass owns the only softness.
+                    float g = texture2D(uGlyphs, vec2(vUv.x - uShear * vUv.y, vUv.y + uOffset)).r;
                     gl_FragColor = vec4(mix(uInk, uPaper, step(0.5, g)), 1.0);
                 }
             `,
@@ -262,6 +275,19 @@ function getWaterfallMaterial(): THREE.ShaderMaterial {
 export function updateWaterfallOffset(offset: number): void {
     if (waterfallMat) {
         waterfallMat.uniforms.uOffset.value = offset;
+    }
+}
+
+/**
+ * Drive the shared material's GALE shear for this frame — the ONE uniform
+ * that skews every strip's falling records sideways (signed; see
+ * WeatherReactions.waterfallShearFor). No-op until the material exists, so
+ * a gale over a strip-less world costs nothing. Written once per frame by
+ * core/WeatherReactionsUpdater; 0 restores the exact vertical fall.
+ */
+export function updateWaterfallShear(shear: number): void {
+    if (waterfallMat) {
+        waterfallMat.uniforms.uShear.value = shear;
     }
 }
 

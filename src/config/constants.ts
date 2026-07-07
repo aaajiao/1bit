@@ -448,6 +448,32 @@ export const FIGURES = {
 } as const;
 
 /**
+ * ECLIPSE figure response (weather batch, ECLIPSE presentation): while the
+ * authority's disc transits (WeatherState.weatherType === ECLIPSE), every
+ * standing figure in the active chunk window turns its face to the sky — the
+ * cheapest believable pose the silhouette rig supports: a hard body pitch
+ * back around the figure's own right axis plus a small chest-light lift
+ * toward the throat (a raised chin at silhouette distance). EXCEPTION: when
+ * the player's flower burns above FACE_PLAYER_FLOWER_THRESHOLD, figures
+ * within FACE_PLAYER_RADIUS turn to the PLAYER instead — in the darkness
+ * your light is the loudest thing in the world. Poses are hard on/off (the
+ * 1-bit language): snapped on at the transit, snapped back after, never
+ * eased. Where this sits among the other figure behaviors is decided by ONE
+ * priority ladder (FigureSystem.figureAttitude): press-down suppression >
+ * eclipse facing > resonance > idle sway.
+ */
+export const ECLIPSE_FIGURES = {
+    /** Body pitch back (rad) of the upturned pose — enough to read at 30m. */
+    LOOKUP_PITCH: 0.3,
+    /** Chest-light lift as a fraction of figure height (toward the throat). */
+    CHEST_LIFT_FRAC: 0.05,
+    /** Player flower intensity above which nearby figures face the player. */
+    FACE_PLAYER_FLOWER_THRESHOLD: 0.5,
+    /** Radius (m) within which the burning flower turns figures around. */
+    FACE_PLAYER_RADIUS: 40,
+} as const;
+
+/**
  * Ghost-trail recording + persistence (F4 "ghost replay"): the player's walk
  * is sampled as (x, z, flowerIntensity) points into a ring buffer and written
  * to localStorage at sunset / unload (stats/TrailRecorder, versioned-key
@@ -1010,6 +1036,378 @@ export const SKY_EYE_WEATHER = {
 } as const;
 
 /**
+ * Weather lifecycle broadcast (weather core): a REAL rotation event now lives
+ * a full arc — forewarn -> onset -> peak -> aftermath — instead of snapping
+ * in and out of existence. WeatherSystem exposes each phase as a scalar in
+ * WeatherState so world systems can lean into an approaching storm and let
+ * its residue settle after it passes. Transient ambient glitches bypass the
+ * whole arc, exactly as they bypass the onset broadcast.
+ */
+export const WEATHER_LIFECYCLE = {
+    /**
+     * Forewarn window (s): once the next real event is drawn (cooldown enters
+     * this window), WeatherState.forewarn ramps 0 -> 1 until the event
+     * breaks, and upcomingType / eventDirection name what is coming.
+     */
+    FOREWARN_SECONDS: 15,
+    /**
+     * Aftermath window (s): after a real event ends, WeatherState.aftermath
+     * decays 1 -> 0 while lastEndedType names what just passed — the world
+     * keeps ringing after the storm.
+     */
+    AFTERMATH_SECONDS: 25,
+    /**
+     * Hash salt (utils/hash, distinct integer namespace — max in use
+     * elsewhere is 1583) for the once-per-event direction draw: each real
+     * event gets one deterministic heading in radians for the whole
+     * forewarn -> aftermath arc.
+     */
+    DIRECTION_SALT: 1597,
+} as const;
+
+/**
+ * ECLIPSE scheduler (weather core): the rare cross-room event where the
+ * authority's sky goes dark. NOT part of the per-room weighted rotation — it
+ * runs on its own session clock, pauses the rotation while it lasts (no new
+ * event starts; an in-progress event is never cut short — the eclipse waits),
+ * and never draws a screen overlay (world systems consume eclipseProgress).
+ */
+export const WEATHER_ECLIPSE = {
+    /** Minimum session play time (s) before the first eclipse can fire. */
+    FIRST_MIN_SECONDS: 240,
+    /** Random interval (s) between eclipses after the first, [min, max]. */
+    INTERVAL_RANGE: [480, 900] as [number, number],
+    /** Eclipse duration (s) — eclipseProgress runs 0 -> 1 across it. */
+    DURATION_SECONDS: 15,
+} as const;
+
+/**
+ * ECLIPSE world darkening (weather batch, ECLIPSE presentation): while the
+ * disc transits, background + fog darken toward the deepest night gray along
+ * the transit curve (deepest at mid-transit), then restore bit-exactly.
+ * Deliberately OUTSIDE the day/night state machine: DayNightCycle's
+ * isDaytime(), day counter and sunset-snapshot trigger never see the eclipse
+ * — the factor is composed onto the final background color at the point
+ * where it is applied (world/EclipseDarkening, owned by
+ * core/StatsSunsetUpdater between the day/night step and the RoomSky copy).
+ */
+export const ECLIPSE_DARKENING = {
+    /** Deepest background lerp toward TARGET_HEX at mid-transit (0-1). */
+    DEPTH_MAX: 0.85,
+    /**
+     * Gray the world darkens toward: DayNightCycle's deepest night palette
+     * (nightIntensity 1.0 => 0x11 gray), so a noon eclipse looks like the
+     * darkest possible night without ever BEING night.
+     */
+    TARGET_HEX: 0x111111,
+} as const;
+
+/**
+ * Per-type lifecycle tuning for the NEW rotation weather types (weather
+ * core). Applied on top of the room's ROOM_WEATHER_PROFILES draw: duration
+ * scales, intensity scales then clamps. STATIC/RAIN/GLITCH deliberately have
+ * NO entry — the legacy cadence must stay bit-identical.
+ */
+export const WEATHER_TYPE_TUNING = {
+    /** ASHFALL — the settling of noise: long, gentle, never a downpour. */
+    ASHFALL: {
+        DURATION_SCALE: 1.5,
+        INTENSITY_SCALE: 0.6,
+        INTENSITY_MIN: 0.2,
+        INTENSITY_MAX: 0.7,
+    },
+    /** GALE — a directional shove: a little shorter, full room intensity. */
+    GALE: {
+        DURATION_SCALE: 0.75,
+        INTENSITY_SCALE: 1.0,
+        INTENSITY_MIN: 0.5,
+        INTENSITY_MAX: 1.0,
+    },
+} as const;
+
+/**
+ * Behavior -> weather bias (weather core, mirror layer 4): the run-long
+ * behavior profile (stats/RunStatsCollector.getLiveProfile — the SAME object
+ * the room ledger consumes) gently skews WHAT the sky sends and HOW SOON.
+ * Sustained bright/loud play (blazing flower, frequent overrides) leans the
+ * rotation toward storm types and shortens the calm between events; sustained
+ * dim/still play leans toward ASHFALL and stretches the calm. A null or
+ * neutral profile is EXACTLY the unbiased behavior (bit-identical weights).
+ */
+export const WEATHER_BEHAVIOR_BIAS = {
+    /** Max fractional shift of a type weight in either direction (+-30%). */
+    MAX_WEIGHT_SHIFT: 0.3,
+    /** Max fractional shift of a sampled cooldown in either direction. */
+    MAX_COOLDOWN_SHIFT: 0.3,
+    /**
+     * avgFlower pivot +- deadzone (same convention as BEHAVIOR_ROOM_BIAS in
+     * RoomConfig): inside the deadzone — including the 0.5 boot default —
+     * the flower exerts no weather bias at all.
+     */
+    FLOWER_PIVOT: 0.5,
+    FLOWER_DEADZONE: 0.1,
+} as const;
+
+/**
+ * World-space precipitation (weather batch): weather stops being a screen
+ * overlay and becomes something that falls BETWEEN the player and the world.
+ * One instanced quad cloud in a camera-following wrap volume (world/
+ * Precipitation) draws RAIN as hard vertical dashes and ASHFALL as sparse
+ * drifting motes; GALE exports pure wind that tilts dashes and streams motes
+ * sideways. Everything is strict 1-bit: instances pop in/out on hard seed
+ * thresholds (never a fade), the far rim drops whole dashes via discard, and
+ * the ash TRACES ground pool (world/AshTraces) dissolves per-pixel on hard
+ * hash thresholds across the aftermath window.
+ */
+export const PRECIPITATION = {
+    /** Instance budget (single InstancedMesh, ONE draw call at any fraction). */
+    COUNT: 1024,
+    /**
+     * Horizontal wrap box edge (m) around the player. Instances are world-
+     * anchored inside it and recycle across the far edge as the player moves,
+     * so precipitation always surrounds the camera without following it.
+     * The dithered rim (EDGE_INNER) hides the square footprint as a circle.
+     */
+    BOX_SIZE: 40,
+    /** Vertical wrap cylinder height (m) above the floor plane. */
+    HEIGHT: 24,
+    /**
+     * Wrap span (s / m) for the accumulated time / fall-distance uniforms.
+     * Integrating on the CPU keeps intensity ramps from teleporting particles
+     * (y depends on the integral of speed, not time x speed); the wrap keeps
+     * float32 precision healthy on long sessions at the cost of ONE hard
+     * reshuffle frame per wrap — every ~34 minutes for the time uniform,
+     * every ~1.5-3 minutes for the fall integral (whose carrier never drops
+     * below rain pace, even while OFF) — visible only if a wrap lands
+     * mid-rain, and imperceptible under the dither even then.
+     */
+    ACCUM_WRAP: 2048,
+    /** Per-instance fall-rate jitter span (fraction of 1; columns desync). */
+    SPEED_JITTER: 0.5,
+    /**
+     * Fraction of the wrap radius where the dithered rim begins: each
+     * instance draws a hashed cutoff radius between this and 1.0 and drops
+     * ALL its pixels past it (discard, never alpha).
+     */
+    EDGE_INNER: 0.7,
+    /** RAIN: short hard dashes falling fast, tilted by their own wind. */
+    RAIN: {
+        /** Active instance fraction at intensity 0 / extra at intensity 1. */
+        FRACTION_BASE: 0.2,
+        FRACTION_SPAN: 0.6,
+        /** Fall speed (m/s) at intensity 0 / extra at intensity 1. */
+        SPEED_BASE: 13,
+        SPEED_SPAN: 9,
+        /** Horizontal wind magnitude (m/s) at full intensity (slight tilt). */
+        WIND: 2.5,
+        /**
+         * How much of the room's weatherRainDensity flavor (RoomConfig, e.g.
+         * INFO_OVERFLOW's 2.5 data downpour) leans the fall speed. Density
+         * multiplies the active fraction directly; speed only leans.
+         */
+        DENSITY_SPEED_LEAN: 0.2,
+        /** Dash quad width / length (m) — a short vertical stroke. */
+        WIDTH: 0.03,
+        LENGTH: 0.55,
+    },
+    /** ASHFALL: sparse slow motes drifting down with lateral wander. */
+    ASH: {
+        FRACTION_BASE: 0.06,
+        FRACTION_SPAN: 0.16,
+        SPEED_BASE: 0.7,
+        SPEED_SPAN: 0.6,
+        /** Gentle drift wind magnitude (m/s) at full intensity. */
+        WIND: 1.1,
+        /** Mote quad edge (m) — a small camera-facing square. */
+        WIDTH: 0.07,
+        LENGTH: 0.07,
+        /** Lateral wander amplitude (m) / frequency (rad/s phase rate). */
+        WANDER_AMP: 0.8,
+        WANDER_FREQ: 0.9,
+    },
+    /**
+     * GALE wind magnitude (m/s) at full intensity. The gale owns NO particles
+     * — it is exported as pure wind for whatever the falling layer shows.
+     */
+    GALE_WIND: 16,
+    /**
+     * Advance guard: max active fraction of the UPCOMING type's particles at
+     * full forewarn ramp — a few stray dashes/motes before the storm breaks.
+     */
+    FOREWARN_FRACTION_MAX: 0.04,
+    /**
+     * Hash salts (utils/hash, distinct integer namespaces; primes above the
+     * 1597 weather-direction salt) for the once-at-construction per-instance
+     * bake: wrap-box cell x/z, activation seed, vertical/wander phase.
+     */
+    SALTS: { CELL_X: 1601, CELL_Z: 1607, SEED: 1609, PHASE: 1613 },
+    /**
+     * Ash traces — the memory layer: during ASHFALL small pale specks settle
+     * on the floor near the player (bounded recycled pool, world-anchored)
+     * and dissolve per-pixel across the aftermath window when it ends.
+     */
+    TRACES: {
+        /** Pool capacity (hard cap; oldest slots recycle — never grows). */
+        CAP: 48,
+        /** Spawn rate (traces/s) at full ASHFALL intensity. */
+        RATE_MAX: 2.5,
+        /** Per-frame spawn cap (also bounds the carry-over accumulator). */
+        MAX_PER_FRAME: 2,
+        /** Placement ring around the player: min / max radius (m). */
+        RADIUS_MIN: 1.5,
+        RADIUS: 10,
+        /** Speck footprint edge (m): min + hash-drawn span. */
+        SIZE_MIN: 0.12,
+        SIZE_SPAN: 0.22,
+        /**
+         * Floor-decal lift (m): the FloorTile-decal z-fighting pattern
+         * (paired with polygonOffset -1/-1), above FA_SHADOW.LIFT (0.02) and
+         * the IN_BETWEEN moire layer (0.02) so specks land on top of both.
+         */
+        LIFT: 0.03,
+        /** Dissolve grain cells across one speck (per-pixel hard threshold). */
+        GRAIN: 6,
+        /** Fraction of grain cells that exist at all (irregular blot shape). */
+        SHAPE_FILL: 0.62,
+        /**
+         * Keep-out half-band (m) around a FORCED_ALIGNMENT rift line: ash
+         * never settles over the abyss (the FA_SHADOW crack-keepout analogue).
+         */
+        CRACK_KEEPOUT: 4,
+        /** Hash salts: placement angle/radius, size draw, per-slot pixel seed. */
+        SALTS: { ANGLE: 1619, RADIUS: 1621, SIZE: 1627, SLOT_SEED: 1637 },
+    },
+} as const;
+
+/**
+ * The world reacts (weather batch): weather is FELT because everything else
+ * responds. GALE strength + heading lean on the cables, whip the FA rift
+ * banners, tilt the distant figures and shear the INFO record strips; the
+ * FOREWARN ramp turns kin toward the coming storm and quickens the cable
+ * uplink; and each room answers the AFTERMATH in its own vocabulary — INFO
+ * pools the rain's records into glyph puddles, FORCED_ALIGNMENT lets its
+ * idealized shadows shudder before re-tidying them bit-exact, POLARIZED
+ * leaves a couple of near-seam buildings stuck in the other faction's
+ * language until the residue settles. Every effect is gated by its phase
+ * scalar (intensity / forewarn / aftermath) and decays to an exact rest
+ * state with it; all visual language stays hard on/off (per-pixel threshold
+ * dissolves, stepped jitter, hard holds — never a soft fade).
+ */
+export const WEATHER_REACTIONS = {
+    /** GALE — the directional shove, felt through what it moves. */
+    GALE: {
+        /**
+         * Aftermath residual: fraction of the wind surviving into the
+         * aftermath tail (wind = intensity while the gale runs, then
+         * RESIDUAL x aftermath as the residue decays). The tail re-arrives
+         * hard at the event boundary — the 1-bit language — and drains to 0
+         * with the aftermath window. Applies to the ENVIRONMENT consumers
+         * (cables, banners, strips); figures straighten with the live storm.
+         */
+        AFTERMATH_RESIDUAL: 0.5,
+        /** Ordinary cables: mid-point swing amplitude (m) at full wind. */
+        CABLE_SWAY_AMPLITUDE: 0.8,
+        /** Ordinary cables: swing angular speed (rad/s) — fixed frequency. */
+        CABLE_SWAY_SPEED: 2.4,
+        /** Steady downwind bow of the cable mid-point (m) at full wind. */
+        CABLE_BOW: 0.5,
+        /** FA banners: tremble AMPLITUDE multiplier gain at full wind (x(1+g)). */
+        BANNER_AMP_GAIN: 2.0,
+        /**
+         * FA banners: the whip layer — a second, faster oscillation added on
+         * top of the base tremble, amplitude-gated by the wind. Frequency is
+         * FIXED and the wind scales only amplitude: time-warping the existing
+         * tremble's speed (sin(t x speed x wind)) would kick the phase by
+         * t x d(wind)/dt on every intensity ramp — a violent artifact.
+         */
+        BANNER_WHIP_AMPLITUDE: 0.25,
+        BANNER_WHIP_SPEED: 23,
+        /** Figures: body tilt into the wind (rad) at full wind. */
+        FIGURE_LEAN_RAD: 0.09,
+        /**
+         * INFO record strips: sideways texture shear at full wind (u per v
+         * texture unit), signed by the wind heading's x component. Content
+         * shear, not geometry: the records FALL diagonally.
+         */
+        WATERFALL_SHEAR_MAX: 0.45,
+    },
+    /** FOREWARN omens — the world announces what the sky has drawn. */
+    FOREWARN: {
+        /** Cable uplink pulse-rate multiplier gain at full ramp (x(1+g)). */
+        UPLINK_RATE_GAIN: 0.4,
+    },
+    /**
+     * INFO_OVERFLOW after RAIN: the downpour's records pool on the floor —
+     * a few glyph-language blot decals stamped near the player, dissolving
+     * cell-by-cell (hard per-pixel threshold) across the aftermath window.
+     */
+    PUDDLES: {
+        /** Decal pool size (fixed; stamped per event, reused, never grows). */
+        COUNT: 5,
+        /** Placement ring around the player: min / max radius (m). */
+        RADIUS_MIN: 2,
+        RADIUS_MAX: 9,
+        /** Decal footprint edge (m): min + hash-drawn span. */
+        SIZE_MIN: 0.9,
+        SIZE_SPAN: 1.3,
+        /**
+         * Floor-decal lift (m), paired with polygonOffset -1/-1 (the
+         * FloorTile / FA_SHADOW pattern). Between FA_SHADOW.LIFT (0.02) and
+         * the ash-trace pool (0.03) — distinct layers never coincide.
+         */
+        LIFT: 0.025,
+        /** Shared blot texture size (texels); multiple of GLYPH_PITCH. */
+        TEX_SIZE: 32,
+        /** Glyph cell pitch (texels) — the INFO floor's 4px dot-matrix. */
+        GLYPH_PITCH: 4,
+        /** Cells whose hash draw exceeds this carry a lit record dot. */
+        GLYPH_GATE: 0.45,
+        /** Peak cell-existence gate at the blot center (radial falloff). */
+        SHAPE_FILL: 0.85,
+        /**
+         * Hash salts (utils/hash, distinct integer namespaces): stamp
+         * angle/radius/spin/size draws and the shared texture field.
+         * ANGLE/RADIUS/SPIN jumped past SEAM_HOLD's 1709/1721 because
+         * RoomSky already owns 1657/1663/1667. Next feature picks > 1741.
+         */
+        SALTS: { ANGLE: 1723, RADIUS: 1733, SPIN: 1741, SIZE: 1669, TEX: 1693 },
+    },
+    /**
+     * FORCED_ALIGNMENT after STATIC: the corrected shadows shudder — decals
+     * within RADIUS of the player take small stepped jitter offsets for the
+     * aftermath window, then snap back EXACTLY to their corrected pose (the
+     * system re-tidies after inspection). Stored-and-restored transforms;
+     * amplitude drains with the aftermath scalar.
+     */
+    SHADOW_JITTER: {
+        /** Collection radius (m) around the player at aftermath start. */
+        RADIUS: 30,
+        /** Hard cap on jittered decals (bounded per-frame pass). */
+        MAX_DECALS: 12,
+        /** Jitter re-draw steps per second (stepped, never smooth). */
+        STEP_RATE: 8,
+        /** Max |offset| (m) per axis at full aftermath. */
+        AMPLITUDE: 0.3,
+        /** Hash salts for the per-step x/z offset draws. */
+        SALTS: { X: 1697, Z: 1699 },
+    },
+    /**
+     * POLARIZED after GLITCH: the rupture leaves 1-2 near-seam buildings
+     * HOLDING their counterpart-faction shell for the aftermath window
+     * (ChunkManager.holdSeamShellsForAftermath), then releases them back to
+     * the live seam-swap pass. Choice is deterministic per event (hash +
+     * event direction).
+     */
+    SEAM_HOLD: {
+        /** Buildings held per event (hash-drawn within [MIN, MAX]). */
+        COUNT_MIN: 1,
+        COUNT_MAX: 2,
+        /** Hash salts: how many to hold / which candidates. */
+        SALTS: { COUNT: 1709, PICK: 1721 },
+    },
+} as const;
+
+/**
  * Per-room sky vocabulary (scene-style batch): the flat background becomes
  * four skies. One camera-following inverted dome (world/RoomSky) draws the
  * CURRENT room's treatment behind everything — sparse blinking specks
@@ -1068,6 +1466,78 @@ export const ROOM_SKY = {
     /** Paper disc misregister offset (rad) — a heaven printed off-plate. */
     DISC_OFFSET_AZIMUTH: 0.05,
     DISC_OFFSET_ELEVATION: 0.02,
+    // ===== Weather response (the sky joins the weather) =====
+    // The dome reads the WeatherState lifecycle broadcast and answers in each
+    // room's own vocabulary. Everything below gates DISCRETE marks on hard
+    // thresholds — densities, tick rates and hard offsets, never a fade.
+    WEATHER: {
+        /** INFO+RAIN: extra speck-fill multiplier gain at full intensity. */
+        RAIN_DENSIFY_GAIN: 4,
+        /** INFO+RAIN: vertical speck stretch at full intensity (hard dashes). */
+        RAIN_STREAK_GAIN: 2.5,
+        /** INFO+RAIN: downward field speed (speck-grid rows/s) at intensity 1. */
+        RAIN_FALL_SPEED: 2.5,
+        /** Fall-phase wrap (grid rows) so fract() precision never decays. */
+        RAIN_FALL_WRAP: 512,
+        /** FA+STATIC: horizontal segments per ledger line (azimuth bands). */
+        LEDGER_SEGMENTS: 40,
+        /** FA+STATIC: max fraction of segments rolling broken at intensity 1. */
+        LEDGER_BREAK_MAX: 0.85,
+        /**
+         * FA+STATIC: broken-segment vertical jitter amplitude, in line-period
+         * fractions (hash-signed, so max |shift| is half of this). Together
+         * with FOREWARN_LINE_WAVER it must keep a shifted line inside its
+         * owner half-period (see the config contract test).
+         */
+        LEDGER_JITTER_AMP: 0.6,
+        /** FA+STATIC: segment re-roll rate (Hz) — the jitter's hard ticks. */
+        LEDGER_JITTER_HZ: 9,
+        /**
+         * FA aftermath: residual break fraction while the STATIC aftermath
+         * decays — the last displaced segments snapping back into rule.
+         */
+        LEDGER_AFTERMATH_SCALE: 0.35,
+        /** IN_BETWEEN: plate-offset multiplier gain at full RAIN/GLITCH stress. */
+        DISC_DRIFT_GAIN: 2.5,
+        /** Forewarn: shared hard-tick rate (Hz) for flutter/waver/tremor/seam. */
+        FOREWARN_TICK_HZ: 7,
+        /** Forewarn: max per-tick speck dropout probability at forewarn 1. */
+        FOREWARN_SPECK_DROP: 0.45,
+        /** Forewarn: whole-line waver amplitude (line-period fraction, signed). */
+        FOREWARN_LINE_WAVER: 0.25,
+        /** Forewarn: twin-disc tremor amplitude (rad; both plates shake rigidly). */
+        FOREWARN_DISC_TREMOR: 0.03,
+        /** Forewarn: POLARIZED seam-plane jitter amplitude (m, signed). */
+        FOREWARN_SEAM_JITTER: 4,
+        /** Onset: mark-blanking strobe rate (Hz), decimated by the decaying onset. */
+        ONSET_STROBE_HZ: 9,
+        /**
+         * POLARIZED strike-cadence mirror: these three MUST equal the
+         * DitherShader's STRIKE_WINDOW_SECONDS / STRIKE_CHANCE /
+         * STRIKE_SECONDS GLSL consts — the sky's half-swap and the screen's
+         * invert strike are the SAME strike, derived from the same
+         * WeatherState inputs (tests/RoomSky.test.ts guards the match
+         * against the screen shader source).
+         */
+        STRIKE_WINDOW_SECONDS: 3.0,
+        STRIKE_CHANCE: 0.85,
+        STRIKE_SECONDS: 0.12,
+        /**
+         * ECLIPSE: authority-disc angular radius (rad). Wide enough to
+         * occlude BOTH misregistered IN_BETWEEN discs at mid-transit
+         * (config contract test) — the two prints agree on nothing except
+         * the shadow.
+         */
+        ECLIPSE_ANGULAR_RADIUS: 0.14,
+        /** ECLIPSE: transit-arc azimuth span (rad), centered on the anchor. */
+        ECLIPSE_ARC_SPAN: 2.4,
+        /**
+         * ECLIPSE: elevation dip at the arc ends (rad below the anchor).
+         * Deep enough that the whole disc starts and ends below the horizon
+         * — it rises and sets, never pops.
+         */
+        ECLIPSE_ARC_DIP: 0.9,
+    },
 } as const;
 
 /**

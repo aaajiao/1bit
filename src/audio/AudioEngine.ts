@@ -28,6 +28,11 @@ export class AudioEngine {
     private lowpassCeilingFreq: number = Infinity;
     private lowpassCeilingTimeLeft: number = 0;
 
+    // ECLIPSE lowpass ceiling (weather batch): a per-frame-driven cutoff
+    // composed with the gaze target and the snapshot ceiling in tick() by
+    // the deepest-cutoff-wins rule. Infinity = no eclipse (min is a no-op).
+    private eclipseLowpassFreq: number = Infinity;
+
     /**
      * Initialize audio context (must be called after user interaction)
      */
@@ -149,6 +154,19 @@ export class AudioEngine {
     }
 
     /**
+     * Drive the ECLIPSE lowpass ceiling (Hz; Infinity lifts it). Unlike the
+     * timed snapshot ceiling this has no hold — the caller re-feeds it every
+     * frame with the transit depth already mapped to Hz
+     * (AudioController.updateEclipseDarkening), so the ceiling opens and
+     * closes exactly with the transit. The glide itself reuses the shared
+     * gaze-filter interpolation in tick(); the composition rule there is
+     * deepest-cutoff-wins across all three pathways.
+     */
+    setEclipseLowpass(freq: number): void {
+        this.eclipseLowpassFreq = freq;
+    }
+
+    /**
      * Tick gaze filter interpolation (call every frame)
      */
     tick(deltaTime: number): void {
@@ -163,7 +181,11 @@ export class AudioEngine {
                 this.lowpassCeilingFreq = Infinity;
             }
         }
-        const target = Math.min(this.gazeFilterTargetFreq, this.lowpassCeilingFreq);
+        // Composition rule (documented contract): the DEEPEST cutoff wins —
+        // gaze discipline, the snapshot ritual and the eclipse transit all
+        // cap the same master filter, and the lowest ceiling is the one the
+        // ear hears; none of them fights the others' glide.
+        const target = Math.min(this.gazeFilterTargetFreq, this.lowpassCeilingFreq, this.eclipseLowpassFreq);
 
         // Skip writing the filter frequency once it has converged to the target
         // (relative epsilon — equal perceptual margin at any frequency).

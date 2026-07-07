@@ -251,33 +251,50 @@ describe('rOOM_WEATHER_WEIGHTS (room-weighted weather selection table)', () => {
             expect(w.static).toBeGreaterThanOrEqual(0);
             expect(w.rain).toBeGreaterThanOrEqual(0);
             expect(w.glitch).toBeGreaterThanOrEqual(0);
+            expect(w.ashfall).toBeGreaterThanOrEqual(0);
+            expect(w.gale).toBeGreaterThanOrEqual(0);
         }
     });
 
     it('always leaves at least one selectable type per room', () => {
         for (const room of Object.values(RoomType)) {
             const w = ROOM_WEATHER_WEIGHTS[room];
-            expect(w.static + w.rain + w.glitch).toBeGreaterThan(0);
+            expect(w.static + w.rain + w.glitch + w.ashfall + w.gale).toBeGreaterThan(0);
         }
     });
 
-    it('blocks STATIC and RAIN in POLARIZED, keeping only GLITCH', () => {
+    it('keeps ASHFALL and GALE present in every room (cross-room vocabulary)', () => {
+        for (const room of Object.values(RoomType)) {
+            const w = ROOM_WEATHER_WEIGHTS[room];
+            expect(w.ashfall, `${room} ashfall`).toBeGreaterThan(0);
+            expect(w.gale, `${room} gale`).toBeGreaterThan(0);
+        }
+    });
+
+    it('blocks STATIC and RAIN in POLARIZED, keeping GLITCH ruptures dominant', () => {
         const w = ROOM_WEATHER_WEIGHTS[RoomType.POLARIZED];
         expect(w.static).toBe(0);
         expect(w.rain).toBe(0);
         expect(w.glitch).toBeGreaterThan(0);
+        // Rare-rupture identity: GLITCH stays the most likely single outcome.
+        expect(w.glitch).toBeGreaterThan(w.ashfall);
+        expect(w.glitch).toBeGreaterThan(w.gale);
     });
 
     it('heavily favors RAIN in INFO_OVERFLOW', () => {
         const w = ROOM_WEATHER_WEIGHTS[RoomType.INFO_OVERFLOW];
         expect(w.rain).toBeGreaterThan(w.static);
         expect(w.rain).toBeGreaterThan(w.glitch);
+        expect(w.rain).toBeGreaterThan(w.ashfall);
+        expect(w.rain).toBeGreaterThan(w.gale);
     });
 
     it('favors STATIC in FORCED_ALIGNMENT (scan-storm is its signature weather)', () => {
         const w = ROOM_WEATHER_WEIGHTS[RoomType.FORCED_ALIGNMENT];
         expect(w.static).toBeGreaterThan(w.rain);
         expect(w.static).toBeGreaterThan(w.glitch);
+        expect(w.static).toBeGreaterThan(w.ashfall);
+        expect(w.static).toBeGreaterThan(w.gale);
     });
 
     it('de-emphasizes STATIC in IN_BETWEEN (misregistration favors RAIN/GLITCH)', () => {
@@ -286,9 +303,11 @@ describe('rOOM_WEATHER_WEIGHTS (room-weighted weather selection table)', () => {
         expect(w.glitch).toBeGreaterThan(w.static);
     });
 
-    it('keeps the default weights at equal thirds (historical rotation odds)', () => {
+    it('keeps the default weights equal across all five rotation types', () => {
         expect(DEFAULT_WEATHER_WEIGHTS.static).toBe(DEFAULT_WEATHER_WEIGHTS.rain);
         expect(DEFAULT_WEATHER_WEIGHTS.rain).toBe(DEFAULT_WEATHER_WEIGHTS.glitch);
+        expect(DEFAULT_WEATHER_WEIGHTS.glitch).toBe(DEFAULT_WEATHER_WEIGHTS.ashfall);
+        expect(DEFAULT_WEATHER_WEIGHTS.ashfall).toBe(DEFAULT_WEATHER_WEIGHTS.gale);
     });
 });
 

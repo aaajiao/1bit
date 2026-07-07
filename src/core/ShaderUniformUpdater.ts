@@ -2,6 +2,7 @@ import type { WeatherState } from '../types';
 import type { RoomShaderConfig } from '../world/RoomConfig';
 import * as THREE from 'three';
 import { CAMERA, GAZE, GAZE_VISUAL, SUNSET_FORESHADOW } from '../config';
+import { screenWeatherType } from '../world/WeatherSystem';
 
 /**
  * Default brightness lift (tone fix). Mirrors DitherShader.uniforms.uBrightnessLift
@@ -244,7 +245,19 @@ export function createShaderUniformParams(
     return {
         shaderQuad,
         t: 0,
-        weather: { weatherType: 0, weatherIntensity: 0, weatherTime: 0, weatherOnset: 0, weatherIsEvent: 0 },
+        weather: {
+            weatherType: 0,
+            weatherIntensity: 0,
+            weatherTime: 0,
+            weatherOnset: 0,
+            weatherIsEvent: 0,
+            forewarn: 0,
+            upcomingType: 0,
+            eventDirection: 0,
+            aftermath: 0,
+            lastEndedType: 0,
+            eclipseProgress: 0,
+        },
         shaderConfig,
         flowerIntensity: 0,
         colorInversion: 0,
@@ -284,8 +297,12 @@ export function updateShaderUniforms(params: ShaderUniformParams): void {
     ensureDuotoneUniforms(shaderQuad.material);
     const u = shaderQuad.material.uniforms;
 
-    // Weather
-    u.weatherType.value = weather.weatherType;
+    // Weather. The screen only ever sees the legacy overlay types: the
+    // world-space types (ASHFALL/GALE/ECLIPSE) collapse to CLEAR here, which
+    // also parks every weather-gated GLSL branch (per-type overlays, onset
+    // strobe/sweep, IN_BETWEEN misregister widening) — their presence lives
+    // in world objects, never in the full-screen pass. Identity for 0-3.
+    u.weatherType.value = screenWeatherType(weather.weatherType);
     u.weatherIntensity.value = weather.weatherIntensity;
     u.weatherTime.value = weather.weatherTime;
     // Onset broadcast + real-event flag (weather-presence pass): global

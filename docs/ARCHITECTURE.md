@@ -28,18 +28,21 @@ src/
 │   ├── BootGuard.ts          # 启动守卫：WebGL 检测 + 无 WebGL 时的 DOM 降级渲染
 │   ├── CableAudioUpdater.ts  # 每帧根据玩家与线缆的距离更新音频
 │   ├── CableUplinkUpdater.ts # 花光超阈值时驱动线缆上报脉冲（流向天眼）
+│   ├── DataWaterfallUpdater.ts # INFO 数据瀑布滚动驱动（花亮度调速，单 uniform）
 │   ├── FrameClock.ts         # 渲染时钟：钳制后的帧 delta + 累计秒数（防卡顿大步进）
 │   ├── HudUpdater.ts         # 每帧刷新调试 HUD 与行为标签/抗拒提示文本（含触控降级）
 │   ├── PauseController.ts    # 窗口/文档事件接线 + 暂停状态机（恢复时重置帧计时）
 │   ├── PostProcessing.ts     # 后处理合成器（Dither 着色器 + 蓝噪声纹理）
+│   ├── PrecipitationUpdater.ts # 世界降水驱动（雨/灰烬/风，喂 Precipitation + AshTraces）
 │   ├── ProximityUpdaters.ts  # 近玩家逐帧扫描统一入口（线缆音频/上报 + seam 互换）
 │   ├── RoomFlowUpdater.ts    # 每帧房间归属/行为画像/世界系统驱动（房间切换、裂缝、雾、剪影、幽灵、反抗传染窗口）
 │   ├── SceneSetup.ts         # 场景与相机初始化
 │   ├── SeamSwapUpdater.ts    # POLARIZED seam 带内阵营语言互换驱动
 │   ├── ShaderSyncUpdater.ts  # 每帧着色器参数聚合（main 实际调用者；内置 F5 应激→颗粒平滑器）
 │   ├── ShaderUniformUpdater.ts # 底层 uniform 写入工具（纯函数，被 ShaderSyncUpdater 调用）
-│   ├── StatsSunsetUpdater.ts # 日落快照 / 遗忘 / 疤痕的每帧驱动
-│   └── StressLevel.ts        # 应激等级（0-1 压力 → uDitherScale，分辨率即情绪）
+│   ├── StatsSunsetUpdater.ts # 日落快照 / 遗忘 / 疤痕 / 天穹与蚀暗化的每帧驱动
+│   ├── StressLevel.ts        # 应激等级（0-1 压力 → uDitherScale，分辨率即情绪）
+│   └── WeatherReactionsUpdater.ts # 天气行为反应驱动（风吹/前兆朝向/余波痕迹）
 ├── player/          # 玩家相关（控制、手部、道具、机制）
 │   ├── Controls.ts          # 玩家移动与输入控制
 │   ├── FlowerHintMechanic.ts # 60 秒无操作时在 HUD 淡入的极简花朵调节提示
@@ -47,7 +50,8 @@ src/
 │   ├── GazeMechanic.ts      # 注视机制（检测玩家看向 Sky Eye）
 │   ├── HandsModel.ts        # 玩家手部模型管理
 │   ├── OverrideMechanic.ts  # “Override”机制逻辑（Shift 键触发）
-│   └── PlayerManager.ts     # 玩家系统总管（整合 Controls, Hands, Gaze, Override）
+│   ├── PlayerManager.ts     # 玩家系统总管（整合 Controls, Hands, Gaze, Override, Echo）
+│   └── ViewmodelEcho.ts     # IN_BETWEEN 视模型错位重影（共享几何、逐帧同步变换）
 ├── shaders/         # 着色器
 │   ├── BlueNoiseTexture.ts  # 启动时一次性生成的蓝噪声有序抖动阈值纹理（确定性）
 │   └── DitherShader.ts      # 1-bit 抖动着色器定义
@@ -63,25 +67,34 @@ src/
 ├── ui/              # 用户界面与HUD
 │   └── HUD.ts            # 抬头显示器（坐标、状态调试信息）
 ├── world/           # 世界系统（区块、建筑、天气、昼夜...）
+│   ├── AshTraces.ts       # 灰烬地面痕迹池（余波期逐像素硬阈值溶解）
 │   ├── BuildingFactory.ts # 程序化建筑生成
 │   ├── CableSystem.ts     # 程序化电缆生成与动画
 │   ├── ChunkAnimator.ts   # 区块动画逻辑（建筑、植物、雾气）
 │   ├── ChunkManager.ts    # 无限世界区块管理系统
+│   ├── DataWaterfall.ts   # INFO 立面数据瀑布（共享字符纹理，一材质一 uniform）
 │   ├── DayNightCycle.ts   # 昼夜循环控制
+│   ├── EclipseDarkening.ts # 蚀的暗化通道（组合到背景色上，绝不经过昼夜状态机）
 │   ├── FigureSystem.ts    # 远景 1-bit 人形剪影（F3，不可交互的叙事布景；中段共鸣/反抗传染/疤痕见证者）
 │   ├── FloorTile.ts       # 地面瓦片与网格生成
 │   ├── FloraFactory.ts    # 程序化植物生成
 │   ├── GhostSystem.ts     # 幽灵回放（F4，重走上一局轨迹的半透明身影）
+│   ├── Precipitation.ts   # 世界空间降水（单 InstancedMesh 顶点着色器驱动）
+│   ├── RainGlyphPuddles.ts # INFO 雨后字符水洼（余波期溶解）
 │   ├── RiftMechanic.ts    # 裂缝机制（坠落、重生、音频）
 │   ├── RoomConfig.ts      # 不同“心智房间”的配置；亦为 chunk↔cluster↔world 坐标换算唯一来源
 │   ├── RoomGeneration.ts  # 逐房间程序化生成纯函数（按 RoomType 赋予建筑身份）
 │   ├── RoomLedger.ts      # 会话级 cluster→房间归属账本（F1，首次生成时定身份并保持）
+│   ├── RoomSky.ts         # 每房间一种天空的穹顶（自有着色器；随天气/昼夜/蚀响应）
 │   ├── RoomTransition.ts  # 房间过渡纯状态机（混合显示中的着色器配置）
 │   ├── ScarField.ts       # 世界疤痕场纯数学（F2，抗拒地点周围建筑的永久几何扭曲）
+│   ├── ShadowAftermath.ts  # FA 风暴余波：阴影抖动与逐位精确复位
+│   ├── ShadowCorrection.ts # FA 理想化阴影贴片（单一全局方位角；疤痕处失准）
 │   ├── SharedAssets.ts    # 共享材质与几何体资源
 │   ├── SkyEye.ts          # 空中“Sky Eye”对象的行为与视觉
 │   ├── SnapshotEcho.ts    # 运行中把本局快照指纹草稿闪现到附近建筑立面
-│   └── WeatherSystem.ts   # 天气系统（雨、雪、故障效果）
+│   ├── WeatherReactions.ts # 天气反应纯逻辑（风吹倍率/前兆朝向/余波选取与复位）
+│   └── WeatherSystem.ts   # 天气核心（前兆→爆发→余波；雨/静电/故障/灰烬/风/蚀；行为偏置）
 └── utils/           # 工具函数
     ├── dispose.ts          # Three.js 资源释放工具（几何体、材质、纹理）
     ├── hash.ts             # 字符串哈希工具
@@ -168,7 +181,7 @@ this.newSystem.update(delta, { /* 依赖 */ });
 
 ### 测试覆盖
 
-`tests/` 下共 34 个测试文件，覆盖 hash / 房间 / 快照 / 天气 / 各机制等纯逻辑。
+`tests/` 下共 43 个测试文件，覆盖 hash / 房间 / 快照 / 天气生命周期与降水 / 各机制等纯逻辑。
 
 *最后更新: 2026-06-15*
 

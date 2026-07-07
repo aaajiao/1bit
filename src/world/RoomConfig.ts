@@ -1,6 +1,6 @@
 // 1-bit Chimera Void - Room Configuration
 // Defines mental state rooms and their shader/audio parameters
-import { PERFORMANCE, SPAWN, WORLD } from '../config/constants';
+import { PERFORMANCE, SPAWN, WEATHER_BEHAVIOR_BIAS, WORLD } from '../config/constants';
 
 /**
  * Room type enumeration representing different mental states
@@ -482,33 +482,108 @@ export function reactiveRoomShaderConfig(
 
 /**
  * Per-room weather selection weights (flow-audit medium #3: weather must obey
- * the room's identity). Consumed by WeatherSystem.startRandomWeather — only the
- * SELECTION of the next event is weighted; weather already in progress is never
- * cut short. Order matches the rotation [STATIC, RAIN, GLITCH].
+ * the room's identity). Consumed by WeatherSystem's rotation scheduler — only
+ * the SELECTION of the next event is weighted; weather already in progress is
+ * never cut short. Order matches the rotation
+ * [STATIC, RAIN, GLITCH, ASHFALL, GALE] (legacy types keep their historical
+ * band order so a 3-type table maps identically).
  *
  * - INFO_OVERFLOW heavily favors digital RAIN (data overload made literal).
- * - POLARIZED blocks STATIC/RAIN entirely; only GLITCH ("a crack in the
- *   system") may interrupt its pure-binary stillness.
+ * - POLARIZED blocks STATIC/RAIN entirely; GLITCH ("a crack in the system")
+ *   keeps the dominant rupture seat in its pure-binary stillness.
+ * - ASHFALL (the settling of noise) and GALE (the directional shove) are
+ *   present EVERYWHERE at low weight — cross-room weather vocabulary that
+ *   never outvotes a room's signature type.
  */
 export interface WeatherTypeWeights {
     static: number;
     rain: number;
     glitch: number;
+    ashfall: number;
+    gale: number;
 }
 
-/** Equal thirds — identical odds to the historical unweighted rotation. */
-export const DEFAULT_WEATHER_WEIGHTS: WeatherTypeWeights = { static: 1, rain: 1, glitch: 1 };
+/** Equal weights — the unbiased five-way rotation (no-room fallback). */
+export const DEFAULT_WEATHER_WEIGHTS: WeatherTypeWeights = { static: 1, rain: 1, glitch: 1, ashfall: 1, gale: 1 };
 
 export const ROOM_WEATHER_WEIGHTS: Record<RoomType, WeatherTypeWeights> = {
-    [RoomType.INFO_OVERFLOW]: { static: 1, rain: 6, glitch: 1 },
+    // RAIN keeps an outright 6/10 majority — the downpour IS the room.
+    [RoomType.INFO_OVERFLOW]: { static: 1, rain: 6, glitch: 1, ashfall: 1, gale: 1 },
     // FORCED_ALIGNMENT's signature weather is the "inspection scan-storm":
-    // STATIC organized into sweeping horizontal bands, so STATIC dominates.
-    [RoomType.FORCED_ALIGNMENT]: { static: 5, rain: 1, glitch: 1 },
+    // STATIC organized into sweeping horizontal bands keeps the 5/10 seat;
+    // GALE gets a second seat — discipline as literal force.
+    [RoomType.FORCED_ALIGNMENT]: { static: 5, rain: 1, glitch: 1, ashfall: 1, gale: 2 },
     // IN_BETWEEN reads as two systems misreading each other — RAIN (rendered
     // as misregistered double-print) and GLITCH carry that better than STATIC.
-    [RoomType.IN_BETWEEN]: { static: 1, rain: 2, glitch: 2 },
-    [RoomType.POLARIZED]: { static: 0, rain: 0, glitch: 1 },
+    [RoomType.IN_BETWEEN]: { static: 1, rain: 2, glitch: 2, ashfall: 1, gale: 1 },
+    // Rare-rupture identity preserved: GLITCH keeps 3/5 of every draw, and
+    // the room's long POLARIZED cooldown profile keeps ALL weather rare —
+    // the dead calm between events is still the room.
+    [RoomType.POLARIZED]: { static: 0, rain: 0, glitch: 3, ashfall: 1, gale: 1 },
 };
+
+/**
+ * Behavior -> weather drives (weather core, mirror layer 4). Storm drive:
+ * bright/loud play — a blazing flower (expression past the deadzone) or
+ * frequent overrides (loud resistance). Settle drive: dim/still play — a
+ * suppressed flower, discounted by override activity (a dim but rebellious
+ * run is not "still"). Both in [0, 1]; a neutral profile yields 0/0.
+ */
+function weatherBiasDrives(profile: BehaviorProfile): { storm: number; settle: number } {
+    const { FLOWER_PIVOT, FLOWER_DEADZONE } = WEATHER_BEHAVIOR_BIAS;
+    const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+    const lowEnd = FLOWER_PIVOT - FLOWER_DEADZONE;
+    const highStart = FLOWER_PIVOT + FLOWER_DEADZONE;
+    const expression = clamp01((profile.avgFlower - highStart) / (1 - highStart));
+    const suppression = clamp01((lowEnd - profile.avgFlower) / lowEnd);
+    const override = clamp01(profile.overrideActivity);
+    return {
+        storm: Math.max(expression, override),
+        settle: suppression * (1 - override),
+    };
+}
+
+/**
+ * Gently skew the weather-type weights by the live behavior profile (weather
+ * core, mirror layer 4): the net drive (storm - settle, in [-1, 1]) shifts
+ * storm types (STATIC/RAIN/GLITCH/GALE) and ASHFALL in OPPOSITE directions by
+ * at most MAX_WEIGHT_SHIFT (+-30%). All storm types share one multiplier, so
+ * their odds relative to EACH OTHER — the room's signature — never move; only
+ * the storm-vs-settling balance leans. profile = null returns the input
+ * table untouched, and a neutral profile multiplies by exactly 1 — both are
+ * bit-identical to the unbiased weights. Pure; never mutates the input.
+ */
+export function biasedWeatherWeights(weights: WeatherTypeWeights, profile: BehaviorProfile | null): WeatherTypeWeights {
+    if (profile === null)
+        return weights;
+    const { storm, settle } = weatherBiasDrives(profile);
+    if (storm === settle)
+        return weights;
+    const net = storm - settle;
+    const stormMult = 1 + net * WEATHER_BEHAVIOR_BIAS.MAX_WEIGHT_SHIFT;
+    const settleMult = 1 - net * WEATHER_BEHAVIOR_BIAS.MAX_WEIGHT_SHIFT;
+    return {
+        static: weights.static * stormMult,
+        rain: weights.rain * stormMult,
+        glitch: weights.glitch * stormMult,
+        ashfall: weights.ashfall * settleMult,
+        gale: weights.gale * stormMult,
+    };
+}
+
+/**
+ * Behavior -> cooldown scale (weather core, mirror layer 4): multiplies the
+ * sampled between-event cooldown. Storm-leaning play shortens the calm
+ * (scale < 1), settle-leaning play stretches it (scale > 1); bounded to
+ * 1 +- MAX_COOLDOWN_SHIFT by the [0,1] drives. profile = null (or neutral)
+ * returns exactly 1. Pure.
+ */
+export function weatherCooldownScale(profile: BehaviorProfile | null): number {
+    if (profile === null)
+        return 1;
+    const { storm, settle } = weatherBiasDrives(profile);
+    return 1 + (settle - storm) * WEATHER_BEHAVIOR_BIAS.MAX_COOLDOWN_SHIFT;
+}
 
 /**
  * Per-room weather lifecycle profiles (weather-presence pass). Where

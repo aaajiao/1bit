@@ -10,7 +10,9 @@ import { GAMEPLAY, LIVE_PROFILE } from '../config';
 import { contagionWindowTick } from '../world/FigureSystem';
 import { RiftMechanic } from '../world/RiftMechanic';
 import { RAIN_FOG_FAR_FACTOR, ROOM_FOG, RoomType, stepFogToward } from '../world/RoomConfig';
-import { WEATHER_TYPES } from '../world/WeatherSystem';
+import { liveGaleStrength } from '../world/WeatherReactions';
+import { getLastWeatherBroadcast, WEATHER_TYPES } from '../world/WeatherSystem';
+import { WeatherReactionsUpdater } from './WeatherReactionsUpdater';
 
 /**
  * Per-frame room-flow wiring: detects room transitions (ambient retune via
@@ -23,6 +25,13 @@ import { WEATHER_TYPES } from '../world/WeatherSystem';
 export class RoomFlowUpdater {
     private previousRoomType: RoomType | null = null;
     private readonly riftMechanic = new RiftMechanic();
+
+    // The world reacts (weather batch): GALE wind on cables/banners/strips,
+    // forewarn quickening of the uplink, and the per-room aftermath traces.
+    // Owned here (the riftMechanic pattern) and fed the weather system's
+    // module broadcast below — one frame stale by design, the same staleness
+    // as the setWeather feed.
+    private readonly weatherReactions = new WeatherReactionsUpdater();
 
     // Throttle for feeding the live behavior profile into the room ledger
     // (F1 "the world reads you") — once per LEDGER_REFRESH_INTERVAL, not per
@@ -190,8 +199,14 @@ export class RoomFlowUpdater {
         // cluster pins are already settled for this frame; the system follows
         // the same active chunk window as ChunkManager, reports its rare
         // rebel tears through the audio controller, shimmers harder under the
-        // (one frame stale) weather intensity, and rebels more often while the
-        // contagion window is open (a recent successful override).
+        // (one frame stale) weather intensity, rebels more often while the
+        // contagion window is open (a recent successful override), and turns
+        // every face skyward — or to the player's burning flower — while the
+        // ECLIPSE transits (same one-frame-stale weather feed). The weather
+        // OMENS (lean into a live gale, face the announced storm) read the
+        // full broadcast — same instant, same staleness — but their priority
+        // is decided inside FigureSystem's ONE attitude ladder.
+        const weather = getLastWeatherBroadcast();
         this.figures?.update(
             delta,
             playerPos,
@@ -200,7 +215,18 @@ export class RoomFlowUpdater {
             audio,
             this.weatherIntensity,
             this.contagionRemaining > 0,
+            this.weatherType === WEATHER_TYPES.ECLIPSE,
+            liveGaleStrength(weather),
+            weather !== null ? weather.forewarn : 0,
+            weather !== null ? weather.eventDirection : 0,
         );
+
+        // The world reacts (weather batch): distribute the same broadcast
+        // into the behavioral layer — GALE wind onto cables/banners/strips,
+        // the forewarn quickening onto the uplink (consumed by this frame's
+        // proximity pass), and the room-specific aftermath traces into the
+        // chunk tree.
+        this.weatherReactions.update(delta, weather, playerPos, chunkManager, currentRoomType);
 
         // F4 ghost replay: last run's you, retracing its recorded trail. It
         // ignores rooms entirely (memory predates this world's layout); it
@@ -218,6 +244,7 @@ export class RoomFlowUpdater {
 
     dispose(): void {
         this.riftMechanic.dispose();
+        this.weatherReactions.dispose();
         this.figures?.dispose();
         this.ghost?.dispose();
         this.snapshotEcho?.dispose();

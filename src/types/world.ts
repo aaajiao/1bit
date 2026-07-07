@@ -3,7 +3,7 @@ import type * as THREE from 'three';
 
 // ===== Day/Night System =====
 
-import type { RoomType } from '../world/RoomConfig';
+import type { BehaviorProfile, RoomType } from '../world/RoomConfig';
 import type { AudioSystemInterface } from './audio';
 
 // ===== Building & Generation =====
@@ -153,6 +153,14 @@ export interface SeamShell {
     phase: number;
     /** Last visibility written, to skip redundant .visible writes. */
     current: boolean;
+    /**
+     * GLITCH-aftermath hold (weather reactions): while true the shell stays
+     * forced visible — the building is stuck in the other faction's language
+     * — outranking the live seam-swap duty until
+     * ChunkManager.releaseHeldSeamShells clears it. Absent/false on every
+     * shell the aftermath never touched (the live pass behaves identically).
+     */
+    held?: boolean;
 }
 
 export interface ChunkUserData {
@@ -199,6 +207,39 @@ export interface WeatherState {
      * POLARIZED full-screen invert strikes) that transients must not fire.
      */
     weatherIsEvent: number;
+    /**
+     * Forewarn broadcast (weather lifecycle): 0 -> 1 ramp across
+     * WEATHER_LIFECYCLE.FOREWARN_SECONDS while the next real rotation event
+     * is drawn but not yet started — the world senses the storm coming.
+     * Always 0 for transient ambient glitches (they are never announced).
+     */
+    forewarn: number;
+    /**
+     * WEATHER_TYPES value of the announced event while forewarn > 0;
+     * CLEAR (0) when nothing is scheduled.
+     */
+    upcomingType: number;
+    /**
+     * Heading of the current (or announced) real event in radians, hash-drawn
+     * once per event and stable across its whole forewarn -> aftermath arc
+     * (GALE blows somewhere; ASHFALL drifts from it). Only meaningful while
+     * forewarn / weatherIsEvent / aftermath says an event is in play.
+     */
+    eventDirection: number;
+    /**
+     * Aftermath broadcast (weather lifecycle): 1 -> 0 decay across
+     * WEATHER_LIFECYCLE.AFTERMATH_SECONDS after a real event ends — the
+     * residue the storm leaves behind. Always 0 after transient glitches.
+     */
+    aftermath: number;
+    /** WEATHER_TYPES value of the last real event that ended (CLEAR before any). */
+    lastEndedType: number;
+    /**
+     * 0 -> 1 progress of a running ECLIPSE (WEATHER_ECLIPSE scheduler),
+     * exactly 0 outside one. The screen shader never sees the eclipse — this
+     * is the world systems' channel.
+     */
+    eclipseProgress: number;
 }
 
 // Cooldown/duration/intensity ranges moved to per-room profiles
@@ -210,7 +251,7 @@ export interface WeatherConfig {
 }
 
 export interface WeatherSystemInterface {
-    update: (delta: number, time: number, roomType?: RoomType | null) => WeatherState;
+    update: (delta: number, time: number, roomType?: RoomType | null, profile?: BehaviorProfile | null) => WeatherState;
     forceWeather: (type: string, duration?: number) => void;
 }
 

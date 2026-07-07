@@ -28,6 +28,25 @@
 //   REBEL_CONTAGION_*) during which the arming gate drains markedly faster,
 //   so distant kin rebel more often in the minutes after you resisted.
 //
+// ECLIPSE (weather batch): while the authority's disc transits, every
+// standing figure in the active window turns its face to the sky — a hard
+// body pitch + chest-light lift (ECLIPSE_FIGURES), never eased. EXCEPTION:
+// if the player's flower burns loud enough, figures within a radius turn to
+// the PLAYER instead — in the darkness your light is the loudest thing in
+// the world. Priority is ONE pure ladder (figureAttitude): press-down
+// suppression > eclipse facing > gale lean > forewarn facing > resonance >
+// idle sway.
+//
+// WEATHER OMENS (weather batch, "the world reacts"): under a GALE the
+// swaying kin lean INTO the wind — a small body tilt (pitch + roll from the
+// wind heading vs the figure's facing) composed with the existing sway,
+// scaling with the live storm intensity and gone the moment it ends. While
+// the sky has DRAWN the next storm (WeatherState.forewarn), kin turn to face
+// where it will come from, the turn scaling with the ramp — the world knows
+// before you do. Both omens ride the SAME attitude ladder and pose machine
+// as the eclipse (one decision point, one restore path); ALIGNED figures
+// take neither (the ranks do not bend, even in the wind).
+//
 // Witnesses at the scars (F3 x F2): the scar field says "the system remembers
 // you resisted" by leaning the buildings; this adds "others remember too". When
 // a chunk lies within reach of a boot-snapshot scar, a config fraction
@@ -48,7 +67,7 @@
 
 import type { ScarPoint } from './ScarField';
 import * as THREE from 'three';
-import { FIGURES, SCAR_WITNESS, WORLD } from '../config/constants';
+import { ECLIPSE_FIGURES, FIGURES, SCAR_WITNESS, WEATHER_REACTIONS, WORLD } from '../config/constants';
 import { hash } from '../utils/hash';
 import { FA_FIGURE_PLACEMENT, faSideAxisX, riftLineXForWorldX, ROOM_FIGURE_DENSITY, RoomType } from './RoomConfig';
 import { scarsNearChunk } from './ScarField';
@@ -425,6 +444,123 @@ export function conformistPressed(isGazing: boolean, playerFlower: number, distS
         && distSq < DIM_FLOWER_DISTANCE * DIM_FLOWER_DISTANCE;
 }
 
+// ---------------------------------------------------------------------------
+// ECLIPSE attitude — the priority ladder (weather batch). All pure, tested.
+// ---------------------------------------------------------------------------
+
+/**
+ * What leads a standing figure's expression this frame (figureAttitude).
+ * The rungs below the leader keep their non-conflicting channels (sway keeps
+ * swaying, MISREAD keeps flickering); the ladder resolves the channels that
+ * DO conflict — the body's orientation and the breathing convergence.
+ */
+export type FigureAttitude
+    = 'PRESSED' | 'ECLIPSE_FACE_PLAYER' | 'ECLIPSE_LOOK_UP'
+        | 'GALE_LEAN' | 'FOREWARN_FACE' | 'RESONANCE' | 'IDLE';
+
+/**
+ * ECLIPSE exception gate: does the player's flower, at this distance, pull a
+ * figure's upturned face down to the PLAYER instead of the sky? True when
+ * the flower burns above ECLIPSE_FIGURES.FACE_PLAYER_FLOWER_THRESHOLD and
+ * the figure stands within FACE_PLAYER_RADIUS — in the darkness your light
+ * is the loudest thing in the world. Only consulted while the transit is
+ * active (figureAttitude). Pure.
+ */
+export function eclipseFacesPlayer(flowerIntensity: number, distSq: number): boolean {
+    const { FACE_PLAYER_FLOWER_THRESHOLD, FACE_PLAYER_RADIUS } = ECLIPSE_FIGURES;
+    return flowerIntensity > FACE_PLAYER_FLOWER_THRESHOLD
+        && distSq < FACE_PLAYER_RADIUS * FACE_PLAYER_RADIUS;
+}
+
+/**
+ * THE priority ladder for a standing figure — the ONE decision point, top
+ * rung first:
+ *
+ *   press-down suppression > eclipse facing > gale lean > forewarn facing
+ *     > resonance > idle sway
+ *
+ * - PRESSED: the player's gaze / blazing flower bows the kin; a bowed head
+ *   does not lift for the eclipse (suppression wins over everything).
+ * - ECLIPSE_FACE_PLAYER / ECLIPSE_LOOK_UP: during the transit every figure
+ *   turns its face to the sky — unless the player's flower burns loud
+ *   enough nearby (eclipseFacesPlayer), in which case the figure turns to
+ *   the PLAYER instead. Eclipse facing outranks resonance: kin do not
+ *   converge cadence while the authority's shadow crosses.
+ * - GALE_LEAN: the live storm physically outranks its announcement — a body
+ *   braced against the wind is not also turning to scan the horizon.
+ * - FOREWARN_FACE: the drawn-but-unbroken storm turns kin toward its
+ *   heading, the turn scaling with the ramp.
+ * - RESONANCE: the mid-band breathing convergence (armed + in press radius).
+ * - IDLE: the hash-desynced sway/breathing baseline.
+ *
+ * `pressed` and `resonating` are mutually exclusive by construction (gazing
+ * disarms resonance the same frame; the resonance band's outer edge sits
+ * below DIM_FLOWER_THRESHOLD), so gating the resonance drive on RESONANCE is
+ * bit-identical to the pre-ladder behavior for CLEAR/STATIC/RAIN/GLITCH.
+ * The omen flags default false, so every pre-omen caller keeps its exact
+ * behavior. Extensible: a later feature adds a rung by inserting its check
+ * at the right height and a member to FigureAttitude. Pure.
+ */
+export function figureAttitude(
+    pressed: boolean,
+    eclipseActive: boolean,
+    facesPlayer: boolean,
+    resonating: boolean,
+    galeLeaning: boolean = false,
+    forewarnFacing: boolean = false,
+): FigureAttitude {
+    if (pressed)
+        return 'PRESSED';
+    if (eclipseActive)
+        return facesPlayer ? 'ECLIPSE_FACE_PLAYER' : 'ECLIPSE_LOOK_UP';
+    if (galeLeaning)
+        return 'GALE_LEAN';
+    if (forewarnFacing)
+        return 'FOREWARN_FACE';
+    if (resonating)
+        return 'RESONANCE';
+    return 'IDLE';
+}
+
+/**
+ * Body PITCH (rotation.x, YXZ order) of a figure leaning INTO the wind:
+ * the up-vector tilts upwind by `lean` radians; this is its fore/aft
+ * component in the figure's own frame. Positive rotation.x tilts the body
+ * toward local +z (forward), so wind blowing along the facing (rel = 0)
+ * gives -lean — the figure braces backward, upwind. Pure.
+ *
+ * @param windDirectionRad - Heading the wind blows TOWARD ((sin, cos) azimuth).
+ * @param yaw - The figure's resting facing (placement.rotationY).
+ * @param lean - Tilt magnitude (rad), e.g. FIGURE_LEAN_RAD x strength.
+ */
+export function galeLeanPitch(windDirectionRad: number, yaw: number, lean: number): number {
+    return -Math.cos(windDirectionRad - yaw) * lean;
+}
+
+/**
+ * Body ROLL (rotation.z) component of the same upwind tilt — composed
+ * ADDITIVELY with the idle sway (rotation.z = sway + leanRoll), so the kin
+ * keep breathing while braced. Positive rotation.z tilts the up-vector
+ * toward local -x, which is upwind when the wind blows from the figure's
+ * right (rel = +90°). Pure.
+ */
+export function galeLeanRoll(windDirectionRad: number, yaw: number, lean: number): number {
+    return Math.sin(windDirectionRad - yaw) * lean;
+}
+
+/**
+ * Yaw of a figure turning to face the ANNOUNCED storm: the shortest-arc
+ * blend from its resting facing toward upwind (the storm arrives from where
+ * the wind will blow FROM — heading + π), the blend fraction being the
+ * forewarn ramp itself. Ramp 0 keeps the rest yaw (mod 2π); ramp 1 faces
+ * the storm square on. Reuses convergePhase's arc math with the ramp as a
+ * one-shot step. Pure.
+ */
+export function forewarnFacingYaw(restYaw: number, windDirectionRad: number, ramp: number): number {
+    const r = Math.max(0, Math.min(1, ramp));
+    return convergePhase(restYaw, windDirectionRad + Math.PI, r, 1);
+}
+
 /**
  * Deterministic arming delay (s) before rebel event `eventIndex` may fire,
  * hash-drawn in [REBEL_MIN_INTERVAL, REBEL_MAX_INTERVAL] — a few minutes
@@ -527,6 +663,22 @@ interface FigureRecord {
     head: THREE.Mesh;
     /** Per-figure chest-light material clone (independent intensity). */
     chestMat: THREE.MeshBasicMaterial;
+    /** Chest-light quad — the lift target of the eclipse look-up pose. */
+    chest: THREE.Mesh;
+    /** Resting chest-light height (m), restored when the eclipse pose drops. */
+    chestBaseY: number;
+    /**
+     * Attitude pose currently written to the transforms (write-on-change for
+     * the discrete channels): the eclipse poses plus the weather omens —
+     * LEAN (gale) and FACE_STORM (forewarn) track continuously while held.
+     */
+    pose: 'NONE' | 'UP' | 'PLAYER' | 'LEAN' | 'FACE_STORM';
+    /**
+     * Gale-lean roll component (rad), composed additively with the idle sway
+     * (rotation.z = sway + leanRoll). 0 whenever the LEAN pose is not held —
+     * the calm sway math is bit-identical.
+     */
+    leanRoll: number;
     /** Precomputed world position (figures never move) for distance checks. */
     worldPos: THREE.Vector3;
     placement: FigurePlacement;
@@ -596,6 +748,24 @@ export class FigureSystem {
     private resonanceArm: ResonanceArm = { inBand: false, armTimer: 0 };
 
     /**
+     * Whether the ECLIPSE transit is active this frame (threaded by
+     * RoomFlowUpdater from the weather broadcast — one frame stale by
+     * design, the same staleness as weatherIntensity above it).
+     */
+    private eclipseActive = false;
+
+    /**
+     * Weather omens (threaded by RoomFlowUpdater from the same one-frame-
+     * stale broadcast): live GALE strength in [0,1] (kin lean into the
+     * wind), the forewarn ramp in [0,1] (kin turn toward the drawn storm),
+     * and the shared event heading both read. All 0 in calm — the omen
+     * rungs of the attitude ladder never fire and behavior is bit-identical.
+     */
+    private galeLean = 0;
+    private forewarn = 0;
+    private omenDirection = 0;
+
+    /**
      * @param scene - Scene the figure root group is added to.
      * @param rooms - Per-chunk room attribution (pass the ChunkManager so the
      *   session ledger is consulted). Null falls back to the player's current
@@ -636,6 +806,23 @@ export class FigureSystem {
      *   owned upstream (RoomFlowUpdater) and threaded in as this small flag,
      *   so the figures never reach into the override system. False (default)
      *   reproduces the calm gate exactly.
+     * @param eclipseActive - Whether the ECLIPSE transit is running (weather
+     *   broadcast via RoomFlowUpdater, one frame stale by design). While true
+     *   every standing figure in the window takes the upturned pose — or
+     *   turns to the player's burning flower (figureAttitude ladder). False
+     *   (default) reproduces the legacy behavior exactly.
+     * @param galeLean - Live GALE strength in [0,1]
+     *   (WeatherReactions.liveGaleStrength — deliberately without the
+     *   aftermath residual: kin straighten when the storm ends). Swaying kin
+     *   within the animation LOD lean into the wind by
+     *   WEATHER_REACTIONS.GALE.FIGURE_LEAN_RAD x this. 0 (default)
+     *   reproduces the calm behavior exactly.
+     * @param forewarn - Forewarn ramp in [0,1] (WeatherState.forewarn):
+     *   swaying kin turn toward the announced storm, the turn scaling with
+     *   the ramp. 0 (default) reproduces the calm behavior exactly.
+     * @param omenDirection - Event heading (rad) both omens read
+     *   (WeatherState.eventDirection): the gale's while it blows, the drawn
+     *   event's while it is announced.
      */
     update(
         delta: number,
@@ -645,7 +832,15 @@ export class FigureSystem {
         audio?: FigureAudio,
         weatherIntensity: number = 0,
         contagionActive: boolean = false,
+        eclipseActive: boolean = false,
+        galeLean: number = 0,
+        forewarn: number = 0,
+        omenDirection: number = 0,
     ): void {
+        this.eclipseActive = eclipseActive;
+        this.galeLean = Math.max(0, Math.min(1, galeLean));
+        this.forewarn = Math.max(0, Math.min(1, forewarn));
+        this.omenDirection = omenDirection;
         this.clock += delta;
         this.flickerClock += delta * (1 + Math.max(0, weatherIntensity) * WEATHER_FLICKER_GAIN);
         this.syncChunks(playerPos, currentRoomType);
@@ -724,6 +919,11 @@ export class FigureSystem {
         const group = new THREE.Group();
         group.position.set(placement.x, 0, placement.z);
         group.rotation.y = placement.rotationY;
+        // YXZ: yaw first, so the eclipse look-up pitch (rotation.x) tilts the
+        // body around the figure's OWN right axis instead of the world's.
+        // Identity while the pitch is 0 — the legacy yaw + z-sway composition
+        // is unchanged.
+        group.rotation.order = 'YXZ';
 
         const body = new THREE.Mesh(this.assets.cylinderGeo, this.assets.matDark);
         body.scale.set(BODY_RADIUS_FRAC * h, BODY_HEIGHT_FRAC * h, BODY_RADIUS_FRAC * h);
@@ -758,6 +958,10 @@ export class FigureSystem {
             body,
             head,
             chestMat,
+            chest,
+            chestBaseY: CHEST_HEIGHT_FRAC * h,
+            pose: 'NONE',
+            leanRoll: 0,
             worldPos: new THREE.Vector3(
                 cx * WORLD.CHUNK_SIZE + placement.x,
                 CHEST_HEIGHT_FRAC * h,
@@ -819,23 +1023,129 @@ export class FigureSystem {
                     continue;
                 if (fig.state !== 'IDLE') {
                     // Rebels are never LOD-gated (the band is 30-60m anyway).
+                    // A rebel owns its body for the whole arc: any eclipse
+                    // pose it carried simply freezes (it vanishes within
+                    // seconds either way).
                     this.advanceRebel(fig, delta, audio);
                     continue;
                 }
                 const distSq = playerPos.distanceToSquared(fig.worldPos);
-                if (distSq > LOD_DISTANCE_SQ)
+                const withinLod = distSq <= LOD_DISTANCE_SQ;
+                // ONE priority decision per figure (the figureAttitude
+                // ladder). `pressed`/`resonating` reproduce the exact reads
+                // animateIdle used to make, just hoisted so the ladder sees
+                // them; the faces-player gate is eclipse-gated so the calm
+                // path pays nothing for it. The weather-omen rungs are
+                // LOD-gated like all figure animation (distant kin never
+                // take the pose, so there is nothing to restore for them)
+                // and skip ALIGNED — the ranks do not bend, even in the wind.
+                const conformist = fig.placement.archetype === 'CONFORMIST';
+                const omenEligible = withinLod && fig.placement.archetype !== 'ALIGNED';
+                const pressed = conformist
+                    && conformistPressed(playerState.isGazing, playerState.flowerIntensity, distSq);
+                const resonating = conformist && armed
+                    && distSq < FIGURES.DIM_FLOWER_DISTANCE * FIGURES.DIM_FLOWER_DISTANCE;
+                const attitude = figureAttitude(
+                    pressed,
+                    this.eclipseActive,
+                    this.eclipseActive && eclipseFacesPlayer(playerState.flowerIntensity, distSq),
+                    resonating,
+                    omenEligible && this.galeLean > 0,
+                    omenEligible && this.forewarn > 0,
+                );
+                // Attitude pose BEFORE the LOD gate: the whole active window
+                // answers the transit (write-on-change keeps it cheap; the
+                // light/breathing channels below stay LOD-gated as before),
+                // and a figure drifting past the LOD line mid-omen still gets
+                // its restore-to-rest write here.
+                this.applyAttitudePose(fig, attitude, playerPos);
+                if (!withinLod)
                     continue; // beyond the animation LOD: perfectly still
-                this.animateIdle(fig, delta, playerState, distSq, armed, refPhase);
+                this.animateIdle(fig, delta, attitude, refPhase);
             }
+        }
+    }
+
+    /**
+     * Write the attitude pose for this frame — the ONE pose machine behind
+     * the figureAttitude ladder, hard snaps only for the discrete channels
+     * (the 1-bit language: a face turns, it never eases). On any pose CHANGE
+     * every pose channel first resets to rest (pitch 0, rest yaw, chest
+     * down, lean roll stripped from the sway and zeroed), so poses can hand
+     * over to each other without a per-pair restore matrix; the new pose
+     * then writes what it owns:
+     *
+     * - PLAYER (eclipse exception): per-frame player-tracking yaw.
+     * - UP (eclipse): one-shot body pitch + chest-light lift.
+     * - LEAN (gale): per-frame upwind tilt — pitch here, roll composed with
+     *   the sway in animateIdle (galeLeanPitch / galeLeanRoll) — scaling
+     *   with the live storm strength.
+     * - FACE_STORM (forewarn): per-frame shortest-arc turn toward the
+     *   announced heading, scaling with the ramp (forewarnFacingYaw).
+     *
+     * The per-frame branches only run while their (rare, event-gated)
+     * attitude holds; a figure at rest costs one enum comparison.
+     */
+    private applyAttitudePose(fig: FigureRecord, attitude: FigureAttitude, playerPos: THREE.Vector3): void {
+        const pose: FigureRecord['pose']
+            = attitude === 'ECLIPSE_FACE_PLAYER'
+                ? 'PLAYER'
+                : attitude === 'ECLIPSE_LOOK_UP'
+                    ? 'UP'
+                    : attitude === 'GALE_LEAN'
+                        ? 'LEAN'
+                        : attitude === 'FOREWARN_FACE' ? 'FACE_STORM' : 'NONE';
+
+        if (pose !== fig.pose) {
+            // Hand-over reset: every channel back to rest, then the one-shot
+            // writes of the incoming pose. (Restore-to-NONE is exactly this
+            // reset — the transit passes, the wind drops, the body remembers
+            // nothing.) rotation.z belongs to animateIdle, but the lean half
+            // must be stripped HERE: a figure beyond the animation LOD never
+            // reaches animateIdle, and would otherwise keep the gale tilt
+            // frozen in its sway long after the wind drops.
+            fig.pose = pose;
+            fig.group.rotation.x = 0;
+            fig.group.rotation.y = fig.placement.rotationY;
+            fig.group.rotation.z -= fig.leanRoll;
+            fig.chest.position.y = fig.chestBaseY;
+            fig.leanRoll = 0;
+            if (pose === 'UP') {
+                fig.group.rotation.x = -ECLIPSE_FIGURES.LOOKUP_PITCH; // lean back: face to the sky
+                fig.chest.position.y = fig.chestBaseY
+                    + fig.placement.height * ECLIPSE_FIGURES.CHEST_LIFT_FRAC;
+            }
+        }
+
+        if (pose === 'PLAYER') {
+            // Face the player: local +z maps to world (sin rotY, cos rotY) —
+            // the witnessPose convention. Tracks the player every frame.
+            // Level, not upturned: the light meets yours, not the sky.
+            fig.group.rotation.y = Math.atan2(playerPos.x - fig.worldPos.x, playerPos.z - fig.worldPos.z);
+        }
+        else if (pose === 'LEAN') {
+            // Brace into the wind: strength ramps continuously with the
+            // storm, so both components track per frame. The roll half is
+            // composed with the sway in animateIdle (ALIGNED never leans).
+            const lean = WEATHER_REACTIONS.GALE.FIGURE_LEAN_RAD * this.galeLean;
+            fig.group.rotation.x = galeLeanPitch(this.omenDirection, fig.placement.rotationY, lean);
+            fig.leanRoll = galeLeanRoll(this.omenDirection, fig.placement.rotationY, lean);
+        }
+        else if (pose === 'FACE_STORM') {
+            // Turn toward the announced storm, the turn growing with the
+            // forewarn ramp — per-frame because the ramp is.
+            fig.group.rotation.y = forewarnFacingYaw(
+                fig.placement.rotationY,
+                this.omenDirection,
+                this.forewarn,
+            );
         }
     }
 
     private animateIdle(
         fig: FigureRecord,
         delta: number,
-        playerState: FigurePlayerRead,
-        distSq: number,
-        armed: boolean,
+        attitude: FigureAttitude,
         refPhase: number,
     ): void {
         const p = fig.placement;
@@ -843,30 +1153,31 @@ export class FigureSystem {
             return; // regimented: rigid stance, constant faint light
 
         // Gentle in-place sway (delta-accumulated clock, hash-phased desync).
+        // The bottom rung of the attitude ladder keeps this non-conflicting
+        // channel alive under every higher attitude — a body still breathes.
+        // The gale-lean roll composes ADDITIVELY (leanRoll is 0 outside the
+        // LEAN pose, so the calm sway is bit-identical): braced kin still sway.
         fig.group.rotation.z = Math.sin(this.clock * FIGURES.SWAY_SPEED + p.phase)
-            * FIGURES.SWAY_AMPLITUDE;
+            * FIGURES.SWAY_AMPLITUDE + fig.leanRoll;
 
         // Chest light: breathing baseline; conformists bow toward the dim
         // floor over ~LIGHT_DIM_SECONDS while pressed (player gazing, or a
         // blazing flower nearby), recovering more slowly once released.
         if (p.archetype === 'CONFORMIST') {
-            const pressed = conformistPressed(
-                playerState.isGazing,
-                playerState.flowerIntensity,
-                distSq,
-            );
+            const pressed = attitude === 'PRESSED';
             const step = pressed
                 ? delta / FIGURES.LIGHT_DIM_SECONDS
                 : -delta / FIGURES.LIGHT_RECOVER_SECONDS;
             fig.press = Math.max(0, Math.min(1, fig.press + step));
 
-            // Resonance: while the player holds the flower in the mid band long
-            // enough (armed) and this kin stands within the press radius, its
-            // breathing phase converges onto the shared reference and its light
-            // lifts; otherwise both relax back to the personal cadence. The
-            // press blend below still lets suppression win outright.
-            const resonating = armed
-                && distSq < FIGURES.DIM_FLOWER_DISTANCE * FIGURES.DIM_FLOWER_DISTANCE;
+            // Resonance: only while it LEADS the ladder (attitude RESONANCE:
+            // armed + within the press radius, no eclipse, not pressed) does
+            // the breathing phase converge onto the shared reference and the
+            // light lift; otherwise both relax back to the personal cadence.
+            // Bit-identical to the pre-ladder gate for the legacy weather
+            // types (pressed and resonating are mutually exclusive — see
+            // figureAttitude); an eclipse now suppresses the convergence.
+            const resonating = attitude === 'RESONANCE';
             const rTarget = resonating ? refPhase : p.phase;
             const rRate = resonating ? FIGURES.RESONANCE_CONVERGE_RATE : FIGURES.RESONANCE_RELAX_RATE;
             fig.livePhase = convergePhase(fig.livePhase, rTarget, rRate, delta);

@@ -14,7 +14,9 @@ import { clearLastSnapshot, loadLastSnapshot, saveLastSnapshot } from '../stats/
 import { StateSnapshotGenerator } from '../stats/StateSnapshotGenerator';
 import { clearStoredTrail, saveTrail, TrailRecorder } from '../stats/TrailRecorder';
 import { DayNightCycle } from '../world/DayNightCycle';
+import { EclipseDarkening, eclipseTransitDepth } from '../world/EclipseDarkening';
 import { RoomSky } from '../world/RoomSky';
+import { PrecipitationUpdater } from './PrecipitationUpdater';
 
 /** Frame-stable dependencies wired once at construction. */
 export interface StatsSunsetDeps {
@@ -36,8 +38,9 @@ export interface StatsSunsetDeps {
  * "上次" start-screen line and the pause-menu replay entry — flow-audit
  * medium #8 / enhancement #8), and the F4 ghost-trail recorder (persisted on
  * the same sunset/unload boundaries). Also owns the RoomSky dome (the
- * per-room sky vocabulary): it lives beside the DayNightCycle because its
- * ink/paper polarity must follow the cycle's day/night blend exactly.
+ * per-room sky vocabulary) and the world-space precipitation layers
+ * (core/PrecipitationUpdater): both live beside the DayNightCycle because
+ * their ink/paper polarity must follow the cycle's day/night blend exactly.
  * main.ts only threads per-frame state in.
  */
 export class StatsSunsetUpdater {
@@ -45,6 +48,19 @@ export class StatsSunsetUpdater {
     // Per-room sky dome (world/RoomSky): driven right after dayNight.update
     // so it reads THIS frame's background color + day polarity.
     private readonly roomSky: RoomSky;
+    // ECLIPSE world darkening (weather batch): composes the transit-curve
+    // darkening onto the final background/fog color OUTSIDE the day/night
+    // state machine (isDaytime / day counter / sunset trigger provably
+    // unaffected — see world/EclipseDarkening). Runs between the day/night
+    // step and the dome so RoomSky's per-frame uBase copy sees the darkened
+    // color and dome + background stay consistent.
+    private readonly eclipse: EclipseDarkening;
+    // World-space precipitation (weather batch): rain dashes / ash motes /
+    // gale wind + the ash-trace ground pool, driven from the weather
+    // system's LAST broadcast (this helper runs before the weather step in
+    // main's fixed order — one frame stale by design, the sky-eye precedent).
+    private readonly precipitation: PrecipitationUpdater;
+    private readonly weather: WeatherSystem;
     private readonly snapshotGenerator = new StateSnapshotGenerator();
     private readonly snapshotOverlay = new SnapshotOverlay();
     private readonly runStats: RunStatsCollector;
@@ -83,6 +99,7 @@ export class StatsSunsetUpdater {
         this.player = deps.player;
         this.audio = deps.audio;
         this.scars = deps.scars;
+        this.weather = deps.weather;
 
         // F2 cross-run scars: every successful override (the existing
         // OverrideMechanic trigger chain, surfaced by PlayerManager with the
@@ -104,6 +121,14 @@ export class StatsSunsetUpdater {
 
         // The four skies (scene-style batch): one permanent dome on the scene.
         this.roomSky = new RoomSky(deps.scene);
+
+        // ECLIPSE darkening (weather batch): additive background/fog compose,
+        // no scene objects of its own — nothing to dispose.
+        this.eclipse = new EclipseDarkening(deps.scene);
+
+        // Weather made physical (weather batch): the falling layer + ash
+        // traces, permanent scene residents like the dome.
+        this.precipitation = new PrecipitationUpdater(deps.scene);
 
         // Restore the previous session's persisted snapshot (enhancement #8):
         // seed the replay cache and surface the observation as one quiet line.
@@ -292,10 +317,41 @@ export class StatsSunsetUpdater {
 
         this.dayNight.update(delta, this.dayNightContext);
 
+        // ECLIPSE presentation: ONE transit depth (deepest at mid-transit)
+        // drives the world darkening and the audio lowpass together, so eye
+        // and ear dim on one clock. Composed AFTER the day/night step (whose
+        // transition writes become the new base — a sunset mid-eclipse keeps
+        // darkening from the night color) and BEFORE the dome update below
+        // (which copies scene.background as its base every frame). The
+        // weather broadcast is the LAST frame's, like every consumer here.
+        const eclipseDepth = eclipseTransitDepth(this.weather.getLastState());
+        this.eclipse.apply(eclipseDepth);
+        this.audio.updateEclipseDarkening(eclipseDepth);
+
         // Per-room sky vocabulary: AFTER the day/night step, so the dome sees
         // this frame's background color (via the scene) and day polarity —
-        // it follows the cycle's blend instead of fighting it.
-        this.roomSky.update(delta, playerPos, currentRoomType, this.dayNight.isDaytime());
+        // it follows the cycle's blend instead of fighting it. The weather
+        // broadcast is the LAST frame's (null on the boot frame — main
+        // updates weather after this helper), the sky-eye precedent: the
+        // dome answers every lifecycle phase in the room's own vocabulary.
+        this.roomSky.update(
+            delta,
+            playerPos,
+            currentRoomType,
+            this.dayNight.isDaytime(),
+            this.weather.getLastState(),
+        );
+
+        // World-space precipitation: same day-polarity feed as the dome; the
+        // weather broadcast is the LAST frame's (null on the boot frame —
+        // main updates weather after this helper), which is by design.
+        this.precipitation.update(
+            delta,
+            this.weather.getLastState(),
+            playerPos,
+            currentRoomType,
+            this.dayNight.isDaytime(),
+        );
 
         // Pre-sunset foreshadow (~30s lead, enhancement #8): derived from the
         // delta-driven cycle phase — no new wall clock. Audio half here; the
@@ -352,5 +408,6 @@ export class StatsSunsetUpdater {
         this.saveCardEl?.removeEventListener('click', this.boundSaveCard);
         this.snapshotOverlay.dispose();
         this.roomSky.dispose();
+        this.precipitation.dispose();
     }
 }

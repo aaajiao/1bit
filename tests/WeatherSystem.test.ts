@@ -150,7 +150,8 @@ describe('weatherSystem', () => {
         });
 
         it('should asymptotically approach its target intensity over time', () => {
-            // r = 0.999 -> target = 0.6 + 0.999*0.4 ~ 0.9996, duration ~ 45
+            // r = 0.999 -> GALE (five-way band 4.995): target = 0.6 + 0.999*0.4
+            // ~ 0.9996 (inside GALE's [0.5, 1] clamp), duration ~ 45 * 0.75 ~ 34
             const sys = startNaturalWeather(0.999);
             let last = 0;
             // Many small steps drive intensity toward the ~0.9996 target while
@@ -180,7 +181,7 @@ describe('weatherSystem', () => {
 
     describe('weather lifecycle / transitions', () => {
         it('should fade intensity back toward 0 in the final 2 seconds of a real event', () => {
-            // Drive a natural event: r = 0.5 -> RAIN, duration = 30, target 0.8.
+            // Drive a natural event: r = 0.5 -> GLITCH, duration = 30, target 0.8.
             // The fade-out branch fires only for durations > 2 once
             // elapsed > duration - 2 (i.e. elapsed > 28s here).
             const draw = vi.spyOn(Math, 'random');
@@ -223,8 +224,8 @@ describe('weatherSystem', () => {
         });
 
         it('should trigger a random weather event when cooldown expires', () => {
-            // random 0.5 -> startRandomWeather picks types[floor(0.5*3)] = index 1
-            // of [STATIC, RAIN, GLITCH] = RAIN, duration 30, target ~ 0.8.
+            // random 0.5 -> pick = 0.5 * 5 lands in the GLITCH band of the
+            // default five-way rotation [STATIC, RAIN, GLITCH, ASHFALL, GALE].
             // First advance enough to drain the initial cooldown (45 at random 0.5).
             let state = weather.update(0.016, 0);
             expect(state.weatherType).toBe(WEATHER_TYPES.CLEAR);
@@ -234,28 +235,36 @@ describe('weatherSystem', () => {
                 if (state.weatherType !== WEATHER_TYPES.CLEAR)
                     break;
             }
-            // After cooldown drains a non-clear weather starts (any of the three
-            // rotation types). With random pinned at 0.5 this is deterministically RAIN.
+            // After cooldown drains a non-clear weather starts (any of the five
+            // rotation types). With random pinned at 0.5 this is deterministically GLITCH.
             expect([
                 WEATHER_TYPES.STATIC,
                 WEATHER_TYPES.RAIN,
                 WEATHER_TYPES.GLITCH,
+                WEATHER_TYPES.ASHFALL,
+                WEATHER_TYPES.GALE,
             ]).toContain(state.weatherType);
-            expect(state.weatherType).toBe(WEATHER_TYPES.RAIN);
+            expect(state.weatherType).toBe(WEATHER_TYPES.GLITCH);
         });
 
-        it('should pick the weather type deterministically from the RNG draw (3-way rotation)', () => {
-            // The rotation is [STATIC, RAIN, GLITCH], so floor(random()*3) selects:
-            //   0     -> index 0 -> STATIC
-            //   0.5   -> index 1 -> RAIN
-            //   0.999 -> index 2 -> GLITCH
-            // One large update() drains the constructor cooldown (<= 60s) and fires
-            // the trigger in a single frame. (For these draws an ambient glitch also
-            // fires first, but startRandomWeather runs last and wins the frame.)
+        it('should pick the weather type deterministically from the RNG draw (5-way rotation)', () => {
+            // The rotation is [STATIC, RAIN, GLITCH, ASHFALL, GALE] at equal
+            // default weights, so random()*5 selects the band:
+            //   0     -> [0,1) -> STATIC
+            //   0.3   -> 1.5   -> RAIN
+            //   0.5   -> 2.5   -> GLITCH
+            //   0.7   -> 3.5   -> ASHFALL
+            //   0.999 -> 4.995 -> GALE
+            // One large update() drains the constructor cooldown (<= 60s), draws
+            // the scheduled event and fires it in a single frame. (For these draws
+            // an ambient glitch also fires first, but the scheduled start runs
+            // last and wins the frame.)
             const cases: Array<[number, number]> = [
                 [0, WEATHER_TYPES.STATIC],
-                [0.5, WEATHER_TYPES.RAIN],
-                [0.999, WEATHER_TYPES.GLITCH],
+                [0.3, WEATHER_TYPES.RAIN],
+                [0.5, WEATHER_TYPES.GLITCH],
+                [0.7, WEATHER_TYPES.ASHFALL],
+                [0.999, WEATHER_TYPES.GALE],
             ];
             const r = vi.spyOn(Math, 'random');
             for (const [draw, expected] of cases) {
@@ -320,34 +329,43 @@ describe('weatherSystem', () => {
             return sys.update(61, 61, room).weatherType;
         }
 
-        it('should never start STATIC or RAIN in POLARIZED — only GLITCH survives', () => {
-            for (const draw of [0, 0.2, 0.5, 0.8, 0.999]) {
-                expect(triggerWithDraw(draw, RoomType.POLARIZED), `draw ${draw}`)
-                    .toBe(WEATHER_TYPES.GLITCH);
-            }
+        it('should never start STATIC or RAIN in POLARIZED — ruptures dominate', () => {
+            // POLARIZED weights 0/0/3/1/1 (total 5): GLITCH keeps the wide
+            // [0, 3/5) rupture band; ASHFALL/GALE hold the narrow top bands.
+            // STATIC and RAIN are unreachable at any draw.
+            expect(triggerWithDraw(0, RoomType.POLARIZED)).toBe(WEATHER_TYPES.GLITCH);
+            expect(triggerWithDraw(0.2, RoomType.POLARIZED)).toBe(WEATHER_TYPES.GLITCH);
+            expect(triggerWithDraw(0.5, RoomType.POLARIZED)).toBe(WEATHER_TYPES.GLITCH);
+            expect(triggerWithDraw(0.7, RoomType.POLARIZED)).toBe(WEATHER_TYPES.ASHFALL);
+            expect(triggerWithDraw(0.9, RoomType.POLARIZED)).toBe(WEATHER_TYPES.GALE);
         });
 
         it('should bias INFO_OVERFLOW toward RAIN on draws that pick other types by default', () => {
-            // Default rotation (equal thirds): 0.3 -> STATIC, 0.7 -> GLITCH.
-            expect(triggerWithDraw(0.3, null)).toBe(WEATHER_TYPES.STATIC);
-            expect(triggerWithDraw(0.7, null)).toBe(WEATHER_TYPES.GLITCH);
-            // INFO_OVERFLOW weights (1/6/1, total 8): both draws land in the
-            // wide RAIN band [1/8, 7/8).
-            expect(triggerWithDraw(0.3, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.RAIN);
-            expect(triggerWithDraw(0.7, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.RAIN);
+            // Default rotation (equal fifths): 0.1 -> STATIC, 0.5 -> GLITCH.
+            expect(triggerWithDraw(0.1, null)).toBe(WEATHER_TYPES.STATIC);
+            expect(triggerWithDraw(0.5, null)).toBe(WEATHER_TYPES.GLITCH);
+            // INFO_OVERFLOW weights (1/6/1/1/1, total 10): both draws land in
+            // the wide RAIN band [1/10, 7/10).
+            expect(triggerWithDraw(0.1, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.RAIN);
+            expect(triggerWithDraw(0.5, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.RAIN);
         });
 
         it('should keep the edge bands of the INFO_OVERFLOW rotation reachable', () => {
-            // INFO weights 1/6/1 (total 8): STATIC below 1/8, GLITCH at/above 7/8.
+            // INFO weights 1/6/1/1/1 (total 10): STATIC below 1/10, then
+            // GLITCH [7/10, 8/10), ASHFALL [8/10, 9/10), GALE [9/10, 1).
             expect(triggerWithDraw(0.05, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.STATIC);
-            expect(triggerWithDraw(0.95, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.GLITCH);
+            expect(triggerWithDraw(0.75, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.GLITCH);
+            expect(triggerWithDraw(0.85, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.ASHFALL);
+            expect(triggerWithDraw(0.95, RoomType.INFO_OVERFLOW)).toBe(WEATHER_TYPES.GALE);
         });
 
-        it('should preserve the historical equal-thirds mapping when no room is given', () => {
+        it('should map the unbiased five-way rotation when no room is given', () => {
             const cases: Array<[number, number]> = [
                 [0, WEATHER_TYPES.STATIC],
-                [0.5, WEATHER_TYPES.RAIN],
-                [0.999, WEATHER_TYPES.GLITCH],
+                [0.3, WEATHER_TYPES.RAIN],
+                [0.5, WEATHER_TYPES.GLITCH],
+                [0.7, WEATHER_TYPES.ASHFALL],
+                [0.999, WEATHER_TYPES.GALE],
             ];
             for (const [draw, expected] of cases) {
                 expect(triggerWithDraw(draw, null), `draw ${draw}`).toBe(expected);
@@ -404,13 +422,13 @@ describe('weatherSystem', () => {
         });
 
         it('should broadcast for a natural full-length GLITCH event', () => {
-            // Draw 0.999 lands in the GLITCH band of the default rotation; this
-            // is a REAL full-duration event (isGlitchEvent = false), so unlike
-            // ambient flickers it announces itself.
+            // Draw 0.5 lands in the GLITCH band of the default five-way
+            // rotation (0.5 * 5 = 2.5); this is a REAL full-duration event
+            // (isGlitchEvent = false), so unlike ambient flickers it
+            // announces itself.
             const r = vi.spyOn(Math, 'random');
             r.mockReturnValue(0.5); // constructor cooldown = 45
             const sys = new WeatherSystem();
-            r.mockReturnValue(0.999);
             const state = sys.update(61, 61);
             expect(state.weatherType).toBe(WEATHER_TYPES.GLITCH);
             expect(state.weatherOnset).toBe(1);
@@ -517,8 +535,10 @@ describe('weatherSystem', () => {
         it('should fall back to the DEFAULT profile when no room is given', () => {
             const sys = new WeatherSystem(); // cooldown = 45 (random pinned 0.5)
             let state = sys.update(61, 61, null);
-            expect(state.weatherType).toBe(WEATHER_TYPES.RAIN);
-            // DEFAULT intensity target: 0.6 + 0.5 * 0.4 = 0.8.
+            // Equal default fifths: the pinned draw lands in the GLITCH band.
+            expect(state.weatherType).toBe(WEATHER_TYPES.GLITCH);
+            // DEFAULT intensity target: 0.6 + 0.5 * 0.4 = 0.8 (GLITCH has no
+            // per-type tuning, so the profile draw is untouched).
             for (let i = 0; i < 100; i++)
                 state = sys.update(0.1, 62 + i * 0.1, null);
             expect(state.weatherIntensity).toBeCloseTo(0.8, 3);

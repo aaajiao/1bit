@@ -367,3 +367,21 @@ export const WEATHER_AUDIO = {
      */
     glitchOnsetSnapDelayMs: 250,
 };
+
+/**
+ * ECLIPSE audio darkening (weather batch, ECLIPSE presentation): while the
+ * authority's disc transits, a lowpass ceiling rides the SAME master
+ * gaze-filter glide pipeline (AudioEngine.tick — the snapshot-duck
+ * precedent), its depth following the transit curve so the world dims to the
+ * ear exactly as it dims to the eye (deepest at mid-transit). Composition
+ * rule: the DEEPEST cutoff wins — the effective filter target is
+ * min(gaze target, snapshot ceiling, eclipse ceiling) — so gazing mid-eclipse
+ * simply keeps whichever muffle is duller; neither pathway fights the other.
+ */
+export const ECLIPSE_AUDIO = {
+    /**
+     * Lowpass cutoff (Hz) at full transit depth. A touch below the gaze
+     * filter's 400Hz closed state: total shadow out-muffles discipline.
+     */
+    lowpassFloorHz: 350,
+};
