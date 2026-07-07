@@ -172,6 +172,10 @@ export class WeatherSystem implements WeatherSystemInterface {
     private playTime: number = 0;
     private nextEclipseAt: number = WEATHER_ECLIPSE.FIRST_MIN_SECONDS;
 
+    // Latest state returned by update(), for consumers that run BEFORE the
+    // weather step in main's frame order (see getLastState).
+    private lastState: WeatherState | null = null;
+
     // Configuration. Cooldown/duration/intensity ranges live in the per-room
     // weather profiles (ROOM_WEATHER_PROFILES / DEFAULT_WEATHER_PROFILE).
     private config: WeatherConfig = {
@@ -276,7 +280,7 @@ export class WeatherSystem implements WeatherSystemInterface {
             ? Math.min(1, Math.max(0, 1 - this.cooldown / WEATHER_LIFECYCLE.FOREWARN_SECONDS))
             : 0;
 
-        return {
+        this.lastState = {
             weatherType: this.currentWeather,
             weatherIntensity: this.intensity,
             weatherTime: this.weatherTime,
@@ -293,6 +297,17 @@ export class WeatherSystem implements WeatherSystemInterface {
                 ? Math.min(1, this.elapsed / this.duration)
                 : 0,
         };
+        return this.lastState;
+    }
+
+    /**
+     * Latest state broadcast by update(), or null before the first frame.
+     * For consumers wired EARLIER than the weather step in main's fixed
+     * frame order (e.g. the precipitation layer inside StatsSunsetUpdater):
+     * one frame stale by design — the sky-eye precedent.
+     */
+    getLastState(): WeatherState | null {
+        return this.lastState;
     }
 
     /**

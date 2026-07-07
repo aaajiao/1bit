@@ -1160,6 +1160,78 @@ export const ROOM_SKY = {
     /** Paper disc misregister offset (rad) — a heaven printed off-plate. */
     DISC_OFFSET_AZIMUTH: 0.05,
     DISC_OFFSET_ELEVATION: 0.02,
+    // ===== Weather response (the sky joins the weather) =====
+    // The dome reads the WeatherState lifecycle broadcast and answers in each
+    // room's own vocabulary. Everything below gates DISCRETE marks on hard
+    // thresholds — densities, tick rates and hard offsets, never a fade.
+    WEATHER: {
+        /** INFO+RAIN: extra speck-fill multiplier gain at full intensity. */
+        RAIN_DENSIFY_GAIN: 4,
+        /** INFO+RAIN: vertical speck stretch at full intensity (hard dashes). */
+        RAIN_STREAK_GAIN: 2.5,
+        /** INFO+RAIN: downward field speed (speck-grid rows/s) at intensity 1. */
+        RAIN_FALL_SPEED: 2.5,
+        /** Fall-phase wrap (grid rows) so fract() precision never decays. */
+        RAIN_FALL_WRAP: 512,
+        /** FA+STATIC: horizontal segments per ledger line (azimuth bands). */
+        LEDGER_SEGMENTS: 40,
+        /** FA+STATIC: max fraction of segments rolling broken at intensity 1. */
+        LEDGER_BREAK_MAX: 0.85,
+        /**
+         * FA+STATIC: broken-segment vertical jitter amplitude, in line-period
+         * fractions (hash-signed, so max |shift| is half of this). Together
+         * with FOREWARN_LINE_WAVER it must keep a shifted line inside its
+         * owner half-period (see the config contract test).
+         */
+        LEDGER_JITTER_AMP: 0.6,
+        /** FA+STATIC: segment re-roll rate (Hz) — the jitter's hard ticks. */
+        LEDGER_JITTER_HZ: 9,
+        /**
+         * FA aftermath: residual break fraction while the STATIC aftermath
+         * decays — the last displaced segments snapping back into rule.
+         */
+        LEDGER_AFTERMATH_SCALE: 0.35,
+        /** IN_BETWEEN: plate-offset multiplier gain at full RAIN/GLITCH stress. */
+        DISC_DRIFT_GAIN: 2.5,
+        /** Forewarn: shared hard-tick rate (Hz) for flutter/waver/tremor/seam. */
+        FOREWARN_TICK_HZ: 7,
+        /** Forewarn: max per-tick speck dropout probability at forewarn 1. */
+        FOREWARN_SPECK_DROP: 0.45,
+        /** Forewarn: whole-line waver amplitude (line-period fraction, signed). */
+        FOREWARN_LINE_WAVER: 0.25,
+        /** Forewarn: twin-disc tremor amplitude (rad; both plates shake rigidly). */
+        FOREWARN_DISC_TREMOR: 0.03,
+        /** Forewarn: POLARIZED seam-plane jitter amplitude (m, signed). */
+        FOREWARN_SEAM_JITTER: 4,
+        /** Onset: mark-blanking strobe rate (Hz), decimated by the decaying onset. */
+        ONSET_STROBE_HZ: 9,
+        /**
+         * POLARIZED strike-cadence mirror: these three MUST equal the
+         * DitherShader's STRIKE_WINDOW_SECONDS / STRIKE_CHANCE /
+         * STRIKE_SECONDS GLSL consts — the sky's half-swap and the screen's
+         * invert strike are the SAME strike, derived from the same
+         * WeatherState inputs (tests/RoomSky.test.ts guards the match
+         * against the screen shader source).
+         */
+        STRIKE_WINDOW_SECONDS: 3.0,
+        STRIKE_CHANCE: 0.85,
+        STRIKE_SECONDS: 0.12,
+        /**
+         * ECLIPSE: authority-disc angular radius (rad). Wide enough to
+         * occlude BOTH misregistered IN_BETWEEN discs at mid-transit
+         * (config contract test) — the two prints agree on nothing except
+         * the shadow.
+         */
+        ECLIPSE_ANGULAR_RADIUS: 0.14,
+        /** ECLIPSE: transit-arc azimuth span (rad), centered on the anchor. */
+        ECLIPSE_ARC_SPAN: 2.4,
+        /**
+         * ECLIPSE: elevation dip at the arc ends (rad below the anchor).
+         * Deep enough that the whole disc starts and ends below the horizon
+         * — it rises and sets, never pops.
+         */
+        ECLIPSE_ARC_DIP: 0.9,
+    },
 } as const;
 
 /**

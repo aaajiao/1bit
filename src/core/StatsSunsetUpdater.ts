@@ -45,6 +45,9 @@ export class StatsSunsetUpdater {
     // Per-room sky dome (world/RoomSky): driven right after dayNight.update
     // so it reads THIS frame's background color + day polarity.
     private readonly roomSky: RoomSky;
+    // Kept for the dome's weather feed: the sky answers the lifecycle
+    // broadcast (forewarn/onset/peak/aftermath/eclipse) via getLastState().
+    private readonly weather: WeatherSystem;
     private readonly snapshotGenerator = new StateSnapshotGenerator();
     private readonly snapshotOverlay = new SnapshotOverlay();
     private readonly runStats: RunStatsCollector;
@@ -83,6 +86,7 @@ export class StatsSunsetUpdater {
         this.player = deps.player;
         this.audio = deps.audio;
         this.scars = deps.scars;
+        this.weather = deps.weather;
 
         // F2 cross-run scars: every successful override (the existing
         // OverrideMechanic trigger chain, surfaced by PlayerManager with the
@@ -294,8 +298,17 @@ export class StatsSunsetUpdater {
 
         // Per-room sky vocabulary: AFTER the day/night step, so the dome sees
         // this frame's background color (via the scene) and day polarity —
-        // it follows the cycle's blend instead of fighting it.
-        this.roomSky.update(delta, playerPos, currentRoomType, this.dayNight.isDaytime());
+        // it follows the cycle's blend instead of fighting it. The weather
+        // broadcast is the LAST frame's (null on the boot frame — main
+        // updates weather after this helper), the sky-eye precedent: the
+        // dome answers every lifecycle phase in the room's own vocabulary.
+        this.roomSky.update(
+            delta,
+            playerPos,
+            currentRoomType,
+            this.dayNight.isDaytime(),
+            this.weather.getLastState(),
+        );
 
         // Pre-sunset foreshadow (~30s lead, enhancement #8): derived from the
         // delta-driven cycle phase — no new wall clock. Audio half here; the
