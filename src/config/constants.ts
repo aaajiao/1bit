@@ -574,6 +574,32 @@ export const SUNSET_FORESHADOW = {
 } as const;
 
 /**
+ * Dusk refusal (POLARIZED: no dusk — time itself refuses the gray). The
+ * room's duskHardness (RoomConfig) steps the PRESENTED sunset-foreshadow
+ * ramp hard at its halfway point (world/DuskSnap.presentedBlend); these
+ * knobs shape the snap moment itself. Purely presentational — the
+ * DayNightCycle state machine never sees any of this.
+ */
+export const DUSK_SNAP = {
+    /**
+     * Minimum single-frame upward jump of the presented ramp that reads as
+     * "the snap" and arms the flicker. A hard step crosses in one frame
+     * (jump ~1); the smooth ramp moves by ~delta/LEAD_SECONDS per frame,
+     * so only a genuine step can ever clear 0.5.
+     */
+    JUMP_THRESHOLD: 0.5,
+    /**
+     * Snap-moment visibility flicker length (frames): the presented value
+     * stutters old/new/old across this many frames before settling on the
+     * new pole — the established swap language
+     * (ROOM_SKY.SWAP_FLICKER_FRAMES), deliberately frame-counted (not
+     * time-based) so it stays a barely-there glitch at any frame rate. Odd
+     * counts open and close on the OLD pole, then settle on the new.
+     */
+    FLICKER_FRAMES: 3,
+} as const;
+
+/**
  * Stress-driven dither grain (F5 "分辨率即情绪"): a smoothed 0-1 stress level
  * — computed in core/StressLevel.ts from the gaze, the held resistance,
  * INFO_OVERFLOW's flower overload and the dying day — coarsens the dither

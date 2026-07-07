@@ -5,6 +5,7 @@ import type { ChunkManager } from '../world/ChunkManager';
 import type { RoomType } from '../world/RoomConfig';
 import type { BurnInPass } from './BurnInPass';
 import type { ShaderUniformParams } from './ShaderUniformUpdater';
+import { DuskSnapSequencer, presentedBlend } from '../world/DuskSnap';
 import { getBurnInPass } from './BurnInPass';
 import { createShaderUniformParams, updateShaderUniforms } from './ShaderUniformUpdater';
 import { StressLevel } from './StressLevel';
@@ -22,6 +23,9 @@ export class ShaderSyncUpdater {
     private readonly params: ShaderUniformParams;
     // F5 stress->grain smoother (pressure coarsens the dither sampling grid).
     private readonly stress = new StressLevel();
+    // Dusk refusal (POLARIZED): snap-moment flicker sequencer for the
+    // presented dusk ramp (world/DuskSnap).
+    private readonly duskSnap = new DuskSnapSequencer();
     // Burn-in afterimage (INFO_OVERFLOW): the GPU pass registered against the
     // shader quad by createPostProcessing; fed one CPU frame per update.
     private readonly burnIn: BurnInPass | null;
@@ -45,7 +49,9 @@ export class ShaderSyncUpdater {
      * @param weather - This frame's weather state.
      * @param playerState - The freshly updated player state.
      * @param currentRoomType - Room the player is in this frame.
-     * @param sunsetForeshadow - 0-1 pre-sunset dusk ramp (StatsSunsetUpdater).
+     * @param sunsetForeshadow - 0-1 RAW pre-sunset dusk ramp
+     *   (StatsSunsetUpdater); the room's duskHardness presentation step
+     *   (world/DuskSnap) is applied here before any consumer sees it.
      */
     update(
         delta: number,
@@ -68,7 +74,21 @@ export class ShaderSyncUpdater {
         sp.gazeIntensity = playerState.gazeIntensity;
         sp.pitch = playerState.pitch;
         sp.gazeThresholdPulse = playerState.gazeThresholdPulse;
-        sp.sunsetForeshadow = sunsetForeshadow;
+        // Dusk refusal ("no dusk in POLARIZED — time itself refuses the
+        // gray"): the raw pre-sunset ramp passes through the room's
+        // duskHardness step HERE, the single point where the ramp enters the
+        // screen path — so the paper dusk shift and the stress grain input
+        // below read the SAME presented value, and the room scalar is the
+        // TRANSITION-BLENDED config (crossing a POLARIZED boundary mid-dusk
+        // glides). The logical day/night machine upstream (DayNightCycle:
+        // isDaytime, day counter, sunset snapshot) never sees this
+        // transform; the ambient drone's descent (StatsSunsetUpdater's audio
+        // half) deliberately keeps the raw ramp — time still passes and can
+        // still be HEARD passing; POLARIZED only refuses to show its gray.
+        const presentedDusk = this.duskSnap.update(
+            presentedBlend(sunsetForeshadow, sp.shaderConfig.duskHardness),
+        );
+        sp.sunsetForeshadow = presentedDusk;
         // Stress->grain (F5): pressure coarsens the dither sampling grid.
         sp.ditherScale = this.stress.update(
             delta,
@@ -76,7 +96,7 @@ export class ShaderSyncUpdater {
             this.player.getOverrideSustain(),
             playerState.flowerIntensity,
             currentRoomType,
-            sunsetForeshadow,
+            presentedDusk,
         );
         // Burn-in stare detection (INFO_OVERFLOW afterimage): camera
         // orientation -> stillness, plus the room's transition-blended burn
