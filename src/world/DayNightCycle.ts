@@ -103,6 +103,16 @@ export class DayNightCycle {
     }
 
     /**
+     * Whether the cycle is currently in its DAY phase. A pure query (like
+     * getSunsetForeshadow) — consumed by the RoomSky dome, whose ink/paper
+     * roles hard-swap with the phase so its marks keep their final polarity
+     * under the shader's global night inversion.
+     */
+    isDaytime(): boolean {
+        return this.isDay;
+    }
+
+    /**
      * Pre-sunset foreshadow ramp (flow-audit enhancement #8): 0 for most of
      * the cycle, rising linearly to 1 across the final `leadSeconds` of the
      * DAY phase, and 0 again at night. A pure query on the delta-driven

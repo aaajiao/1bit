@@ -886,6 +886,67 @@ export const SKY_EYE_WEATHER = {
 } as const;
 
 /**
+ * Per-room sky vocabulary (scene-style batch): the flat background becomes
+ * four skies. One camera-following inverted dome (world/RoomSky) draws the
+ * CURRENT room's treatment behind everything — sparse blinking specks
+ * (INFO_OVERFLOW's signal without meaning), ruled ledger lines
+ * (FORCED_ALIGNMENT's disciplined heaven), two misregistered celestial discs
+ * (IN_BETWEEN's heaven misread by both systems), and a hard ink/paper split
+ * through the seam plane (POLARIZED's binary reaching the sky). Everything is
+ * hard on/off — the treatment hard-swaps on room change with a frame-count
+ * flicker, never a crossfade; the full-screen dither pass owns all softness.
+ */
+export const ROOM_SKY = {
+    /**
+     * Dome radius (m). Must sit beyond every world feature (render window is
+     * (RENDER_DISTANCE+1) chunks = 240m; fog far 110m) yet safely inside the
+     * camera far plane (1000, SceneSetup) even at the rift fall's deepest
+     * point (FA_RIFT.FOG.BOTTOM = -165m: 450 + 165 = 615 < 1000). The dome
+     * follows the player on x/z, so it is never approached.
+     */
+    RADIUS: 450,
+    /** Sphere tessellation. One draw call; the shell only needs to be round. */
+    WIDTH_SEGMENTS: 48,
+    HEIGHT_SEGMENTS: 24,
+    /**
+     * Draw order: before (behind) every default-order object. Paired with
+     * depthWrite:false so the whole world overdraws the dome.
+     */
+    RENDER_ORDER: -1,
+    /**
+     * Room hard-swap flicker length (frames): the dome blinks off/on/off
+     * across this many frames when the treatment swaps, then settles visible
+     * — a 1-bit stutter, deliberately frame-counted (not time-based) so it
+     * stays a barely-there glitch at any frame rate. Odd counts end hidden
+     * -> settle visible (see world/RoomSky.swapFlickerVisible).
+     */
+    SWAP_FLICKER_FRAMES: 3,
+    // ===== INFO_OVERFLOW: sparse static specks =====
+    /** Lat/long speck-grid cells around the dome equator. */
+    SPECK_GRID: 96,
+    /** Fraction of grid cells hosting a speck (sparse — signal, not snow). */
+    SPECK_FILL: 0.07,
+    /** Speck edge as a fraction of its cell (small hard squares). */
+    SPECK_SIZE: 0.3,
+    /** Blink cycles per second (hard on/off phase, hash-desynced per cell). */
+    SPECK_BLINK_SPEED: 0.8,
+    // ===== FORCED_ALIGNMENT: horizontal ledger rule-lines =====
+    /** Rule-lines from horizon to zenith (even angular spacing). */
+    LINE_COUNT: 14,
+    /** Lit fraction of each line period (thin hard rules). */
+    LINE_THICKNESS: 0.06,
+    // ===== IN_BETWEEN: two misregistered celestial discs =====
+    /** Ink disc center: azimuth / elevation (rad above the horizon). */
+    DISC_AZIMUTH: 0.7,
+    DISC_ELEVATION: 0.62,
+    /** Angular radius (rad) of each disc. */
+    DISC_ANGULAR_RADIUS: 0.085,
+    /** Paper disc misregister offset (rad) — a heaven printed off-plate. */
+    DISC_OFFSET_AZIMUTH: 0.05,
+    DISC_OFFSET_ELEVATION: 0.02,
+} as const;
+
+/**
  * Camera constants
  */
 export const CAMERA = {
