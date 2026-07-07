@@ -14,6 +14,7 @@ import { clearLastSnapshot, loadLastSnapshot, saveLastSnapshot } from '../stats/
 import { StateSnapshotGenerator } from '../stats/StateSnapshotGenerator';
 import { clearStoredTrail, saveTrail, TrailRecorder } from '../stats/TrailRecorder';
 import { DayNightCycle } from '../world/DayNightCycle';
+import { EclipseDarkening, eclipseTransitDepth } from '../world/EclipseDarkening';
 import { RoomSky } from '../world/RoomSky';
 
 /** Frame-stable dependencies wired once at construction. */
@@ -45,6 +46,13 @@ export class StatsSunsetUpdater {
     // Per-room sky dome (world/RoomSky): driven right after dayNight.update
     // so it reads THIS frame's background color + day polarity.
     private readonly roomSky: RoomSky;
+    // ECLIPSE world darkening (weather batch): composes the transit-curve
+    // darkening onto the final background/fog color OUTSIDE the day/night
+    // state machine (isDaytime / day counter / sunset trigger provably
+    // unaffected — see world/EclipseDarkening). Runs between the day/night
+    // step and the dome so RoomSky's per-frame uBase copy sees the darkened
+    // color and dome + background stay consistent.
+    private readonly eclipse: EclipseDarkening;
     // Kept for the dome's weather feed: the sky answers the lifecycle
     // broadcast (forewarn/onset/peak/aftermath/eclipse) via getLastState().
     private readonly weather: WeatherSystem;
@@ -108,6 +116,10 @@ export class StatsSunsetUpdater {
 
         // The four skies (scene-style batch): one permanent dome on the scene.
         this.roomSky = new RoomSky(deps.scene);
+
+        // ECLIPSE darkening (weather batch): additive background/fog compose,
+        // no scene objects of its own — nothing to dispose.
+        this.eclipse = new EclipseDarkening(deps.scene);
 
         // Restore the previous session's persisted snapshot (enhancement #8):
         // seed the replay cache and surface the observation as one quiet line.
@@ -295,6 +307,17 @@ export class StatsSunsetUpdater {
         );
 
         this.dayNight.update(delta, this.dayNightContext);
+
+        // ECLIPSE presentation: ONE transit depth (deepest at mid-transit)
+        // drives the world darkening and the audio lowpass together, so eye
+        // and ear dim on one clock. Composed AFTER the day/night step (whose
+        // transition writes become the new base — a sunset mid-eclipse keeps
+        // darkening from the night color) and BEFORE the dome update below
+        // (which copies scene.background as its base every frame). The
+        // weather broadcast is the LAST frame's, like every consumer here.
+        const eclipseDepth = eclipseTransitDepth(this.weather.getLastState());
+        this.eclipse.apply(eclipseDepth);
+        this.audio.updateEclipseDarkening(eclipseDepth);
 
         // Per-room sky vocabulary: AFTER the day/night step, so the dome sees
         // this frame's background color (via the scene) and day polarity —

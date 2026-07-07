@@ -1,11 +1,13 @@
 import type { ScarPoint } from '../src/world/ScarField';
 import { describe, expect, it } from 'vitest';
-import { FIGURES, SCAR_WITNESS, WORLD } from '../src/config/constants';
+import { ECLIPSE_FIGURES, FIGURES, SCAR_WITNESS, WORLD } from '../src/config/constants';
 import {
     breatheLight,
     conformistPressed,
     contagionWindowTick,
     convergePhase,
+    eclipseFacesPlayer,
+    figureAttitude,
     figureCountForChunk,
     figurePlacementsForChunk,
     isInRebelRange,
@@ -682,6 +684,77 @@ describe('figureSystem (F3 silhouettes)', () => {
             it('clamps the resonance strength to [0, 1]', () => {
                 expect(resonantBreathe(3, 0.4, -5)).toBeCloseTo(resonantBreathe(3, 0.4, 0), 12);
                 expect(resonantBreathe(3, 0.4, 5)).toBeCloseTo(resonantBreathe(3, 0.4, 1), 12);
+            });
+        });
+    });
+
+    describe('eclipse attitude (weather batch)', () => {
+        describe('eclipseFacesPlayer', () => {
+            const { FACE_PLAYER_FLOWER_THRESHOLD, FACE_PLAYER_RADIUS } = ECLIPSE_FIGURES;
+            const nearSq = (FACE_PLAYER_RADIUS - 1) ** 2;
+            const farSq = (FACE_PLAYER_RADIUS + 1) ** 2;
+
+            it('turns a figure only for a loud flower WITHIN the radius', () => {
+                expect(eclipseFacesPlayer(FACE_PLAYER_FLOWER_THRESHOLD + 0.1, nearSq)).toBe(true);
+                expect(eclipseFacesPlayer(FACE_PLAYER_FLOWER_THRESHOLD + 0.1, farSq)).toBe(false);
+                expect(eclipseFacesPlayer(FACE_PLAYER_FLOWER_THRESHOLD - 0.1, nearSq)).toBe(false);
+            });
+
+            it('is exclusive at the threshold and the radius edge', () => {
+                expect(eclipseFacesPlayer(FACE_PLAYER_FLOWER_THRESHOLD, nearSq)).toBe(false);
+                expect(eclipseFacesPlayer(1, FACE_PLAYER_RADIUS * FACE_PLAYER_RADIUS)).toBe(false);
+            });
+
+            it('keeps the face-player threshold below the press-down threshold', () => {
+                // The exception must be reachable WITHOUT bowing the kin:
+                // there is a flower band that turns faces but does not press.
+                expect(ECLIPSE_FIGURES.FACE_PLAYER_FLOWER_THRESHOLD)
+                    .toBeLessThan(FIGURES.DIM_FLOWER_THRESHOLD);
+            });
+        });
+
+        describe('figureAttitude (the ONE priority ladder)', () => {
+            it('press-down suppression outranks everything (top rung)', () => {
+                expect(figureAttitude(true, true, true, true)).toBe('PRESSED');
+                expect(figureAttitude(true, true, false, false)).toBe('PRESSED');
+                expect(figureAttitude(true, false, false, true)).toBe('PRESSED');
+            });
+
+            it('eclipse facing outranks resonance', () => {
+                expect(figureAttitude(false, true, false, true)).toBe('ECLIPSE_LOOK_UP');
+                expect(figureAttitude(false, true, true, true)).toBe('ECLIPSE_FACE_PLAYER');
+            });
+
+            it('a loud flower nearby turns the face to the PLAYER, else to the sky', () => {
+                expect(figureAttitude(false, true, true, false)).toBe('ECLIPSE_FACE_PLAYER');
+                expect(figureAttitude(false, true, false, false)).toBe('ECLIPSE_LOOK_UP');
+            });
+
+            it('the faces-player gate means nothing outside a transit', () => {
+                expect(figureAttitude(false, false, true, false)).toBe('IDLE');
+                expect(figureAttitude(false, false, true, true)).toBe('RESONANCE');
+            });
+
+            it('resonance outranks idle sway (bottom rungs)', () => {
+                expect(figureAttitude(false, false, false, true)).toBe('RESONANCE');
+                expect(figureAttitude(false, false, false, false)).toBe('IDLE');
+            });
+
+            it('pressed and resonating cannot co-occur under the real gates', () => {
+                // The ladder's legacy-equivalence argument (see figureAttitude
+                // doc): gazing disarms resonance the same frame, and the
+                // resonance band's hysteretic outer edge sits strictly below
+                // the flower press threshold — so gating the resonance drive
+                // on attitude RESONANCE is bit-identical for legacy weather.
+                expect(FIGURES.RESONANCE_BAND_MAX + FIGURES.RESONANCE_BAND_HYSTERESIS)
+                    .toBeLessThan(FIGURES.DIM_FLOWER_THRESHOLD);
+                const arm = updateResonanceArm(
+                    { inBand: true, armTimer: FIGURES.RESONANCE_ARM_SECONDS },
+                    0.5,
+                    true, // gazing (== pressed for every conformist)
+                    0.016,
+                );
+                expect(resonanceArmed(arm)).toBe(false);
             });
         });
     });

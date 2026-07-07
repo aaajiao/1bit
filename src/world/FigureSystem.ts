@@ -28,6 +28,14 @@
 //   REBEL_CONTAGION_*) during which the arming gate drains markedly faster,
 //   so distant kin rebel more often in the minutes after you resisted.
 //
+// ECLIPSE (weather batch): while the authority's disc transits, every
+// standing figure in the active window turns its face to the sky — a hard
+// body pitch + chest-light lift (ECLIPSE_FIGURES), never eased. EXCEPTION:
+// if the player's flower burns loud enough, figures within a radius turn to
+// the PLAYER instead — in the darkness your light is the loudest thing in
+// the world. Priority is ONE pure ladder (figureAttitude): press-down
+// suppression > eclipse facing > resonance > idle sway.
+//
 // Witnesses at the scars (F3 x F2): the scar field says "the system remembers
 // you resisted" by leaning the buildings; this adds "others remember too". When
 // a chunk lies within reach of a boot-snapshot scar, a config fraction
@@ -48,7 +56,7 @@
 
 import type { ScarPoint } from './ScarField';
 import * as THREE from 'three';
-import { FIGURES, SCAR_WITNESS, WORLD } from '../config/constants';
+import { ECLIPSE_FIGURES, FIGURES, SCAR_WITNESS, WORLD } from '../config/constants';
 import { hash } from '../utils/hash';
 import { FA_FIGURE_PLACEMENT, faSideAxisX, riftLineXForWorldX, ROOM_FIGURE_DENSITY, RoomType } from './RoomConfig';
 import { scarsNearChunk } from './ScarField';
@@ -425,6 +433,70 @@ export function conformistPressed(isGazing: boolean, playerFlower: number, distS
         && distSq < DIM_FLOWER_DISTANCE * DIM_FLOWER_DISTANCE;
 }
 
+// ---------------------------------------------------------------------------
+// ECLIPSE attitude — the priority ladder (weather batch). All pure, tested.
+// ---------------------------------------------------------------------------
+
+/**
+ * What leads a standing figure's expression this frame (figureAttitude).
+ * The rungs below the leader keep their non-conflicting channels (sway keeps
+ * swaying, MISREAD keeps flickering); the ladder resolves the channels that
+ * DO conflict — the body's orientation and the breathing convergence.
+ */
+export type FigureAttitude = 'PRESSED' | 'ECLIPSE_FACE_PLAYER' | 'ECLIPSE_LOOK_UP' | 'RESONANCE' | 'IDLE';
+
+/**
+ * ECLIPSE exception gate: does the player's flower, at this distance, pull a
+ * figure's upturned face down to the PLAYER instead of the sky? True when
+ * the flower burns above ECLIPSE_FIGURES.FACE_PLAYER_FLOWER_THRESHOLD and
+ * the figure stands within FACE_PLAYER_RADIUS — in the darkness your light
+ * is the loudest thing in the world. Only consulted while the transit is
+ * active (figureAttitude). Pure.
+ */
+export function eclipseFacesPlayer(flowerIntensity: number, distSq: number): boolean {
+    const { FACE_PLAYER_FLOWER_THRESHOLD, FACE_PLAYER_RADIUS } = ECLIPSE_FIGURES;
+    return flowerIntensity > FACE_PLAYER_FLOWER_THRESHOLD
+        && distSq < FACE_PLAYER_RADIUS * FACE_PLAYER_RADIUS;
+}
+
+/**
+ * THE priority ladder for a standing figure — the ONE decision point, top
+ * rung first:
+ *
+ *   press-down suppression > eclipse facing > resonance > idle sway
+ *
+ * - PRESSED: the player's gaze / blazing flower bows the kin; a bowed head
+ *   does not lift for the eclipse (suppression wins over everything).
+ * - ECLIPSE_FACE_PLAYER / ECLIPSE_LOOK_UP: during the transit every figure
+ *   turns its face to the sky — unless the player's flower burns loud
+ *   enough nearby (eclipseFacesPlayer), in which case the figure turns to
+ *   the PLAYER instead. Eclipse facing outranks resonance: kin do not
+ *   converge cadence while the authority's shadow crosses.
+ * - RESONANCE: the mid-band breathing convergence (armed + in press radius).
+ * - IDLE: the hash-desynced sway/breathing baseline.
+ *
+ * `pressed` and `resonating` are mutually exclusive by construction (gazing
+ * disarms resonance the same frame; the resonance band's outer edge sits
+ * below DIM_FLOWER_THRESHOLD), so gating the resonance drive on RESONANCE is
+ * bit-identical to the pre-ladder behavior for CLEAR/STATIC/RAIN/GLITCH.
+ * Extensible: a later feature adds a rung by inserting its check at the
+ * right height and a member to FigureAttitude. Pure.
+ */
+export function figureAttitude(
+    pressed: boolean,
+    eclipseActive: boolean,
+    facesPlayer: boolean,
+    resonating: boolean,
+): FigureAttitude {
+    if (pressed)
+        return 'PRESSED';
+    if (eclipseActive)
+        return facesPlayer ? 'ECLIPSE_FACE_PLAYER' : 'ECLIPSE_LOOK_UP';
+    if (resonating)
+        return 'RESONANCE';
+    return 'IDLE';
+}
+
 /**
  * Deterministic arming delay (s) before rebel event `eventIndex` may fire,
  * hash-drawn in [REBEL_MIN_INTERVAL, REBEL_MAX_INTERVAL] — a few minutes
@@ -527,6 +599,12 @@ interface FigureRecord {
     head: THREE.Mesh;
     /** Per-figure chest-light material clone (independent intensity). */
     chestMat: THREE.MeshBasicMaterial;
+    /** Chest-light quad — the lift target of the eclipse look-up pose. */
+    chest: THREE.Mesh;
+    /** Resting chest-light height (m), restored when the eclipse pose drops. */
+    chestBaseY: number;
+    /** Eclipse pose currently written to the transforms (write-on-change). */
+    eclipsePose: 'NONE' | 'UP' | 'PLAYER';
     /** Precomputed world position (figures never move) for distance checks. */
     worldPos: THREE.Vector3;
     placement: FigurePlacement;
@@ -596,6 +674,13 @@ export class FigureSystem {
     private resonanceArm: ResonanceArm = { inBand: false, armTimer: 0 };
 
     /**
+     * Whether the ECLIPSE transit is active this frame (threaded by
+     * RoomFlowUpdater from the weather broadcast — one frame stale by
+     * design, the same staleness as weatherIntensity above it).
+     */
+    private eclipseActive = false;
+
+    /**
      * @param scene - Scene the figure root group is added to.
      * @param rooms - Per-chunk room attribution (pass the ChunkManager so the
      *   session ledger is consulted). Null falls back to the player's current
@@ -636,6 +721,11 @@ export class FigureSystem {
      *   owned upstream (RoomFlowUpdater) and threaded in as this small flag,
      *   so the figures never reach into the override system. False (default)
      *   reproduces the calm gate exactly.
+     * @param eclipseActive - Whether the ECLIPSE transit is running (weather
+     *   broadcast via RoomFlowUpdater, one frame stale by design). While true
+     *   every standing figure in the window takes the upturned pose — or
+     *   turns to the player's burning flower (figureAttitude ladder). False
+     *   (default) reproduces the legacy behavior exactly.
      */
     update(
         delta: number,
@@ -645,7 +735,9 @@ export class FigureSystem {
         audio?: FigureAudio,
         weatherIntensity: number = 0,
         contagionActive: boolean = false,
+        eclipseActive: boolean = false,
     ): void {
+        this.eclipseActive = eclipseActive;
         this.clock += delta;
         this.flickerClock += delta * (1 + Math.max(0, weatherIntensity) * WEATHER_FLICKER_GAIN);
         this.syncChunks(playerPos, currentRoomType);
@@ -724,6 +816,11 @@ export class FigureSystem {
         const group = new THREE.Group();
         group.position.set(placement.x, 0, placement.z);
         group.rotation.y = placement.rotationY;
+        // YXZ: yaw first, so the eclipse look-up pitch (rotation.x) tilts the
+        // body around the figure's OWN right axis instead of the world's.
+        // Identity while the pitch is 0 — the legacy yaw + z-sway composition
+        // is unchanged.
+        group.rotation.order = 'YXZ';
 
         const body = new THREE.Mesh(this.assets.cylinderGeo, this.assets.matDark);
         body.scale.set(BODY_RADIUS_FRAC * h, BODY_HEIGHT_FRAC * h, BODY_RADIUS_FRAC * h);
@@ -758,6 +855,9 @@ export class FigureSystem {
             body,
             head,
             chestMat,
+            chest,
+            chestBaseY: CHEST_HEIGHT_FRAC * h,
+            eclipsePose: 'NONE',
             worldPos: new THREE.Vector3(
                 cx * WORLD.CHUNK_SIZE + placement.x,
                 CHEST_HEIGHT_FRAC * h,
@@ -819,23 +919,83 @@ export class FigureSystem {
                     continue;
                 if (fig.state !== 'IDLE') {
                     // Rebels are never LOD-gated (the band is 30-60m anyway).
+                    // A rebel owns its body for the whole arc: any eclipse
+                    // pose it carried simply freezes (it vanishes within
+                    // seconds either way).
                     this.advanceRebel(fig, delta, audio);
                     continue;
                 }
                 const distSq = playerPos.distanceToSquared(fig.worldPos);
+                // ONE priority decision per figure (the figureAttitude
+                // ladder). `pressed`/`resonating` reproduce the exact reads
+                // animateIdle used to make, just hoisted so the ladder sees
+                // them; the faces-player gate is eclipse-gated so the calm
+                // path pays nothing for it.
+                const conformist = fig.placement.archetype === 'CONFORMIST';
+                const pressed = conformist
+                    && conformistPressed(playerState.isGazing, playerState.flowerIntensity, distSq);
+                const resonating = conformist && armed
+                    && distSq < FIGURES.DIM_FLOWER_DISTANCE * FIGURES.DIM_FLOWER_DISTANCE;
+                const attitude = figureAttitude(
+                    pressed,
+                    this.eclipseActive,
+                    this.eclipseActive && eclipseFacesPlayer(playerState.flowerIntensity, distSq),
+                    resonating,
+                );
+                // Eclipse pose BEFORE the LOD gate: the whole active window
+                // answers the transit (write-on-change keeps it cheap; the
+                // light/breathing channels below stay LOD-gated as before).
+                this.applyEclipsePose(fig, attitude, playerPos);
                 if (distSq > LOD_DISTANCE_SQ)
                     continue; // beyond the animation LOD: perfectly still
-                this.animateIdle(fig, delta, playerState, distSq, armed, refPhase);
+                this.animateIdle(fig, delta, attitude, refPhase);
             }
+        }
+    }
+
+    /**
+     * Write the eclipse pose for this frame's attitude — hard snaps only
+     * (the 1-bit language: a face turns, it never eases). The look-up is a
+     * body pitch around the figure's own right axis (YXZ order, set at
+     * build) plus a small chest-light lift toward the throat — a raised chin
+     * at silhouette distance. Write-on-change keeps the whole-window pass to
+     * one comparison per figure; only the player-facing yaw tracks per
+     * frame, and only inside ECLIPSE_FIGURES.FACE_PLAYER_RADIUS.
+     */
+    private applyEclipsePose(fig: FigureRecord, attitude: FigureAttitude, playerPos: THREE.Vector3): void {
+        if (attitude === 'ECLIPSE_FACE_PLAYER') {
+            // Face the player: local +z maps to world (sin rotY, cos rotY) —
+            // the witnessPose convention. Tracks the player every frame.
+            fig.group.rotation.y = Math.atan2(playerPos.x - fig.worldPos.x, playerPos.z - fig.worldPos.z);
+            if (fig.eclipsePose !== 'PLAYER') {
+                fig.eclipsePose = 'PLAYER';
+                // Level, not upturned: the light meets yours, not the sky.
+                fig.group.rotation.x = 0;
+                fig.chest.position.y = fig.chestBaseY;
+            }
+        }
+        else if (attitude === 'ECLIPSE_LOOK_UP') {
+            if (fig.eclipsePose !== 'UP') {
+                fig.eclipsePose = 'UP';
+                fig.group.rotation.x = -ECLIPSE_FIGURES.LOOKUP_PITCH; // lean back: face to the sky
+                fig.group.rotation.y = fig.placement.rotationY; // release any player-facing yaw
+                fig.chest.position.y = fig.chestBaseY
+                    + fig.placement.height * ECLIPSE_FIGURES.CHEST_LIFT_FRAC;
+            }
+        }
+        else if (fig.eclipsePose !== 'NONE') {
+            // Transit over (or suppression won): snap back to the rest pose.
+            fig.eclipsePose = 'NONE';
+            fig.group.rotation.x = 0;
+            fig.group.rotation.y = fig.placement.rotationY;
+            fig.chest.position.y = fig.chestBaseY;
         }
     }
 
     private animateIdle(
         fig: FigureRecord,
         delta: number,
-        playerState: FigurePlayerRead,
-        distSq: number,
-        armed: boolean,
+        attitude: FigureAttitude,
         refPhase: number,
     ): void {
         const p = fig.placement;
@@ -843,6 +1003,8 @@ export class FigureSystem {
             return; // regimented: rigid stance, constant faint light
 
         // Gentle in-place sway (delta-accumulated clock, hash-phased desync).
+        // The bottom rung of the attitude ladder keeps this non-conflicting
+        // channel alive under every higher attitude — a body still breathes.
         fig.group.rotation.z = Math.sin(this.clock * FIGURES.SWAY_SPEED + p.phase)
             * FIGURES.SWAY_AMPLITUDE;
 
@@ -850,23 +1012,20 @@ export class FigureSystem {
         // floor over ~LIGHT_DIM_SECONDS while pressed (player gazing, or a
         // blazing flower nearby), recovering more slowly once released.
         if (p.archetype === 'CONFORMIST') {
-            const pressed = conformistPressed(
-                playerState.isGazing,
-                playerState.flowerIntensity,
-                distSq,
-            );
+            const pressed = attitude === 'PRESSED';
             const step = pressed
                 ? delta / FIGURES.LIGHT_DIM_SECONDS
                 : -delta / FIGURES.LIGHT_RECOVER_SECONDS;
             fig.press = Math.max(0, Math.min(1, fig.press + step));
 
-            // Resonance: while the player holds the flower in the mid band long
-            // enough (armed) and this kin stands within the press radius, its
-            // breathing phase converges onto the shared reference and its light
-            // lifts; otherwise both relax back to the personal cadence. The
-            // press blend below still lets suppression win outright.
-            const resonating = armed
-                && distSq < FIGURES.DIM_FLOWER_DISTANCE * FIGURES.DIM_FLOWER_DISTANCE;
+            // Resonance: only while it LEADS the ladder (attitude RESONANCE:
+            // armed + within the press radius, no eclipse, not pressed) does
+            // the breathing phase converge onto the shared reference and the
+            // light lift; otherwise both relax back to the personal cadence.
+            // Bit-identical to the pre-ladder gate for the legacy weather
+            // types (pressed and resonating are mutually exclusive — see
+            // figureAttitude); an eclipse now suppresses the convergence.
+            const resonating = attitude === 'RESONANCE';
             const rTarget = resonating ? refPhase : p.phase;
             const rRate = resonating ? FIGURES.RESONANCE_CONVERGE_RATE : FIGURES.RESONANCE_RELAX_RATE;
             fig.livePhase = convergePhase(fig.livePhase, rTarget, rRate, delta);

@@ -190,8 +190,10 @@ export class RoomFlowUpdater {
         // cluster pins are already settled for this frame; the system follows
         // the same active chunk window as ChunkManager, reports its rare
         // rebel tears through the audio controller, shimmers harder under the
-        // (one frame stale) weather intensity, and rebels more often while the
-        // contagion window is open (a recent successful override).
+        // (one frame stale) weather intensity, rebels more often while the
+        // contagion window is open (a recent successful override), and turns
+        // every face skyward — or to the player's burning flower — while the
+        // ECLIPSE transits (same one-frame-stale weather feed).
         this.figures?.update(
             delta,
             playerPos,
@@ -200,6 +202,7 @@ export class RoomFlowUpdater {
             audio,
             this.weatherIntensity,
             this.contagionRemaining > 0,
+            this.weatherType === WEATHER_TYPES.ECLIPSE,
         );
 
         // F4 ghost replay: last run's you, retracing its recorded trail. It

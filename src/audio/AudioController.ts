@@ -7,9 +7,11 @@
 import type { AmbientNode, AudioSystemInterface } from '../types';
 import type { RoomAudioConfig } from '../world/RoomConfig';
 import {
+    AUDIO_MASTER,
     BINAURAL_SIDE_CONFIG,
     CABLE_AUDIO_CONFIG,
     DISTANT_TEAR_CONFIG,
+    ECLIPSE_AUDIO,
     FLOWER_ATTENTION_CONFIG,
     FLOWER_CHANGE_TONE_CONFIG,
     FOOTSTEP_CONFIG,
@@ -25,6 +27,22 @@ import {
 } from '../config';
 import { RoomType } from '../world/RoomConfig';
 import { AudioEngine } from './AudioEngine';
+
+/**
+ * ECLIPSE audio darkening cutoff (Hz) for a transit depth in [0, 1]: no
+ * ceiling at depth 0 (Infinity, so the deepest-cutoff-wins min in
+ * AudioEngine.tick is a no-op), gliding to ECLIPSE_AUDIO.lowpassFloorHz at
+ * depth 1 along a LOG-frequency path — equal perceptual octaves per depth
+ * step, the same reasoning as the gaze filter's log-domain glide. Pure.
+ */
+export function eclipseLowpassHz(depth: number): number {
+    const d = Math.min(1, Math.max(0, depth));
+    if (d <= 0)
+        return Infinity;
+    const open = Math.log(AUDIO_MASTER.gazeFilterOpen);
+    const floor = Math.log(ECLIPSE_AUDIO.lowpassFloorHz);
+    return Math.exp(open + (floor - open) * d);
+}
 
 export class AudioController implements AudioSystemInterface {
     private engine: AudioEngine;
@@ -170,6 +188,19 @@ export class AudioController implements AudioSystemInterface {
             SNAPSHOT_AUDIO_CONFIG.lowpassFreq,
             SNAPSHOT_AUDIO_CONFIG.holdSeconds,
         );
+    }
+
+    /**
+     * ECLIPSE audio darkening (weather batch): a lowpass ceiling whose depth
+     * follows the transit curve (deepest at mid-transit), riding the same
+     * master gaze-filter glide as the snapshot duck. Composition rule: the
+     * DEEPEST cutoff wins (min in AudioEngine.tick), so gazing mid-eclipse
+     * keeps whichever muffle is duller — the pathways compose, never fight.
+     * Called per frame (StatsSunsetUpdater); depth 0 maps to Infinity and
+     * lifts the ceiling entirely.
+     */
+    updateEclipseDarkening(depth: number): void {
+        this.engine.setEclipseLowpass(eclipseLowpassHz(depth));
     }
 
     /**

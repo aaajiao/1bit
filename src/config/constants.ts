@@ -448,6 +448,32 @@ export const FIGURES = {
 } as const;
 
 /**
+ * ECLIPSE figure response (weather batch, ECLIPSE presentation): while the
+ * authority's disc transits (WeatherState.weatherType === ECLIPSE), every
+ * standing figure in the active chunk window turns its face to the sky — the
+ * cheapest believable pose the silhouette rig supports: a hard body pitch
+ * back around the figure's own right axis plus a small chest-light lift
+ * toward the throat (a raised chin at silhouette distance). EXCEPTION: when
+ * the player's flower burns above FACE_PLAYER_FLOWER_THRESHOLD, figures
+ * within FACE_PLAYER_RADIUS turn to the PLAYER instead — in the darkness
+ * your light is the loudest thing in the world. Poses are hard on/off (the
+ * 1-bit language): snapped on at the transit, snapped back after, never
+ * eased. Where this sits among the other figure behaviors is decided by ONE
+ * priority ladder (FigureSystem.figureAttitude): press-down suppression >
+ * eclipse facing > resonance > idle sway.
+ */
+export const ECLIPSE_FIGURES = {
+    /** Body pitch back (rad) of the upturned pose — enough to read at 30m. */
+    LOOKUP_PITCH: 0.3,
+    /** Chest-light lift as a fraction of figure height (toward the throat). */
+    CHEST_LIFT_FRAC: 0.05,
+    /** Player flower intensity above which nearby figures face the player. */
+    FACE_PLAYER_FLOWER_THRESHOLD: 0.5,
+    /** Radius (m) within which the burning flower turns figures around. */
+    FACE_PLAYER_RADIUS: 40,
+} as const;
+
+/**
  * Ghost-trail recording + persistence (F4 "ghost replay"): the player's walk
  * is sampled as (x, z, flowerIntensity) points into a ring buffer and written
  * to localStorage at sunset / unload (stats/TrailRecorder, versioned-key
@@ -1053,6 +1079,27 @@ export const WEATHER_ECLIPSE = {
     INTERVAL_RANGE: [480, 900] as [number, number],
     /** Eclipse duration (s) — eclipseProgress runs 0 -> 1 across it. */
     DURATION_SECONDS: 15,
+} as const;
+
+/**
+ * ECLIPSE world darkening (weather batch, ECLIPSE presentation): while the
+ * disc transits, background + fog darken toward the deepest night gray along
+ * the transit curve (deepest at mid-transit), then restore bit-exactly.
+ * Deliberately OUTSIDE the day/night state machine: DayNightCycle's
+ * isDaytime(), day counter and sunset-snapshot trigger never see the eclipse
+ * — the factor is composed onto the final background color at the point
+ * where it is applied (world/EclipseDarkening, owned by
+ * core/StatsSunsetUpdater between the day/night step and the RoomSky copy).
+ */
+export const ECLIPSE_DARKENING = {
+    /** Deepest background lerp toward TARGET_HEX at mid-transit (0-1). */
+    DEPTH_MAX: 0.85,
+    /**
+     * Gray the world darkens toward: DayNightCycle's deepest night palette
+     * (nightIntensity 1.0 => 0x11 gray), so a noon eclipse looks like the
+     * darkest possible night without ever BEING night.
+     */
+    TARGET_HEX: 0x111111,
 } as const;
 
 /**
