@@ -702,7 +702,12 @@ export class RoomSky {
             // The strike scalar rides the room's own shader config — the
             // same source the screen's uWeatherInvertStrike lerp reads —
             // hard-swapped with the rest of the sky vocabulary (the sky
-            // never blends between rooms).
+            // never blends between rooms). Known divergence: the screen's
+            // copy lerps across a room transition (~0.5 s at
+            // TRANSITION_SPEED), so a GLITCH strike whose roll lands between
+            // the lerped and final thresholds can fire on one surface but
+            // not the other for that window; steady-state cadence is
+            // identical by construction.
             u.uInvertStrike.value = ROOM_CONFIGS[roomType].shader.weatherInvertStrike;
         }
 

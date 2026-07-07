@@ -305,8 +305,11 @@ export class Precipitation {
 
     // CPU-side integrals (delta-driven, so pause-gated with the update
     // phase): wander clock, fall distance, wind drift. Time and fall wrap at
-    // ACCUM_WRAP (one hard reshuffle frame every ~34 min — invisible under
-    // the dither); the drift wraps at BOX_SIZE, which the shader's mod folds
+    // ACCUM_WRAP — one hard reshuffle frame per wrap. Time wraps every
+    // ~34 min; fall advances at drive.fallSpeed (never below the rain-pace
+    // OFF carrier, ~13-22 m/s) so it wraps every ~1.5-3 min — visible only
+    // if a wrap lands mid-rain, and imperceptible under the dither even
+    // then. The drift wraps at BOX_SIZE, which the shader's mod folds
     // seamlessly (no reshuffle at all).
     private time = 0;
     private fall = 0;

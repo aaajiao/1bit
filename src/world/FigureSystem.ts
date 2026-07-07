@@ -1071,8 +1071,9 @@ export class FigureSystem {
      * the figureAttitude ladder, hard snaps only for the discrete channels
      * (the 1-bit language: a face turns, it never eases). On any pose CHANGE
      * every pose channel first resets to rest (pitch 0, rest yaw, chest
-     * down, lean roll 0), so poses can hand over to each other without a
-     * per-pair restore matrix; the new pose then writes what it owns:
+     * down, lean roll stripped from the sway and zeroed), so poses can hand
+     * over to each other without a per-pair restore matrix; the new pose
+     * then writes what it owns:
      *
      * - PLAYER (eclipse exception): per-frame player-tracking yaw.
      * - UP (eclipse): one-shot body pitch + chest-light lift.
@@ -1099,10 +1100,14 @@ export class FigureSystem {
             // Hand-over reset: every channel back to rest, then the one-shot
             // writes of the incoming pose. (Restore-to-NONE is exactly this
             // reset — the transit passes, the wind drops, the body remembers
-            // nothing.)
+            // nothing.) rotation.z belongs to animateIdle, but the lean half
+            // must be stripped HERE: a figure beyond the animation LOD never
+            // reaches animateIdle, and would otherwise keep the gale tilt
+            // frozen in its sway long after the wind drops.
             fig.pose = pose;
             fig.group.rotation.x = 0;
             fig.group.rotation.y = fig.placement.rotationY;
+            fig.group.rotation.z -= fig.leanRoll;
             fig.chest.position.y = fig.chestBaseY;
             fig.leanRoll = 0;
             if (pose === 'UP') {

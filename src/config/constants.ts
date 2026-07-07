@@ -1176,7 +1176,10 @@ export const PRECIPITATION = {
      * Integrating on the CPU keeps intensity ramps from teleporting particles
      * (y depends on the integral of speed, not time x speed); the wrap keeps
      * float32 precision healthy on long sessions at the cost of ONE hard
-     * reshuffle frame every ~34 minutes — invisible under the dither.
+     * reshuffle frame per wrap — every ~34 minutes for the time uniform,
+     * every ~1.5-3 minutes for the fall integral (whose carrier never drops
+     * below rain pace, even while OFF) — visible only if a wrap lands
+     * mid-rain, and imperceptible under the dither even then.
      */
     ACCUM_WRAP: 2048,
     /** Per-instance fall-rate jitter span (fraction of 1; columns desync). */
