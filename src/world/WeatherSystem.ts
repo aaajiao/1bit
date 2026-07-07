@@ -510,10 +510,16 @@ export class WeatherSystem implements WeatherSystemInterface {
         this.currentWeather = typeMap[type] ?? WEATHER_TYPES.CLEAR;
         this.duration = duration;
         this.elapsed = 0;
-        // A forced state supersedes any announced rotation event: drop the
-        // draw so its forewarn stops broadcasting (the cooldown re-enters the
-        // forewarn window later and a fresh event is drawn).
-        this.scheduled = null;
+        // A forced REAL state supersedes any announced rotation event: drop
+        // the draw so its forewarn stops broadcasting (the cooldown re-enters
+        // the forewarn window later and a fresh event is drawn). A forced
+        // transient GLITCH keeps the pending draw — transients bypass the
+        // forewarn arc exactly as they bypass onset (the ambient-glitch
+        // rule), so the solar-eclipse flash cannot snap an announced storm's
+        // omen or swap its heading seconds before it lands.
+        if (this.currentWeather !== WEATHER_TYPES.GLITCH) {
+            this.scheduled = null;
+        }
 
         if (this.currentWeather === WEATHER_TYPES.CLEAR) {
             // Forced clear: snap off and reset cooldown so a previously

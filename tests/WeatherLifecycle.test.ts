@@ -165,6 +165,53 @@ describe('weatherLifecycle', () => {
             const b = collectRun(90);
             expect(a[89].eventDirection).toBe(b[89].eventDirection);
         });
+
+        it('keeps the announced draw through a forced transient glitch (eclipse flash)', () => {
+            const sys = new WeatherSystem(); // cooldown 45
+            let state: WeatherState = sys.update(0.5, 0.5);
+            for (let i = 2; i <= 74; i++)
+                state = sys.update(0.5, i * 0.5);
+            expect(state.upcomingType).toBe(WEATHER_TYPES.GLITCH);
+            const announcedForewarn = state.forewarn;
+            const announcedDirection = state.eventDirection;
+            expect(announcedForewarn).toBeGreaterThan(0);
+
+            // The solar-eclipse flash: DayNightCycle forces a 0.5s TRANSIENT
+            // glitch. Transients bypass the forewarn arc exactly as they
+            // bypass onset — the omen must hold, never snap to 0.
+            sys.forceWeather('glitch', 0.5);
+            state = sys.update(0.2, 37.2);
+            expect(state.weatherType).toBe(WEATHER_TYPES.GLITCH);
+            expect(state.weatherIsEvent).toBe(0);
+            expect(state.upcomingType).toBe(WEATHER_TYPES.GLITCH);
+            expect(state.forewarn).toBeCloseTo(announcedForewarn, 9);
+            expect(state.eventDirection).toBeCloseTo(announcedDirection, 12);
+
+            // The flash passes; the SAME draw (not a redraw) still breaks
+            // with its original heading once the cooldown expires.
+            state = sys.update(0.4, 37.6);
+            expect(state.weatherType).toBe(WEATHER_TYPES.CLEAR);
+            expect(state.upcomingType).toBe(WEATHER_TYPES.GLITCH);
+            for (let i = 1; i <= 16; i++)
+                state = sys.update(0.5, 37.6 + i * 0.5);
+            expect(state.weatherType).toBe(WEATHER_TYPES.GLITCH);
+            expect(state.weatherIsEvent).toBe(1);
+            expect(state.eventDirection).toBeCloseTo(announcedDirection, 12);
+        });
+
+        it('drops the announced draw when a REAL state is forced over it', () => {
+            const sys = new WeatherSystem(); // cooldown 45
+            let state: WeatherState = sys.update(0.5, 0.5);
+            for (let i = 2; i <= 74; i++)
+                state = sys.update(0.5, i * 0.5);
+            expect(state.upcomingType).toBe(WEATHER_TYPES.GLITCH);
+
+            sys.forceWeather('static', 5);
+            state = sys.update(0.5, 37.5);
+            expect(state.weatherType).toBe(WEATHER_TYPES.STATIC);
+            expect(state.forewarn).toBe(0);
+            expect(state.upcomingType).toBe(WEATHER_TYPES.CLEAR);
+        });
     });
 
     describe('aftermath phase', () => {

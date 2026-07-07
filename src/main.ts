@@ -214,9 +214,9 @@ class ChimeraVoid {
             currentRoomType,
         );
 
-        // 5. Stats & environment, then room-weighted weather (flow-audit #3).
+        // 5. Stats & environment, then room-weighted, behavior-leaned weather (flow-audit #3 + mirror layer 4).
         this.statsSunset.update(delta, playerState, playerPos, currentRoomType);
-        const weatherState = this.weather.update(delta, t, currentRoomType);
+        const weatherState = this.weather.update(delta, t, currentRoomType, this.runStats.getLiveProfile());
         this.audio.updateWeatherAudio(weatherState.weatherType, weatherState.weatherIntensity, weatherState.weatherOnset);
         this.roomFlow.setWeather(weatherState.weatherType, weatherState.weatherIntensity);
 

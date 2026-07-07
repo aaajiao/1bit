@@ -1234,12 +1234,12 @@ export const WEATHER_REACTIONS = {
         /** Peak cell-existence gate at the blot center (radial falloff). */
         SHAPE_FILL: 0.85,
         /**
-         * Hash salts (utils/hash, distinct integer namespaces past the
-         * PRECIPITATION traces' 1637): stamp angle/radius/spin/size draws
-         * and the shared texture field. Next feature picks > 1721
-         * (SEAM_HOLD below owns 1709/1721).
+         * Hash salts (utils/hash, distinct integer namespaces): stamp
+         * angle/radius/spin/size draws and the shared texture field.
+         * ANGLE/RADIUS/SPIN jumped past SEAM_HOLD's 1709/1721 because
+         * RoomSky already owns 1657/1663/1667. Next feature picks > 1741.
          */
-        SALTS: { ANGLE: 1657, RADIUS: 1663, SPIN: 1667, SIZE: 1669, TEX: 1693 },
+        SALTS: { ANGLE: 1723, RADIUS: 1733, SPIN: 1741, SIZE: 1669, TEX: 1693 },
     },
     /**
      * FORCED_ALIGNMENT after STATIC: the corrected shadows shudder — decals

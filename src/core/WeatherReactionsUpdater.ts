@@ -10,7 +10,9 @@
 // (a) GALE: one wind write leans on every cable and FA banner (CableSystem
 //     module wind, consumed by next frame's geometry pass) and one shear
 //     uniform skews the INFO record strips (DataWaterfall) — both carry the
-//     half-strength aftermath residual, the wires ringing after the shove.
+//     half-strength aftermath residual, the wires ringing after the shove
+//     (heading latched from the live gale, so a fresh forewarn's direction
+//     cannot flip the residual bow mid-tail).
 // (b) FOREWARN: the announced storm quickens the cable uplink's pulse rate
 //     (a multiplier into the existing speed mapping, consumed by this
 //     frame's uplink pass). The figures' forewarn facing is threaded by
@@ -32,7 +34,7 @@ import { updateWaterfallShear } from '../world/DataWaterfall';
 import { RainGlyphPuddles } from '../world/RainGlyphPuddles';
 import { RoomType } from '../world/RoomConfig';
 import { ShadowAftermath } from '../world/ShadowAftermath';
-import { galeWindStrength, waterfallShearFor } from '../world/WeatherReactions';
+import { galeWindStrength, liveGaleStrength, waterfallShearFor } from '../world/WeatherReactions';
 import { WEATHER_TYPES } from '../world/WeatherSystem';
 
 export class WeatherReactionsUpdater {
@@ -46,6 +48,12 @@ export class WeatherReactionsUpdater {
     // Accumulated play-time clock (s) for the stepped shadow jitter —
     // delta-driven like every system clock here, frozen while paused.
     private clock = 0;
+    // The ended gale's heading, latched on its aftermath's opening edge:
+    // state.eventDirection swings to the NEXT draw's heading the moment a
+    // fresh forewarn window opens (routine overlap — cooldowns can undercut
+    // the 25s residual tail), and the residual bow/shear must keep pointing
+    // where the wind that caused them actually blew.
+    private galeResidualDirection = 0;
 
     /**
      * @param delta - Frame delta (s).
@@ -67,10 +75,17 @@ export class WeatherReactionsUpdater {
         if (state === null)
             return;
 
+        // Latch the gale's heading on every live frame (eventDirection is
+        // its own while a gale runs — nothing can be scheduled under it), so
+        // the residual tail keeps blowing where the gale actually blew even
+        // after a fresh forewarn swings the broadcast toward the next draw.
+        if (liveGaleStrength(state) > 0)
+            this.galeResidualDirection = state.eventDirection;
+
         // (a)+(b) knob distribution — three writes, all exact-rest at calm.
         const wind = galeWindStrength(state);
-        setCableWind(wind, state.eventDirection);
-        updateWaterfallShear(waterfallShearFor(wind, state.eventDirection));
+        setCableWind(wind, this.galeResidualDirection);
+        updateWaterfallShear(waterfallShearFor(wind, this.galeResidualDirection));
         setUplinkRateScale(uplinkForewarnScale(state.forewarn));
 
         // (c) aftermath traces: opening edge stamps the room's own residue...
@@ -114,5 +129,6 @@ export class WeatherReactionsUpdater {
         updateWaterfallShear(0);
         setUplinkRateScale(1);
         this.prevAftermath = 0;
+        this.galeResidualDirection = 0;
     }
 }
