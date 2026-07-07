@@ -738,6 +738,62 @@ export const SNAPSHOT_ECHO = {
 } as const;
 
 /**
+ * Idealized shadows (scene-style batch): in FORCED_ALIGNMENT every building
+ * gets a fake "corrected" shadow — a hard-black, perfectly axis-aligned
+ * rectangle decal on the floor at its foot, displaced in ONE fixed global
+ * azimuth and sized from the building's footprint but quantized to the room's
+ * 8-unit grid rhythm. The slight mismatch between a building's real silhouette
+ * and its too-regular shadow is the point: the system idealizes even shadows.
+ * Near a cross-run scar the correction FAILS — the rectangle rotates, shears
+ * and slides by hash-drawn amounts scaled by scar severity. Scar reach reuses
+ * SCAR_FIELD.RADIUS via scarSeverityAt (one shared radius, no second knob).
+ * Geometry math lives in world/ShadowCorrection.
+ */
+export const FA_SHADOW = {
+    /**
+     * Fixed global shadow azimuth (radians in the world XZ plane; 0 = +x,
+     * PI/2 = +z): the ONE direction every corrected shadow is displaced in.
+     * The axis-aligned rect never rotates toward it — it only slides — which
+     * is exactly the institutional over-regularity the room speaks.
+     */
+    AZIMUTH_RAD: Math.PI / 4,
+    /**
+     * Rect size quantum (m): half the FA occupancy grid pitch
+     * (RoomGeneration.GRID_SNAP_SIZE = 8), so shadow sizes step in the same
+     * institutional rhythm without collapsing every small building to one size.
+     */
+    QUANT: 4,
+    /**
+     * Rect extent clamps (m) after quantization. Both MUST stay multiples of
+     * QUANT so clamping preserves the grid rhythm; MIN also floors footprints
+     * that would otherwise quantize to nothing.
+     */
+    MIN_SIZE: 4,
+    MAX_SIZE: 20,
+    /** Fraction of each rect extent it is displaced along the azimuth. */
+    OFFSET_FACTOR: 0.4,
+    /**
+     * Lift (m) above the floor plane — the FloorTile redaction-disc epsilon
+     * pattern, paired with polygonOffset on the shared ink material so the
+     * decal never z-fights the floor at grazing distances.
+     */
+    LIFT: 0.02,
+    /**
+     * Per-chunk decal cap. The populated FA building count tops out at 9
+     * (chunkBuildingCount base 7 x OVERGROWN 1.35) before grid-occupancy and
+     * rift-clearance skips, so this bound normally never bites — it is a
+     * safety ceiling, not a rationing knob.
+     */
+    MAX_PER_CHUNK: 10,
+    /** Scar-skew clamp at full severity: rotation off axis-alignment (rad, ~20°). */
+    MAX_SKEW_ROT_RAD: 0.35,
+    /** Scar-skew clamp: XZ shear factor (m of x drift per m of rect depth). */
+    MAX_SHEAR: 0.5,
+    /** Scar-skew clamp: extra lateral slide off the corrected spot (m, per axis). */
+    MAX_SKEW_OFFSET: 2.5,
+} as const;
+
+/**
  * Chunk and world generation constants
  */
 export const WORLD = {

@@ -13,7 +13,7 @@ import type { SharedAssets } from './SharedAssets';
 import type { EchoTarget } from './SnapshotEcho';
 // 1-bit Chimera Void - Chunk Manager
 import * as THREE from 'three';
-import { CABLE_UPLINK, WORLD } from '../config/constants';
+import { CABLE_UPLINK, FA_SHADOW, WORLD } from '../config/constants';
 import { disposeObject3D } from '../utils/dispose';
 import { hash } from '../utils/hash';
 import { createBlocksBuilding, createFluidBuilding, createSpikesBuilding } from './BuildingFactory';
@@ -38,6 +38,7 @@ import {
 import { RoomLedger } from './RoomLedger';
 import { RoomTransition } from './RoomTransition';
 import { scarDistortionFor, scarSeverityAt, scarsNearChunk } from './ScarField';
+import { createCorrectedShadowDecal, disposeShadowAssets } from './ShadowCorrection';
 import { getSharedAssets } from './SharedAssets';
 
 // Configuration (sourced from centralized constants; re-exported for consumers)
@@ -302,6 +303,10 @@ export class ChunkManager {
         // FORCED_ALIGNMENT grid occupancy: at most one building per snapped cell.
         const occupiedCells = roomType === RoomType.FORCED_ALIGNMENT ? new Set<string>() : null;
 
+        // FORCED_ALIGNMENT corrected-shadow budget: one decal per placed
+        // building, bounded by the FA_SHADOW safety cap (idealized shadows).
+        let faShadowBudget = roomType === RoomType.FORCED_ALIGNMENT ? FA_SHADOW.MAX_PER_CHUNK : 0;
+
         for (let i = 0; i < numBuildings; i++) {
             const rawX = (hash(cx + i, cz) - 0.5) * (CHUNK_SIZE - 20);
             const rawZ = (hash(cx, cz + i) - 0.5) * (CHUNK_SIZE - 20);
@@ -452,21 +457,40 @@ export class ChunkManager {
             // and LOD (world-position distance) are unaffected. initialPos
             // is re-captured so the wander animation orbits the scarred pose
             // instead of snapping back to the clean one.
-            if (nearScars.length > 0) {
-                const severity = scarSeverityAt(
-                    nearScars,
-                    cx * CHUNK_SIZE + buildGroup.position.x,
-                    cz * CHUNK_SIZE + buildGroup.position.z,
-                );
-                if (severity > 0) {
-                    const scar = scarDistortionFor(severity, i, cx, cz);
-                    buildGroup.rotation.x += scar.tiltX;
-                    buildGroup.rotation.z += scar.tiltZ;
-                    buildGroup.position.x += scar.offsetX;
-                    buildGroup.position.z += scar.offsetZ;
-                    buildGroup.position.y -= scar.sink;
-                    (buildGroup.userData as BuildingUserData).initialPos.copy(buildGroup.position);
-                }
+            // Severity is computed at the PRE-distortion position (the anchor
+            // the scar math has always used) and reused below by the
+            // FORCED_ALIGNMENT corrected-shadow decal — the scar breaks the
+            // shadow's correction too.
+            const scarSeverity = nearScars.length > 0
+                ? scarSeverityAt(
+                        nearScars,
+                        cx * CHUNK_SIZE + buildGroup.position.x,
+                        cz * CHUNK_SIZE + buildGroup.position.z,
+                    )
+                : 0;
+            if (scarSeverity > 0) {
+                const scar = scarDistortionFor(scarSeverity, i, cx, cz);
+                buildGroup.rotation.x += scar.tiltX;
+                buildGroup.rotation.z += scar.tiltZ;
+                buildGroup.position.x += scar.offsetX;
+                buildGroup.position.z += scar.offsetZ;
+                buildGroup.position.y -= scar.sink;
+                (buildGroup.userData as BuildingUserData).initialPos.copy(buildGroup.position);
+            }
+
+            // FORCED_ALIGNMENT idealized shadow (scene-style batch): a
+            // hard-black, perfectly axis-aligned rect decal at the building's
+            // foot, cast in the ONE global azimuth and quantized to the 8-unit
+            // grid — deliberately too regular for the building's real shape.
+            // Runs AFTER the scar block so the decal sits at the building's
+            // final (possibly dislocated) foot, and near a scar the correction
+            // fails: the rect rotates/shears/slides by scarSeverity
+            // (ShadowCorrection). Parented to the CHUNK — not the building —
+            // so it stays a floor decal (FA buildings never wander) and
+            // disposes with the chunk tree. Static: zero per-frame cost.
+            if (faShadowBudget > 0) {
+                chunk.add(createCorrectedShadowDecal(buildGroup, scarSeverity, cx, cz, i));
+                faShadowBudget--;
             }
 
             // INFO_OVERFLOW buildingFlicker: on a CAPPED subset of fragments,
@@ -1397,6 +1421,10 @@ export class ChunkManager {
         // singleton in CableSystem, never disposed per-chunk).
         disposeCableMaterial();
         disposeCableUplinkMaterial();
+
+        // Dispose the module-shared corrected-shadow decal assets exactly once
+        // (shared unit quad + ink material — never disposed per-chunk).
+        disposeShadowAssets();
 
         // Dispose shared assets
         this.assets.dispose();
