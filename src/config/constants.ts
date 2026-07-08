@@ -574,6 +574,32 @@ export const SUNSET_FORESHADOW = {
 } as const;
 
 /**
+ * Dusk refusal (POLARIZED: no dusk — time itself refuses the gray). The
+ * room's duskHardness (RoomConfig) steps the PRESENTED sunset-foreshadow
+ * ramp hard at its halfway point (world/DuskSnap.presentedBlend); these
+ * knobs shape the snap moment itself. Purely presentational — the
+ * DayNightCycle state machine never sees any of this.
+ */
+export const DUSK_SNAP = {
+    /**
+     * Minimum single-frame upward jump of the presented ramp that reads as
+     * "the snap" and arms the flicker. A hard step crosses in one frame
+     * (jump ~1); the smooth ramp moves by ~delta/LEAD_SECONDS per frame,
+     * so only a genuine step can ever clear 0.5.
+     */
+    JUMP_THRESHOLD: 0.5,
+    /**
+     * Snap-moment visibility flicker length (frames): the presented value
+     * stutters old/new/old across this many frames before settling on the
+     * new pole — the established swap language
+     * (ROOM_SKY.SWAP_FLICKER_FRAMES), deliberately frame-counted (not
+     * time-based) so it stays a barely-there glitch at any frame rate. Odd
+     * counts open and close on the OLD pole, then settle on the new.
+     */
+    FLICKER_FRAMES: 3,
+} as const;
+
+/**
  * Stress-driven dither grain (F5 "分辨率即情绪"): a smoothed 0-1 stress level
  * — computed in core/StressLevel.ts from the gaze, the held resistance,
  * INFO_OVERFLOW's flower overload and the dying day — coarsens the dither
@@ -617,6 +643,55 @@ export const STRESS = {
      * (the historical grain) instead of a sub-deadband residual offset.
      */
     SETTLE_SNAP: 0.01,
+} as const;
+
+/**
+ * Burn-in afterimage (INFO_OVERFLOW "看过的东西无法不看见"): hold your gaze
+ * still and the hard ink/paper content of what you are looking at accumulates
+ * into a heat ghost (core/BurnInPass, a low-res ping-pong buffer); when you
+ * finally move, the ghost stays stamped over the world, eroding away pixel by
+ * pixel — in the overload room, everything you look at leaves residue.
+ *
+ * CPU side (stare detection, pure + unit-tested in core/BurnInPass): camera
+ * angular speed per frame arms a stare after ARM_SECONDS of stillness, with
+ * hysteresis (RELEASE_THRESHOLD > STILLNESS_THRESHOLD) so micro-jitter never
+ * chatters. GPU side: heat decays at 1/DECAY_SECONDS per second and gains
+ * GAIN_PER_SECOND on pixels whose luminance sits at least
+ * CONTRIBUTION_THRESHOLD from mid-grey — only strong ink/paper burns, never
+ * soft gradients. The room gate (RoomShaderConfig.burnInStrength) rides the
+ * standard transition lerp; the pass itself runs only while the gate is open
+ * OR the HAS_HEAT_COOLDOWN says the buffer still holds heat.
+ */
+export const BURN_IN = {
+    /** Camera angular speed (rad/s) at or below which the view counts as still. */
+    STILLNESS_THRESHOLD: 0.12,
+    /**
+     * Angular speed (rad/s) an ACTIVE stare must exceed to break — the
+     * hysteresis headroom above STILLNESS_THRESHOLD, so a held gaze survives
+     * micro-jitter but a deliberate look-away releases instantly.
+     */
+    RELEASE_THRESHOLD: 0.45,
+    /** Seconds of continuous stillness before staring arms. */
+    ARM_SECONDS: 1.2,
+    /** Heat gained per second on qualifying pixels while staring (full burn ~0.7s). */
+    GAIN_PER_SECOND: 1.4,
+    /** Seconds for full heat (1.0) to erode away completely once staring ends. */
+    DECAY_SECONDS: 3.5,
+    /** Heat-buffer resolution as a fraction of the composer target, in (0, 1]. */
+    BUFFER_SCALE: 0.5,
+    /**
+     * Minimum |luminance - 0.5| of the source pixel for it to burn: a hard
+     * distance-from-mid-grey gate so only strong ink/paper content leaves
+     * residue (the mid-grey fog field never does).
+     */
+    CONTRIBUTION_THRESHOLD: 0.28,
+    /**
+     * Seconds the accumulation pass keeps running after the last possible
+     * contribution, so the buffer fully erodes before the pass stops paying.
+     * MUST be >= DECAY_SECONDS (max heat is 1.0 and decay is 1/DECAY_SECONDS
+     * per second, so a full cooldown window is guaranteed to drain it).
+     */
+    HAS_HEAT_COOLDOWN: 4.0,
 } as const;
 
 /**

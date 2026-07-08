@@ -95,6 +95,15 @@ export interface DitherUniforms {
     uDitherModeTo: { value: number };
     uDitherModeBlend: { value: number };
     tBlueNoise: { value: THREE.Texture | null };
+    // Burn-in afterimage (INFO_OVERFLOW "what you stared at cannot be unseen").
+    // uBurnAmount: 0-1 room gate + ghost coverage (RoomShaderConfig
+    //   .burnInStrength, baked through the RoomTransition lerp — INFO_OVERFLOW
+    //   ~0.85, exactly 0 in the other rooms).
+    // uBurnMap: the low-res stare-heat buffer, ping-ponged and BOUND DIRECTLY
+    //   by core/BurnInPass each frame (deliberately NOT uploaded by
+    //   ShaderUniformUpdater — the sampler does not ride the room chain).
+    uBurnAmount: { value: number };
+    uBurnMap: { value: THREE.Texture | null };
 }
 
 export interface CableUniforms {

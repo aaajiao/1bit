@@ -26,6 +26,7 @@ src/
 │   └── index.ts     # 统一导出
 ├── core/            # 核心初始化 + main.ts 每帧调用的逐帧 helper 层
 │   ├── BootGuard.ts          # 启动守卫：WebGL 检测 + 无 WebGL 时的 DOM 降级渲染
+│   ├── BurnInPass.ts         # INFO 烧屏残影：凝视静止检测 + 热度 ping-pong 缓冲（uBurnMap/uBurnAmount）
 │   ├── CableAudioUpdater.ts  # 每帧根据玩家与线缆的距离更新音频
 │   ├── CableUplinkUpdater.ts # 花光超阈值时驱动线缆上报脉冲（流向天眼）
 │   ├── DataWaterfallUpdater.ts # INFO 数据瀑布滚动驱动（花亮度调速，单 uniform）
@@ -74,6 +75,7 @@ src/
 │   ├── ChunkManager.ts    # 无限世界区块管理系统
 │   ├── DataWaterfall.ts   # INFO 立面数据瀑布（共享字符纹理，一材质一 uniform）
 │   ├── DayNightCycle.ts   # 昼夜循环控制
+│   ├── DuskSnap.ts        # POLARIZED 没有黄昏：预兆渐变的呈现值硬切（逻辑状态机不动）
 │   ├── EclipseDarkening.ts # 蚀的暗化通道（组合到背景色上，绝不经过昼夜状态机）
 │   ├── FigureSystem.ts    # 远景 1-bit 人形剪影（F3，不可交互的叙事布景；中段共鸣/反抗传染/疤痕见证者）
 │   ├── FloorTile.ts       # 地面瓦片与网格生成
@@ -181,7 +183,7 @@ this.newSystem.update(delta, { /* 依赖 */ });
 
 ### 测试覆盖
 
-`tests/` 下共 43 个测试文件，覆盖 hash / 房间 / 快照 / 天气生命周期与降水 / 各机制等纯逻辑。
+`tests/` 下共 45 个测试文件，覆盖 hash / 房间 / 快照 / 天气生命周期与降水 / 烧屏与黄昏硬切 / 各机制等纯逻辑。
 
 *最后更新: 2026-06-15*
 

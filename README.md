@@ -455,6 +455,7 @@ bun run build && bun run preview   # 构建并预览构建产物，才能验证 
     │   ├── DataWaterfallUpdater.ts # INFO 数据瀑布滚动驱动（花亮度调速）
     │   ├── PrecipitationUpdater.ts # 世界降水驱动（雨/灰烬/风）
     │   ├── WeatherReactionsUpdater.ts # 天气行为反应驱动（风吹/前兆/余波）
+    │   ├── BurnInPass.ts           # INFO 烧屏残影（凝视检测 + 热度 ping-pong 缓冲）
     │   ├── RoomFlowUpdater.ts      # 房间归属/行为画像/世界系统驱动
     │   ├── StatsSunsetUpdater.ts   # 日落快照/遗忘入口/疤痕记录
     │   ├── StressLevel.ts          # 应激等级（抖动语言驱动）
@@ -508,6 +509,7 @@ bun run build && bun run preview   # 构建并预览构建产物，才能验证 
     │   ├── RainGlyphPuddles.ts # INFO 雨后字符水洼
     │   ├── ShadowAftermath.ts  # FA 风暴余波阴影抖动与精确复位
     │   ├── WeatherReactions.ts # 天气反应纯逻辑（风吹/前兆朝向/余波选取）
+    │   ├── DuskSnap.ts        # POLARIZED 没有黄昏（昼夜预兆渐变硬切；时间仍可听见）
     │   ├── WeatherSystem.ts   # 天气核心（前兆→爆发→余波；雨/静电/故障/灰烬/风/蚀；行为偏置）
     │   ├── DayNightCycle.ts   # 昼夜循环系统
     │   └── SkyEye.ts          # 天空之眼
@@ -905,7 +907,7 @@ app.skyEye.triggerBlink(app.audio);  // 手动眨眼
 | 指标 | 数值 |
 |------|------|
 | TypeScript 代码 | ~18,800 行（另有 ~8,300 行测试） |
-| 单元测试 | 1045 个（43 个文件） |
+| 单元测试 | 1082 个（45 个文件） |
 | 设计文档 | ~80,000 字 |
 | 核心机制 | 4 个 |
 | 房间状态 | 4 种 |

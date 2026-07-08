@@ -155,6 +155,17 @@ function ensureDuotoneUniforms(
         u.uWeatherInvertStrike = { value: 0.0 };
         injected = true;
     }
+    // Burn-in afterimage (INFO_OVERFLOW). Same lazy-inject guard; amount 0 =
+    // inert (which also parks the sampler — the GLSL block never runs). The
+    // heat texture itself is BOUND by core/BurnInPass, never uploaded here.
+    if (!u.uBurnAmount) {
+        u.uBurnAmount = { value: 0.0 };
+        injected = true;
+    }
+    if (!u.uBurnMap) {
+        u.uBurnMap = { value: null };
+        injected = true;
+    }
 
     if (injected) {
         // Force the renderer to rebuild its cached uniform list so the freshly
@@ -344,6 +355,11 @@ export function updateShaderUniforms(params: ShaderUniformParams): void {
     u.uWeatherBandStrength.value = Math.min(1, Math.max(0, shaderConfig.weatherBandStrength));
     u.uWeatherMisregisterBoost.value = Math.min(1, Math.max(0, shaderConfig.weatherMisregisterBoost));
     u.uWeatherInvertStrike.value = Math.min(1, Math.max(0, shaderConfig.weatherInvertStrike));
+    // Burn-in gate (INFO_OVERFLOW afterimage): a plain room scalar, so the
+    // RoomTransition lerp IS the feature's fade at room boundaries. Only the
+    // scalar rides this chain — the uBurnMap sampler is bound directly by
+    // core/BurnInPass in the render phase.
+    u.uBurnAmount.value = Math.min(1, Math.max(0, shaderConfig.burnInStrength));
     // F5 dither language: the room's pattern crossfade triple (categorical
     // ids + output-blend factor, baked upstream by RoomTransition — never
     // numerically lerped) and the global stress-driven grain scale.

@@ -104,6 +104,15 @@ export const DitherShader: ShaderDefinition = {
         uDitherModeTo: { value: 0 },
         uDitherModeBlend: { value: 1.0 },
         tBlueNoise: { value: null },
+        // ===== Burn-in afterimage (INFO_OVERFLOW) =====
+        // uBurnAmount: 0-1 room gate + ghost coverage (RoomShaderConfig
+        //   .burnInStrength through the RoomTransition lerp; 0 outside
+        //   INFO_OVERFLOW, so the whole block below is skipped elsewhere).
+        // uBurnMap: low-res stare-heat buffer (core/BurnInPass ping-pong),
+        //   bound directly by the pass each frame. Heat stamps hard ink into
+        //   the pre-quantization value — what you stared at cannot be unseen.
+        uBurnAmount: { value: 0.0 },
+        uBurnMap: { value: null },
     },
     vertexShader: `
         varying vec2 vUv;
@@ -166,6 +175,9 @@ export const DitherShader: ShaderDefinition = {
         uniform int uDitherModeTo;      // pattern id of the room's own side
         uniform float uDitherModeBlend; // 0=from, 1=to (blends pattern OUTPUTS)
         uniform sampler2D tBlueNoise;   // 64x64 ordered blue-noise thresholds
+        // Burn-in afterimage (INFO_OVERFLOW): stare-heat buffer + room gate
+        uniform sampler2D uBurnMap;     // low-res heat (core/BurnInPass ping-pong)
+        uniform float uBurnAmount;      // 0-1 room gate + ghost coverage
         varying vec2 vUv;
 
         // Duotone-aware "inverse": swaps a color toward the opposite palette
@@ -404,6 +416,22 @@ export const DitherShader: ShaderDefinition = {
             // uBrightnessLift (~1.55) is the exposed, tunable tone-fix lever.
             gray = pow(clamp(gray, 0.0, 1.0), 0.8) * uBrightnessLift;
             gray = clamp(gray, 0.0, 1.0);
+
+            // ===== BURN-IN AFTERIMAGE (INFO_OVERFLOW: what you stared at
+            // cannot be unseen) ===== Heat accumulated by staring (uBurnMap,
+            // core/BurnInPass) stamps hard ink into the PRE-quantization value,
+            // so the ghost dithers with the rest of the world. Erosion is
+            // DISCRETE: every pixel owns a static spatial-hash extinction
+            // threshold — as heat decays past it, that pixel winks out, one by
+            // one, never a smooth fade. uBurnAmount (the room gate, 0 outside
+            // INFO_OVERFLOW) scales the heat, so the RoomTransition lerp thins
+            // the ghost's coverage in/out at room boundaries the same way.
+            if (uBurnAmount > 0.001) {
+                float burnHeat = texture2D(uBurnMap, vUv).r * uBurnAmount;
+                if (burnHeat > territoryHash(floor(gl_FragCoord.xy))) {
+                    gray = 0.0; // hard ink stamp, pre-dither
+                }
+            }
 
             // Edge detection
             float edge = 0.0;
@@ -765,6 +793,62 @@ export const CableShader: ShaderDefinition = {
 
             vec3 finalColor = mix(color, pulseColor, pulse);
             gl_FragColor = vec4(finalColor, 1.0);
+        }
+    `,
+};
+
+/**
+ * Burn-in heat accumulation shader (INFO_OVERFLOW afterimage; core/BurnInPass).
+ * One low-res ping-pong step per frame over the stare-heat buffer:
+ *
+ *   heat = max(prevHeat - decayRate * delta, 0)
+ *        + (staring ? qualifies(scene) * gain * delta : 0)   [clamped to 1]
+ *
+ * qualifies() is a HARD gate on the current frame's luminance distance from
+ * mid-grey (uContribThreshold): only strong ink/paper content burns, never
+ * soft gradients — the mid-grey fog field leaves no residue. Decay here is a
+ * smooth scalar by design; the DISCRETE pixel-by-pixel erosion happens at
+ * composite time in DitherShader, where heat is thresholded per pixel against
+ * a static spatial hash (so ghost pixels wink out, never alpha-fade).
+ * All rates are pre-scaled CPU-side from the BURN_IN config; uDelta is the
+ * pause-gated frame delta, so a paused frame accumulates and decays nothing.
+ */
+export const BurnAccumShader: ShaderDefinition = {
+    uniforms: {
+        tPrevHeat: { value: null }, // previous heat state (ping-pong read side)
+        tScene: { value: null }, // the CURRENT rendered frame (composer read buffer)
+        uDelta: { value: 0.0 }, // frame delta (s), delta-gated upstream (pause-safe)
+        uStareGain: { value: 0.0 }, // heat/s while staring in-room; 0 = decay only
+        uDecayRate: { value: 0.0 }, // heat/s erosion (1 / BURN_IN.DECAY_SECONDS)
+        uContribThreshold: { value: 0.0 }, // min |luminance - 0.5| that burns
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        precision highp float;
+        uniform sampler2D tPrevHeat;
+        uniform sampler2D tScene;
+        uniform float uDelta;
+        uniform float uStareGain;
+        uniform float uDecayRate;
+        uniform float uContribThreshold;
+        varying vec2 vUv;
+
+        void main() {
+            float heat = max(texture2D(tPrevHeat, vUv).r - uDecayRate * uDelta, 0.0);
+            if (uStareGain > 0.0) {
+                vec3 src = texture2D(tScene, vUv).rgb;
+                float lum = dot(src, vec3(0.299, 0.587, 0.114));
+                // Hard 1-bit gate: only content far from mid-grey burns.
+                float qualifies = step(uContribThreshold, abs(lum - 0.5));
+                heat = min(heat + qualifies * uStareGain * uDelta, 1.0);
+            }
+            gl_FragColor = vec4(heat, 0.0, 0.0, 1.0);
         }
     `,
 };
