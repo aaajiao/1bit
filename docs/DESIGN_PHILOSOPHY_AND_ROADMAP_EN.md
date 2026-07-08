@@ -1239,11 +1239,15 @@ The following systems were not in the original five-phase roadmap, but are imple
 - **Mirror twin cities** (POLARIZED generation): both banks derive from the same hash draws mirrored across the seam — identical content, opposite rendering; scars apply after mirroring, the only asymmetry.
 - **Weather 2.0** (`WeatherSystem` + `Precipitation` + `WeatherReactions`): weather gains a lifecycle (forewarn → event → aftermath) and a world-space body — rain dashes fall between you and the buildings, ash settles and leaves dissolving traces, gales bend cables/banners/figures/glyph streams; aftermaths leave marks (glyph puddles, shadows knocked askew then re-tidied, buildings left language-flipped). Three new types: ASHFALL, GALE, and the rare ECLIPSE — an ink disc transits the sky, day collapses toward night, every figure looks up, and if your flower burns bright they turn toward you. Weather frequency and type are gently biased by player behavior (within ±30%).
 
+- **Burn-in afterimage** (`BurnInPass` + DitherShader): in INFO_OVERFLOW, hold your gaze still and then look away — what you stared at stays burned over the screen as hard ink marks, eroding pixel by pixel. What you have seen cannot be unseen.
+- **No dusk** (`DuskSnap`): POLARIZED hard-snaps the sunset foreshadow ramp to binary — not even time's gray survives there; the audio foreshadow keeps its descent, so time refuses to be seen yet remains audible.
+
 ---
 
-*Document Version: 1.4 (English)*
+*Document Version: 1.5 (English)*
 
 **Changelog:**
+- v1.5: Added burn-in afterimage and no-dusk (the two deferred items) to the shipped list.
 - v1.4: Added the scene-style batch (skies/shadows/waterfalls/echo/mirror) and Weather 2.0 (lifecycle, ASHFALL/GALE/ECLIPSE, world-space precipitation, behavior bias) to the shipped list.
 - v1.3: Added the scene-richness batch to the shipped list (resonance, contagion, witnesses, uplink, echo, seam swap).
 - v1.2: Completed Technical Roadmap with Phase 3 (Mental State Rooms), Phase 4 (Override Mechanic), Phase 5 (State Snapshot), and Future Optimization Phase.

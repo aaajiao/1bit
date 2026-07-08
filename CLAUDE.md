@@ -34,13 +34,13 @@ Run a single test file: `bunx vitest run tests/GazeMechanic.test.ts`
 
 | Directory | Purpose |
 |-----------|---------|
-| `core/` | Scene setup, post-processing, and the per-frame/startup helpers `main.ts` calls (room flow, HUD, pause control, near-player proximity passes via `ProximityUpdaters` (cable audio/uplink + seam swap), data-waterfall/precipitation/weather-reaction drivers, shader sync, stress level, boot guard, stats-sunset, etc. — 18 files) |
+| `core/` | Scene setup, post-processing, and the per-frame/startup helpers `main.ts` calls (room flow, HUD, pause control, near-player proximity passes via `ProximityUpdaters` (cable audio/uplink + seam swap), data-waterfall/precipitation/weather-reaction drivers, burn-in afterimage pass, shader sync, stress level, boot guard, stats-sunset, etc. — 19 files) |
 | `config/` | All gameplay constants and thresholds (single source of truth): `constants.ts` + `audio.ts` + `physics.ts`, re-exported via `index.ts` |
 | `ui/` | HUD / DOM overlay |
 | `player/` | Player controls, hand model, flower prop, gaze/override mechanics, IN_BETWEEN viewmodel misregister echo |
 | `world/` | Chunk management, building/flora factories, room-sky dome, cables (incl. uplink pulses), silhouette figures (resonance/contagion/scar witnesses), ghost replay, scar field, snapshot echo, per-room visual vocabulary (data waterfalls, idealized shadows, POLARIZED mirror twins), weather v2 (forewarn→aftermath lifecycle, ASHFALL/GALE/ECLIPSE, world-space precipitation + world reactions), sky eye, day/night |
 | `audio/` | AudioController (business logic) + AudioEngine (Web Audio API wrapper) |
-| `shaders/` | DitherShader — 1-bit dithering, edge detection, weather overlays |
+| `shaders/` | DitherShader — 1-bit dithering, edge detection, weather overlays, INFO burn-in afterimage composite (+ CableShader / BurnAccumShader secondary exports) |
 | `stats/` | Behavior tracking, snapshot generation, sunset overlay display |
 | `types/` | Modular type definitions with unified re-export via `index.ts` |
 | `utils/` | Hash, dispose, screenshot |
@@ -82,7 +82,7 @@ Persistent state lives in three versioned localStorage keys (`1bit:lastSnapshot`
 
 ## Testing
 
-Tests live in `tests/` and cover pure logic — 43 test files / 1045 cases spanning hash utilities, GazeMechanic, FigureSystem (resonance/contagion/witnesses/attitude ladder), RunStatsCollector, StateSnapshotGenerator, room/weather/rift/seam-swap/mirror logic, weather lifecycle + precipitation + reactions, RoomSky, eclipse day/night non-interference, and config validation. Test strategy focuses on logic separation — pure functions over mocked Three.js scenes.
+Tests live in `tests/` and cover pure logic — 45 test files / 1082 cases spanning hash utilities, GazeMechanic, FigureSystem (resonance/contagion/witnesses/attitude ladder), RunStatsCollector, StateSnapshotGenerator, room/weather/rift/seam-swap/mirror logic, weather lifecycle + precipitation + reactions, RoomSky, eclipse day/night non-interference, and config validation. Test strategy focuses on logic separation — pure functions over mocked Three.js scenes.
 
 ## Dependencies
 
